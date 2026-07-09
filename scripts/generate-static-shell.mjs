@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+/**
+ * generate-static-shell.mjs
+ *
+ * Run this AFTER every `npm run build`, before deploying to Firebase
+ * Hosting. It boots the just-built Node server (the same one already
+ * proven to work — see the node-preset config in vite.config.ts), fetches
+ * a real page from it to discover the CURRENT build's content-hashed asset
+ * filenames (these change on every build), then writes a minimal,
+ * route-agnostic index.html shell into .output/public/ — no server-
+ * rendered content, no baked-in router state, just the real stylesheet +
+ * entry script for this exact build. This is what makes the static SPA
+ * shell approach safe to repeat on every deploy instead of going stale.
+ *
+ * Usage:  node scripts/generate-static-shell.mjs
+ */
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, "..");
+const PORT = 8199;
+
+function log(msg) {
+  console.log(`[generate-static-shell] ${msg}`);
+}
+
+async function main() {
+  log("Starting the built server to capture real asset filenames...");
+  const server = spawn("node", [path.join(projectRoot, ".output/server/index.mjs")], {
+    env: { ...process.env, PORT: String(PORT) },
+    stdio: "pipe",
+  });
+
+  let ready = false;
+  server.stdout.on("data", (d) => {
+    if (d.toString().includes("Listening")) ready = true;
+  });
+
+  // Wait up to 10s for the server to report ready.
+  for (let i = 0; i < 100 && !ready; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!ready) {
+    server.kill();
+    throw new Error("Server did not start in time — check .output/server/index.mjs exists (run `npm run build` first).");
+  }
+
+  log("Fetching /login to capture this build's complete, real rendered HTML...");
+  const res = await fetch(`http://127.0.0.1:${PORT}/login`);
+  const html = await res.text();
+  server.kill();
+
+  // IMPORTANT: this is the FULL, real HTML the server actually rendered for
+  // /login — including its complete `window.$_TSR = {...}` bootstrap
+  // script. Do NOT strip that script out. Confirmed by inspecting the
+  // actual client bundle: the hydration entry's first line is literally
+  // `window.$_TSR||ge()` where `ge(){throw Error("Invariant failed")}` —
+  // an unconditional hard crash if that object is missing. An earlier
+  // version of this script stripped $_TSR out entirely to avoid baking in
+  // route-specific data, which seemed reasonable but was wrong — the
+  // object's mere presence is a hard requirement, not an optional
+  // hydration hint. The route-specific *content* inside it is safe to
+  // leave as-is: the router's own location parser reads
+  // `window.location.pathname` as its actual source of truth (confirmed
+  // in the bundle too), so it correctly resolves to whatever the real
+  // browser URL is once it takes over, regardless of which route this
+  // shell happened to be captured from.
+  const outputPath = path.join(projectRoot, ".output/public/index.html");
+  writeFileSync(outputPath, html, "utf8");
+  log(`Wrote static shell to ${outputPath}`);
+  log("Done. .output/public/ is now ready for `firebase deploy --only hosting`.");
+}
+
+main().catch((err) => {
+  console.error("[generate-static-shell] FAILED:", err.message);
+  process.exit(1);
+});
