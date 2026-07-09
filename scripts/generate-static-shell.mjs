@@ -27,6 +27,38 @@ function log(msg) {
   console.log(`[generate-static-shell] ${msg}`);
 }
 
+// Firebase serves this SAME index.html for every route (catch-all rewrite in
+// firebase.json). If it keeps /login's fully server-rendered DOM (its form,
+// text, etc.), React sees that DOM on hydration for every OTHER route and
+// throws a hydration mismatch (error #418) because the server-rendered
+// content it's hydrating against doesn't match what that route actually
+// renders. But the bootstrap scripts can't just be dropped either — the
+// hydration entry's first line is `window.$_TSR||ge()` where
+// `ge(){throw Error("Invariant failed")}`, an unconditional hard crash if
+// that object is missing.
+//
+// The fix: keep every <script> tag (in original order — it's what carries
+// $_TSR and the entry module), but discard everything else inside <body>.
+// With no leftover server-rendered DOM to mismatch against, React hydrates
+// an effectively-empty container instead of fighting stale content, and
+// $_TSR is still there to satisfy the invariant check. <head> (styles,
+// meta, links, the correctly content-hashed asset references) is left
+// completely untouched — only <body>'s non-script content is cleared.
+function stripBodyToScriptsOnly(html) {
+  const bodyMatch = html.match(/<body([^>]*)>([\s\S]*)<\/body>/i);
+  if (!bodyMatch) {
+    throw new Error(
+      "Could not find <body>...</body> in the server-rendered HTML — server output format may have changed.",
+    );
+  }
+  const [fullMatch, bodyAttrs, bodyInner] = bodyMatch;
+  const scriptTags = bodyInner.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) ?? [];
+  const strippedBody = `<body${bodyAttrs}>${scriptTags.join("")}</body>`;
+  return (
+    html.slice(0, bodyMatch.index) + strippedBody + html.slice(bodyMatch.index + fullMatch.length)
+  );
+}
+
 async function main() {
   log("Starting the built server to capture real asset filenames...");
   const server = spawn("node", [path.join(projectRoot, ".output/server/index.mjs")], {
@@ -45,7 +77,9 @@ async function main() {
   }
   if (!ready) {
     server.kill();
-    throw new Error("Server did not start in time — check .output/server/index.mjs exists (run `npm run build` first).");
+    throw new Error(
+      "Server did not start in time — check .output/server/index.mjs exists (run `npm run build` first).",
+    );
   }
 
   log("Fetching /login to capture this build's complete, real rendered HTML...");
@@ -53,23 +87,23 @@ async function main() {
   const html = await res.text();
   server.kill();
 
-  // IMPORTANT: this is the FULL, real HTML the server actually rendered for
-  // /login — including its complete `window.$_TSR = {...}` bootstrap
-  // script. Do NOT strip that script out. Confirmed by inspecting the
-  // actual client bundle: the hydration entry's first line is literally
+  // We need the FULL, real HTML the server actually rendered for /login —
+  // including its complete `window.$_TSR = {...}` bootstrap script and the
+  // real content-hashed asset <script>/<link> tags for this build. Do NOT
+  // fetch/build this any other way. Confirmed by inspecting the actual
+  // client bundle: the hydration entry's first line is literally
   // `window.$_TSR||ge()` where `ge(){throw Error("Invariant failed")}` —
-  // an unconditional hard crash if that object is missing. An earlier
-  // version of this script stripped $_TSR out entirely to avoid baking in
-  // route-specific data, which seemed reasonable but was wrong — the
-  // object's mere presence is a hard requirement, not an optional
-  // hydration hint. The route-specific *content* inside it is safe to
-  // leave as-is: the router's own location parser reads
-  // `window.location.pathname` as its actual source of truth (confirmed
-  // in the bundle too), so it correctly resolves to whatever the real
-  // browser URL is once it takes over, regardless of which route this
-  // shell happened to be captured from.
+  // an unconditional hard crash if that object is missing. The router's own
+  // location parser reads `window.location.pathname` as its actual source
+  // of truth (also confirmed in the bundle), so it correctly resolves to
+  // whatever the real browser URL is once it takes over, regardless of
+  // which route this shell happened to be captured from.
+  //
+  // What we must NOT keep is /login's server-rendered *DOM* (the <body>
+  // content besides scripts) — see stripBodyToScriptsOnly() above.
+  const shellHtml = stripBodyToScriptsOnly(html);
   const outputPath = path.join(projectRoot, ".output/public/index.html");
-  writeFileSync(outputPath, html, "utf8");
+  writeFileSync(outputPath, shellHtml, "utf8");
   log(`Wrote static shell to ${outputPath}`);
   log("Done. .output/public/ is now ready for `firebase deploy --only hosting`.");
 }
