@@ -68,12 +68,20 @@ function oklabToRgbString(L: number, a: number, b: number, A: number): string {
     c = Math.max(0, Math.min(1, c));
     return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
   };
-  r = toSrgb(r); g = toSrgb(g); bl = toSrgb(bl);
+  r = toSrgb(r);
+  g = toSrgb(g);
+  bl = toSrgb(bl);
   const toByte = (c: number) => Math.round(Math.max(0, Math.min(1, c)) * 255);
   return `rgba(${toByte(r)}, ${toByte(g)}, ${toByte(bl)}, ${Number.isFinite(A) ? A : 1})`;
 }
 
-function oklchToRgbString(match: string, lRaw: string, cRaw: string, hRaw: string, aRaw?: string): string {
+function oklchToRgbString(
+  match: string,
+  lRaw: string,
+  cRaw: string,
+  hRaw: string,
+  aRaw?: string,
+): string {
   let L = parseFloat(lRaw);
   if (lRaw.includes("%")) L = L / 100;
   const C = parseFloat(cRaw);
@@ -146,27 +154,146 @@ function flattenColorsIntoClone(liveRoot: Element, cloneRoot: Element) {
 }
 
 // Part 2: rewrite every stylesheet's actual CSS text inside the cloned
-// document — this is what html2canvas reads directly when building its own
-// cascade, independent of any single element's resolved style.
-function rewriteStylesheetsInClone(doc: Document) {
+// document. html2canvas resolves each cloned element's colors by calling
+// window.getComputedStyle() on it (see CSSParsedDeclaration in html2canvas's
+// own source) — so what determines whether box-shadow, custom-property-
+// driven colors, etc. come out as oklch() or rgb() is the cascade actually
+// in effect in the CLONED document, not the live page. This function makes
+// that cascade oklch-free.
+//
+// Operates on raw stylesheet *text*, not the CSSOM, wherever possible:
+//  - inline <style> elements: `element.textContent` is exactly what was
+//    authored, so rewriting it in place can't reformat or drop rules the
+//    way a CSSRule.cssText round-trip could.
+//  - external <link rel="stylesheet">: by the time onclone runs, html2canvas
+//    has already awaited the cloned iframe's load event, so the linked
+//    sheet's CSSOM (cssRules) reliably reflects the real, browser-parsed
+//    CSS — that's the primary path. fetch(link.href) is only a fallback for
+//    when cssRules throws (cross-origin without CORS); it's deliberately
+//    NOT the primary path, because dev servers like Vite serve a *different*
+//    response body for the same URL depending on how it's requested — a
+//    plain fetch() without an explicit `Accept: text/css` can come back as
+//    a JS module wrapper (`import ... ; const __vite__css = "..."`) rather
+//    than CSS text, which would silently turn the clone's <style> into
+//    invalid CSS and wipe out every rule in it, not just the oklch ones.
+// This covers every selector shape (:root, .dark, any class, any @-rule)
+// because it rewrites the whole text rather than targeting specific rules
+// — by build time Tailwind's @theme/@utility have already been compiled
+// away into plain rules and custom properties, so there's nothing special
+// left to single out.
+async function rewriteStylesheetsInClone(doc: Document): Promise<void> {
   const sheets = Array.from(doc.styleSheets);
-  for (const sheet of sheets) {
-    try {
-      const rules = Array.from(sheet.cssRules ?? []);
-      const cssText = rules.map((r) => r.cssText).join("\n");
-      if (!hasModernColor(cssText)) continue;
-      const rewritten = replaceOklch(cssText);
-      const styleEl = doc.createElement("style");
-      styleEl.textContent = rewritten;
+  await Promise.all(
+    sheets.map(async (sheet) => {
       const owner = sheet.ownerNode;
-      if (owner && owner.parentNode) {
-        owner.parentNode.replaceChild(styleEl, owner);
-      } else {
-        doc.head.appendChild(styleEl);
+      try {
+        if (owner instanceof HTMLStyleElement) {
+          const text = owner.textContent ?? "";
+          if (hasModernColor(text)) owner.textContent = replaceOklch(text);
+          return;
+        }
+        if (owner instanceof HTMLLinkElement) {
+          await rewriteLinkedStylesheet(doc, owner, sheet);
+          return;
+        }
+        // No owner node (e.g. a sheet with an inaccessible/unusual origin) —
+        // fall back to a best-effort CSSOM read.
+        const cssText = Array.from(sheet.cssRules ?? [])
+          .map((r) => r.cssText)
+          .join("\n");
+        if (hasModernColor(cssText)) {
+          const styleEl = doc.createElement("style");
+          styleEl.textContent = replaceOklch(cssText);
+          doc.head.appendChild(styleEl);
+        }
+      } catch {
+        // Cross-origin or otherwise inaccessible stylesheet — skip it rather
+        // than aborting the whole export.
       }
+    }),
+  );
+
+  // Constructable stylesheets attached via document.adoptedStyleSheets don't
+  // appear in doc.styleSheets at all — cover them separately.
+  for (const sheet of doc.adoptedStyleSheets ?? []) {
+    try {
+      const cssText = Array.from(sheet.cssRules ?? [])
+        .map((r) => r.cssText)
+        .join("\n");
+      if (hasModernColor(cssText)) sheet.replaceSync(replaceOklch(cssText));
     } catch {
-      // Cross-origin or otherwise inaccessible stylesheet — skip it rather
-      // than aborting the whole export.
+      // Best-effort — skip.
+    }
+  }
+}
+
+async function rewriteLinkedStylesheet(
+  doc: Document,
+  link: HTMLLinkElement,
+  sheet: CSSStyleSheet,
+): Promise<void> {
+  let cssText: string | null = null;
+  try {
+    cssText = Array.from(sheet.cssRules ?? [])
+      .map((r) => r.cssText)
+      .join("\n");
+  } catch {
+    // Cross-origin without CORS, or not yet parsed — fall through to fetch.
+  }
+  if (cssText == null) {
+    try {
+      const res = await fetch(link.href, { headers: { Accept: "text/css" } });
+      const contentType = res.headers.get("content-type") ?? "";
+      // Only trust the response if the server actually says it's CSS — some
+      // dev servers return a JS module wrapper for the same URL otherwise,
+      // and silently treating that as CSS would corrupt the whole sheet.
+      if (res.ok && contentType.includes("css")) cssText = await res.text();
+    } catch {
+      // Network failure — nothing more we can do for this sheet.
+    }
+  }
+  if (cssText == null || !hasModernColor(cssText)) return;
+  const styleEl = doc.createElement("style");
+  styleEl.textContent = replaceOklch(cssText);
+  link.parentNode?.replaceChild(styleEl, link);
+}
+
+// Belt-and-suspenders pass, run last: ask the clone's own cascade — via
+// getComputedStyle(), the exact same API html2canvas itself calls — whether
+// any oklch()/oklab() is still resolving through for a given element (e.g.
+// a custom property the stylesheet rewrite above genuinely couldn't reach).
+// Where it finds one, it pins just that property inline with the converted
+// value; elements with nothing left to fix are untouched.
+const COMPUTED_COLOR_PROPS = [
+  "box-shadow",
+  "background-color",
+  "background-image",
+  "color",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "outline-color",
+  "text-decoration-color",
+] as const;
+
+function guardResidualModernColor(cloneRoot: Element) {
+  const view = cloneRoot.ownerDocument.defaultView;
+  if (!view) return;
+  const els = [cloneRoot, ...Array.from(cloneRoot.querySelectorAll("*"))];
+  for (const el of els) {
+    if (!(el instanceof HTMLElement)) continue;
+    const computed = view.getComputedStyle(el);
+    const overrides: string[] = [];
+    for (const prop of COMPUTED_COLOR_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (value && hasModernColor(value)) {
+        overrides.push(`${prop}: ${replaceOklch(value)} !important`);
+      }
+    }
+    if (overrides.length > 0) {
+      const existing = el.getAttribute("style") ?? "";
+      el.setAttribute("style", `${existing};${overrides.join(";")}`);
     }
   }
 }
@@ -207,7 +334,14 @@ async function loadLogo(): Promise<LogoInfo | null> {
  * across a page break. A dedicated cover page comes first, followed by
  * content pages, each with the same header/footer + page number.
  */
-export async function exportDashboardToPdf({ containerEl, dashboardName, lineName, from, to, onProgress }: PdfExportOptions): Promise<void> {
+export async function exportDashboardToPdf({
+  containerEl,
+  dashboardName,
+  lineName,
+  from,
+  to,
+  onProgress,
+}: PdfExportOptions): Promise<void> {
   const sections = Array.from(containerEl.children) as HTMLElement[];
   if (sections.length === 0) throw new Error("Nothing to export — the dashboard is empty.");
 
@@ -229,7 +363,16 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
   let coverY = pageHeight / 2 - 120;
   if (logo) {
     const logoX = (pageWidth - logo.widthPt) / 2;
-    pdf.addImage(logo.dataUrl, "PNG", logoX, coverY, logo.widthPt, logo.heightPt, undefined, "FAST");
+    pdf.addImage(
+      logo.dataUrl,
+      "PNG",
+      logoX,
+      coverY,
+      logo.widthPt,
+      logo.heightPt,
+      undefined,
+      "FAST",
+    );
     coverY += logo.heightPt + 28;
   }
   pdf.setFont("helvetica", "bold");
@@ -250,7 +393,9 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
   coverY += 18;
   pdf.text(`Generated By: Production Scorecard System`, pageWidth / 2, coverY, { align: "center" });
   coverY += 18;
-  pdf.text(`Generated: ${generatedAt.toLocaleString()}`, pageWidth / 2, coverY, { align: "center" });
+  pdf.text(`Generated: ${generatedAt.toLocaleString()}`, pageWidth / 2, coverY, {
+    align: "center",
+  });
 
   // Render each section to a canvas up front (sequential, not parallel, to
   // keep peak memory reasonable on large dashboards).
@@ -263,9 +408,9 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
       backgroundColor: "#ffffff",
       useCORS: true,
       logging: false,
-      onclone: (doc, clonedEl) => {
+      onclone: async (doc, clonedEl) => {
         try {
-          rewriteStylesheetsInClone(doc);
+          await rewriteStylesheetsInClone(doc);
         } catch {
           // Best-effort — proceed even if some stylesheet couldn't be rewritten.
         }
@@ -274,6 +419,11 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
         } catch {
           // Best-effort: if flattening fails for any element, proceed with
           // whatever was already converted rather than aborting the export.
+        }
+        try {
+          guardResidualModernColor(clonedEl);
+        } catch {
+          // Best-effort — final safety net; proceed regardless.
         }
       },
     });
@@ -294,7 +444,16 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
 
   function drawHeader() {
     if (logo) {
-      pdf.addImage(logo.dataUrl, "PNG", PAGE_MARGIN, PAGE_MARGIN, logo.widthPt, logo.heightPt, undefined, "FAST");
+      pdf.addImage(
+        logo.dataUrl,
+        "PNG",
+        PAGE_MARGIN,
+        PAGE_MARGIN,
+        logo.widthPt,
+        logo.heightPt,
+        undefined,
+        "FAST",
+      );
     }
     const textX = PAGE_MARGIN + (logo ? logo.widthPt + 10 : 0);
     pdf.setFont("helvetica", "bold");
@@ -308,7 +467,12 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
     pdf.setFontSize(9);
     const rightText = `Line: ${lineName}   |   Period: ${from} → ${to}`;
     pdf.text(rightText, pageWidth - PAGE_MARGIN, PAGE_MARGIN + 14, { align: "right" });
-    pdf.text(`Generated By: Production Scorecard System`, pageWidth - PAGE_MARGIN, PAGE_MARGIN + 28, { align: "right" });
+    pdf.text(
+      `Generated By: Production Scorecard System`,
+      pageWidth - PAGE_MARGIN,
+      PAGE_MARGIN + 28,
+      { align: "right" },
+    );
     pdf.setDrawColor(220, 220, 220);
     pdf.line(PAGE_MARGIN, contentTop - 8, pageWidth - PAGE_MARGIN, contentTop - 8);
   }
@@ -319,8 +483,17 @@ export async function exportDashboardToPdf({ containerEl, dashboardName, lineNam
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8.5);
     pdf.setTextColor(120, 120, 120);
-    pdf.text(`Generated ${generatedAt.toLocaleString()}`, PAGE_MARGIN, pageHeight - PAGE_MARGIN + 12);
-    pdf.text(`Page ${pageNum} of ${totalPages}`, pageWidth - PAGE_MARGIN, pageHeight - PAGE_MARGIN + 12, { align: "right" });
+    pdf.text(
+      `Generated ${generatedAt.toLocaleString()}`,
+      PAGE_MARGIN,
+      pageHeight - PAGE_MARGIN + 12,
+    );
+    pdf.text(
+      `Page ${pageNum} of ${totalPages}`,
+      pageWidth - PAGE_MARGIN,
+      pageHeight - PAGE_MARGIN + 12,
+      { align: "right" },
+    );
   }
 
   // Content pages start after the cover page.
