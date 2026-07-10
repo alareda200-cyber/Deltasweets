@@ -16,7 +16,11 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
     }
   }, [loading, session, navigate]);
 
-  if (loading) {
+  if (loading || (session && !profile)) {
+    // Also waits out the gap between session and profile arriving (e.g. a
+    // direct navigation to a permission-gated route) — without this, the
+    // permission check below runs once with role still null and renders
+    // Access denied for a frame before profile finishes loading.
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
