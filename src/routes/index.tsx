@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -61,7 +61,6 @@ export const Route = createFileRoute("/")({
 
 function Dashboard() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { data: lines } = useSuspenseQuery(linesQuery);
   const initial = monthRange();
   const [from, setFrom] = useState(initial.from);
@@ -69,27 +68,21 @@ function Dashboard() {
   const [lineId, setLineId] = useState(lines[0]?.id ?? "");
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
 
   async function handleExportPdf() {
-    if (!activeLine) return;
+    if (!activeLine || !exportRef.current) return;
     setExporting(true);
     setExportProgress("Preparing PDF…");
     try {
-      // Reuses whatever DashboardBody already loaded for this line/period via
-      // react-query's cache — no extra network round trip in the common case.
-      const [entries, downtimes] = await Promise.all([
-        queryClient.ensureQueryData(entriesQuery(activeLine.id, from, to)),
-        queryClient.ensureQueryData(entryDowntimesQuery(activeLine.id, from, to)),
-      ]);
       await exportDashboardToPdf({
+        container: exportRef.current,
         dashboardName: "Production Scorecard Dashboard",
         lineName: activeLine.name,
         from,
         to,
-        entries,
-        downtimes,
         onProgress: (msg) => setExportProgress(msg),
       });
       toast.success("PDF exported successfully");
@@ -112,10 +105,13 @@ function Dashboard() {
       {lines.length === 0 ? (
         <EmptyState onCreate={() => navigate({ to: "/settings" })} />
       ) : (
-        <>
+        <div ref={exportRef}>
           <HeroHeader line={activeLine} from={from} to={to} />
 
-          <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-card md:flex-row md:items-end md:justify-between">
+          <div
+            data-pdf-exclude="true"
+            className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-card md:flex-row md:items-end md:justify-between"
+          >
             <Tabs value={lineId} onValueChange={setLineId} className="flex-1">
               <TabsList className="flex w-full flex-wrap justify-start gap-1 bg-muted/50 p-1">
                 {lines.map((l) => (
@@ -180,7 +176,7 @@ function Dashboard() {
           {activeLine && (
             <DashboardBody lineId={activeLine.id} color={activeLine.color} from={from} to={to} />
           )}
-        </>
+        </div>
       )}
     </AppShell>
   );
