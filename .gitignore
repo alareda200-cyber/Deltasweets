@@ -20,6 +20,12 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Firebase CLI local deploy cache
+.firebase/
+
+# npm is this project's lock file; bun.lock isn't regenerated here
+bun.lock
+
 # Environment variables
 .env
 .env.*
