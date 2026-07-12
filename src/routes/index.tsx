@@ -140,13 +140,13 @@ function Dashboard() {
             data-pdf-exclude="true"
             className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-card md:flex-row md:items-end md:justify-between"
           >
-            <Tabs value={lineId} onValueChange={setLineId} className="flex-1">
-              <TabsList className="flex w-full flex-wrap justify-start gap-1 bg-muted/50 p-1">
+            <Tabs value={lineId} onValueChange={setLineId} className="min-w-0 flex-1">
+              <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto bg-muted/50 p-1">
                 {lines.map((l) => (
                   <TabsTrigger
                     key={l.id}
                     value={l.id}
-                    className="data-[state=active]:bg-card data-[state=active]:shadow-sm"
+                    className="shrink-0 whitespace-nowrap data-[state=active]:bg-card data-[state=active]:shadow-sm"
                   >
                     <span
                       className="mr-2 inline-block h-2 w-2 rounded-full"
@@ -157,14 +157,14 @@ function Dashboard() {
                 ))}
               </TabsList>
             </Tabs>
-            <div className="flex flex-wrap items-end gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:flex md:flex-wrap md:items-end">
               <div>
                 <Label className="text-xs">From</Label>
                 <Input
                   type="date"
                   value={from}
                   onChange={(e) => setFrom(e.target.value)}
-                  className="h-9 w-[150px]"
+                  className="h-9 w-full sm:w-[150px]"
                 />
               </div>
               <div>
@@ -173,12 +173,13 @@ function Dashboard() {
                   type="date"
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
-                  className="h-9 w-[150px]"
+                  className="h-9 w-full sm:w-[150px]"
                 />
               </div>
               <Button
                 variant="outline"
                 size="sm"
+                className="w-full md:w-auto"
                 onClick={() => {
                   const m = monthRange();
                   setFrom(m.from);
@@ -187,7 +188,13 @@ function Dashboard() {
               >
                 This Month
               </Button>
-              <Button variant="outline" size="sm" onClick={handleExportPdf} disabled={exporting}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full md:w-auto"
+                onClick={handleExportPdf}
+                disabled={exporting}
+              >
                 {exporting ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                 ) : (
@@ -195,7 +202,11 @@ function Dashboard() {
                 )}
                 {exporting ? exportProgress || "Preparing PDF…" : "Export PDF"}
               </Button>
-              <Button size="sm" onClick={() => navigate({ to: "/entry" })}>
+              <Button
+                size="sm"
+                className="w-full md:w-auto"
+                onClick={() => navigate({ to: "/entry" })}
+              >
                 <PlusSquare className="mr-1.5 h-4 w-4" /> New Entry
               </Button>
             </div>
