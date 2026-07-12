@@ -10,19 +10,33 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Trash2, Plus, Save } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, ResponsiveContainer, Legend } from "recharts";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { linesQuery, reasonsQuery, fieldsQuery, productionAreasQuery, areaOwnersQuery } from "@/lib/queries";
+import {
+  linesQuery,
+  reasonsQuery,
+  fieldsQuery,
+  productionAreasQuery,
+  areaOwnersQuery,
+} from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
+import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 
 export const Route = createFileRoute("/entry")({
   head: () => ({ meta: [{ title: "Daily Entry · Production Scorecard" }] }),
+  beforeLoad: requireSession,
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(linesQuery),
@@ -37,7 +51,12 @@ export const Route = createFileRoute("/entry")({
   ),
 });
 
-interface DtRow { reason_id: string; reason_name: string; area: string; minutes: number; }
+interface DtRow {
+  reason_id: string;
+  reason_name: string;
+  area: string;
+  minutes: number;
+}
 
 function EntryPage() {
   const navigate = useNavigate();
@@ -70,7 +89,9 @@ function EntryPage() {
   const [reworkMaking, setReworkMaking] = useState("0");
   const [reworkPacking, setReworkPacking] = useState("0");
   const [downtimes, setDowntimes] = useState<DtRow[]>([]);
-  const [areaOwnerSelections, setAreaOwnerSelections] = useState<Record<string, { ownerId: string; score: string }>>({});
+  const [areaOwnerSelections, setAreaOwnerSelections] = useState<
+    Record<string, { ownerId: string; score: string }>
+  >({});
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -82,7 +103,16 @@ function EntryPage() {
   const { data: customFields = [] } = useQuery(fieldsQuery(lineId));
 
   // Prefill from existing entry if exists for this line+date+shift
-  const originalEntryRef = useRef<{ making_plan: number; making_actual: number; packing_plan: number; packing_actual: number; rework_cooking: number; rework_making: number; rework_packing: number; comments: string | null } | null>(null);
+  const originalEntryRef = useRef<{
+    making_plan: number;
+    making_actual: number;
+    packing_plan: number;
+    packing_actual: number;
+    rework_cooking: number;
+    rework_making: number;
+    rework_packing: number;
+    comments: string | null;
+  } | null>(null);
   const originalDowntimesRef = useRef<DtRow[]>([]);
   const originalAreaOwnersRef = useRef<Record<string, { ownerId: string; score: string }>>({});
 
@@ -100,13 +130,19 @@ function EntryPage() {
       if (cancelled) return;
       if (data) {
         if (duplicatingRef.current) {
-          toast.warning("An entry already exists for this Line/Date/Shift — loaded the existing entry instead of your duplicate.");
+          toast.warning(
+            "An entry already exists for this Line/Date/Shift — loaded the existing entry instead of your duplicate.",
+          );
         }
         setExistingEntryId(data.id);
         originalEntryRef.current = {
-          making_plan: data.making_plan, making_actual: data.making_actual,
-          packing_plan: data.packing_plan, packing_actual: data.packing_actual,
-          rework_cooking: data.rework_cooking, rework_making: data.rework_making, rework_packing: data.rework_packing,
+          making_plan: data.making_plan,
+          making_actual: data.making_actual,
+          packing_plan: data.packing_plan,
+          packing_actual: data.packing_actual,
+          rework_cooking: data.rework_cooking,
+          rework_making: data.rework_making,
+          rework_packing: data.rework_packing,
           comments: data.comments,
         };
         setMakingPlan(String(data.making_plan));
@@ -120,38 +156,54 @@ function EntryPage() {
         setComments(data.comments ?? "");
         setCustomValues(
           Object.fromEntries(
-            Object.entries((data.custom_fields ?? {}) as Record<string, unknown>).map(
-              ([k, v]) => [k, String(v ?? "")],
-            ),
+            Object.entries((data.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [
+              k,
+              String(v ?? ""),
+            ]),
           ),
         );
         const { data: dts } = await supabase
           .from("entry_downtimes")
           .select("*")
           .eq("entry_id", data.id);
-        setDowntimes((dts ?? []).map((d) => ({
+        setDowntimes(
+          (dts ?? []).map((d) => ({
+            reason_id: d.reason_id ?? "",
+            reason_name: d.reason_name,
+            area: d.area,
+            minutes: Number(d.minutes),
+          })),
+        );
+        originalDowntimesRef.current = (dts ?? []).map((d) => ({
           reason_id: d.reason_id ?? "",
           reason_name: d.reason_name,
           area: d.area,
           minutes: Number(d.minutes),
-        })));
-        originalDowntimesRef.current = (dts ?? []).map((d) => ({
-          reason_id: d.reason_id ?? "", reason_name: d.reason_name, area: d.area, minutes: Number(d.minutes),
         }));
         const { data: owners } = await supabase
           .from("entry_area_owners")
           .select("*")
           .eq("entry_id", data.id);
         setAreaOwnerSelections(
-          Object.fromEntries((owners ?? []).map((o) => [
-            o.production_area_id,
-            { ownerId: o.owner_id ?? "", score: o.performance_score != null ? String(o.performance_score) : "" },
-          ])),
+          Object.fromEntries(
+            (owners ?? []).map((o) => [
+              o.production_area_id,
+              {
+                ownerId: o.owner_id ?? "",
+                score: o.performance_score != null ? String(o.performance_score) : "",
+              },
+            ]),
+          ),
         );
-        originalAreaOwnersRef.current = Object.fromEntries((owners ?? []).map((o) => [
-          o.production_area_id,
-          { ownerId: o.owner_id ?? "", score: o.performance_score != null ? String(o.performance_score) : "" },
-        ]));
+        originalAreaOwnersRef.current = Object.fromEntries(
+          (owners ?? []).map((o) => [
+            o.production_area_id,
+            {
+              ownerId: o.owner_id ?? "",
+              score: o.performance_score != null ? String(o.performance_score) : "",
+            },
+          ]),
+        );
         duplicatingRef.current = false;
       } else {
         setExistingEntryId(null);
@@ -173,7 +225,9 @@ function EntryPage() {
         duplicatingRef.current = false;
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [lineId, date, shift]);
 
   const validDowntimes = downtimes.filter((d) => d.reason_name && Number(d.minutes) > 0);
@@ -201,16 +255,32 @@ function EntryPage() {
       // whatever is currently sitting in that field's state.
       const orig = originalEntryRef.current;
       const effectiveMakingPlan = canEditProduction ? makingPlan : String(orig?.making_plan ?? 0);
-      const effectiveMakingActual = canEditProduction ? makingActual : String(orig?.making_actual ?? 0);
-      const effectivePackingPlan = canEditProduction ? packingPlan : String(orig?.packing_plan ?? 0);
-      const effectivePackingActual = canEditProduction ? packingActual : String(orig?.packing_actual ?? 0);
-      const effectiveReworkCooking = canEditProduction ? reworkCooking : String(orig?.rework_cooking ?? 0);
-      const effectiveReworkMaking = canEditProduction ? reworkMaking : String(orig?.rework_making ?? 0);
-      const effectiveReworkPacking = canEditProduction ? reworkPacking : String(orig?.rework_packing ?? 0);
+      const effectiveMakingActual = canEditProduction
+        ? makingActual
+        : String(orig?.making_actual ?? 0);
+      const effectivePackingPlan = canEditProduction
+        ? packingPlan
+        : String(orig?.packing_plan ?? 0);
+      const effectivePackingActual = canEditProduction
+        ? packingActual
+        : String(orig?.packing_actual ?? 0);
+      const effectiveReworkCooking = canEditProduction
+        ? reworkCooking
+        : String(orig?.rework_cooking ?? 0);
+      const effectiveReworkMaking = canEditProduction
+        ? reworkMaking
+        : String(orig?.rework_making ?? 0);
+      const effectiveReworkPacking = canEditProduction
+        ? reworkPacking
+        : String(orig?.rework_packing ?? 0);
       const effectiveComments = canEditNotes ? comments : (orig?.comments ?? "");
-      const effectiveDowntimes = canEditDowntime ? validDowntimes : originalDowntimesRef.current.filter((d) => d.reason_name && Number(d.minutes) > 0);
+      const effectiveDowntimes = canEditDowntime
+        ? validDowntimes
+        : originalDowntimesRef.current.filter((d) => d.reason_name && Number(d.minutes) > 0);
       const effectiveDowntimeMin = effectiveDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
-      const effectiveAreaOwnerSelections = canEditAreaOwners ? areaOwnerSelections : originalAreaOwnersRef.current;
+      const effectiveAreaOwnerSelections = canEditAreaOwners
+        ? areaOwnerSelections
+        : originalAreaOwnersRef.current;
 
       const payload = {
         line_id: lineId,
@@ -270,7 +340,11 @@ function EntryPage() {
       }
 
       toast.success(`Saved entry for ${date} · Shift ${shift}`);
-      void logAudit(wasExisting ? "entry.edit" : "entry.create", "entry", upserted.id, { line_id: lineId, entry_date: date, shift });
+      void logAudit(wasExisting ? "entry.edit" : "entry.create", "entry", upserted.id, {
+        line_id: lineId,
+        entry_date: date,
+        shift,
+      });
       await qc.invalidateQueries({ queryKey: ["entries"] });
       await qc.invalidateQueries({ queryKey: ["entry-downtimes"] });
       await qc.invalidateQueries({ queryKey: ["entry-area-owners"] });
@@ -296,7 +370,8 @@ function EntryPage() {
     const targetId = target?.id ?? existingEntryId;
     const targetLabel = target?.label ?? `${date} · Shift ${shift}`;
     if (!targetId) return;
-    if (!confirm(`Are you sure you want to permanently delete this entry (${targetLabel})?`)) return;
+    if (!confirm(`Are you sure you want to permanently delete this entry (${targetLabel})?`))
+      return;
     setDeleting(true);
     try {
       // entry_downtimes and entry_area_owners both have ON DELETE CASCADE
@@ -326,9 +401,18 @@ function EntryPage() {
       if (targetId === existingEntryId) {
         setExistingEntryId(null);
         setReadOnly(false);
-        setMakingPlan(""); setMakingActual(""); setPackingPlan(""); setPackingActual("");
-        setAvailableMin("1440"); setReworkCooking("0"); setReworkMaking("0"); setReworkPacking("0");
-        setComments(""); setCustomValues({}); setDowntimes([]); setAreaOwnerSelections({});
+        setMakingPlan("");
+        setMakingActual("");
+        setPackingPlan("");
+        setPackingActual("");
+        setAvailableMin("1440");
+        setReworkCooking("0");
+        setReworkMaking("0");
+        setReworkPacking("0");
+        setComments("");
+        setCustomValues({});
+        setDowntimes([]);
+        setAreaOwnerSelections({});
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -342,7 +426,10 @@ function EntryPage() {
   // same load-by-line/date/shift effect the form already has, just by
   // pointing the pickers at a different row instead of duplicating any
   // load logic.
-  function handleViewOrEdit(row: { line_id: string; entry_date: string; shift: string }, mode: "view" | "edit") {
+  function handleViewOrEdit(
+    row: { line_id: string; entry_date: string; shift: string },
+    mode: "view" | "edit",
+  ) {
     setReadOnly(mode === "view");
     setLineId(row.line_id);
     setDate(row.entry_date);
@@ -350,10 +437,29 @@ function EntryPage() {
     setShowHistory(false);
   }
 
-  async function handleDuplicate(row: { id: string; line_id: string; making_plan: number; making_actual: number; packing_plan: number; packing_actual: number; available_min: number; rework_cooking: number; rework_making: number; rework_packing: number; comments: string | null; custom_fields: unknown }) {
+  async function handleDuplicate(row: {
+    id: string;
+    line_id: string;
+    making_plan: number;
+    making_actual: number;
+    packing_plan: number;
+    packing_actual: number;
+    available_min: number;
+    rework_cooking: number;
+    rework_making: number;
+    rework_packing: number;
+    comments: string | null;
+    custom_fields: unknown;
+  }) {
     try {
-      const { data: dts } = await supabase.from("entry_downtimes").select("*").eq("entry_id", row.id);
-      const { data: owners } = await supabase.from("entry_area_owners").select("*").eq("entry_id", row.id);
+      const { data: dts } = await supabase
+        .from("entry_downtimes")
+        .select("*")
+        .eq("entry_id", row.id);
+      const { data: owners } = await supabase
+        .from("entry_area_owners")
+        .select("*")
+        .eq("entry_id", row.id);
 
       duplicatingRef.current = true;
       setReadOnly(false);
@@ -372,17 +478,30 @@ function EntryPage() {
       setComments(row.comments ?? "");
       setCustomValues(
         Object.fromEntries(
-          Object.entries((row.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")]),
+          Object.entries((row.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [
+            k,
+            String(v ?? ""),
+          ]),
         ),
       );
-      setDowntimes((dts ?? []).map((d) => ({
-        reason_id: d.reason_id ?? "", reason_name: d.reason_name, area: d.area, minutes: Number(d.minutes),
-      })));
+      setDowntimes(
+        (dts ?? []).map((d) => ({
+          reason_id: d.reason_id ?? "",
+          reason_name: d.reason_name,
+          area: d.area,
+          minutes: Number(d.minutes),
+        })),
+      );
       setAreaOwnerSelections(
-        Object.fromEntries((owners ?? []).map((o) => [
-          o.production_area_id,
-          { ownerId: o.owner_id ?? "", score: o.performance_score != null ? String(o.performance_score) : "" },
-        ])),
+        Object.fromEntries(
+          (owners ?? []).map((o) => [
+            o.production_area_id,
+            {
+              ownerId: o.owner_id ?? "",
+              score: o.performance_score != null ? String(o.performance_score) : "",
+            },
+          ]),
+        ),
       );
       setShowHistory(false);
       toast.success("Entry duplicated successfully. Choose a Date, Shift, and Line, then Save.");
@@ -411,7 +530,9 @@ function EntryPage() {
       {readOnly && (
         <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           <span>Viewing this entry in read-only mode.</span>
-          <Button size="sm" variant="outline" onClick={() => setReadOnly(false)}>Edit this entry</Button>
+          <Button size="sm" variant="outline" onClick={() => setReadOnly(false)}>
+            Edit this entry
+          </Button>
         </div>
       )}
 
@@ -422,7 +543,15 @@ function EntryPage() {
             onView={(row) => handleViewOrEdit(row, "view")}
             onEdit={(row) => handleViewOrEdit(row, "edit")}
             onDuplicate={canCreate ? handleDuplicate : undefined}
-            onDelete={canDelete ? (row) => handleDelete({ id: row.id, label: `${row.entry_date} · Shift ${row.shift} · ${row.production_lines?.name ?? ""}` }) : undefined}
+            onDelete={
+              canDelete
+                ? (row) =>
+                    handleDelete({
+                      id: row.id,
+                      label: `${row.entry_date} · Shift ${row.shift} · ${row.production_lines?.name ?? ""}`,
+                    })
+                : undefined
+            }
           />
         </div>
       )}
@@ -431,24 +560,34 @@ function EntryPage() {
         <TabsList className="flex flex-wrap gap-1">
           {lines.map((l) => (
             <TabsTrigger key={l.id} value={l.id}>
-              <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />
+              <span
+                className="mr-2 inline-block h-2 w-2 rounded-full"
+                style={{ background: l.color }}
+              />
               {l.name}
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" style={readOnly ? { pointerEvents: "none", opacity: 0.75 } : undefined}>
+      <div
+        className="grid grid-cols-1 gap-6 lg:grid-cols-3"
+        style={readOnly ? { pointerEvents: "none", opacity: 0.75 } : undefined}
+      >
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Entry Details</CardTitle>
             <CardDescription>Plan & actual figures in kilograms.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-3">
-            <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+            <Field label="Date">
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </Field>
             <Field label="Shift">
               <Select value={shift} onValueChange={setShift}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="A">Shift A</SelectItem>
                   <SelectItem value="B">Shift B</SelectItem>
@@ -457,19 +596,74 @@ function EntryPage() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Available Time (min)"><Input type="number" value={availableMin} onChange={(e) => setAvailableMin(e.target.value)} /></Field>
+            <Field label="Available Time (min)">
+              <Input
+                type="number"
+                value={availableMin}
+                onChange={(e) => setAvailableMin(e.target.value)}
+              />
+            </Field>
 
-            <Field label="Making Plan (kg)"><Input type="number" value={makingPlan} onChange={(e) => setMakingPlan(e.target.value)} disabled={!canEditProduction} /></Field>
-            <Field label="Making Actual (kg)"><Input type="number" value={makingActual} onChange={(e) => setMakingActual(e.target.value)} disabled={!canEditProduction} /></Field>
+            <Field label="Making Plan (kg)">
+              <Input
+                type="number"
+                value={makingPlan}
+                onChange={(e) => setMakingPlan(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
+            <Field label="Making Actual (kg)">
+              <Input
+                type="number"
+                value={makingActual}
+                onChange={(e) => setMakingActual(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
             <div />
 
-            <Field label="Packing Plan (kg)"><Input type="number" value={packingPlan} onChange={(e) => setPackingPlan(e.target.value)} disabled={!canEditProduction} /></Field>
-            <Field label="Packing Actual (kg)"><Input type="number" value={packingActual} onChange={(e) => setPackingActual(e.target.value)} disabled={!canEditProduction} /></Field>
+            <Field label="Packing Plan (kg)">
+              <Input
+                type="number"
+                value={packingPlan}
+                onChange={(e) => setPackingPlan(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
+            <Field label="Packing Actual (kg)">
+              <Input
+                type="number"
+                value={packingActual}
+                onChange={(e) => setPackingActual(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
             <div />
 
-            <Field label="Rework Cooking (kg)"><Input type="number" value={reworkCooking} onChange={(e) => setReworkCooking(e.target.value)} disabled={!canEditProduction} /></Field>
-            <Field label="Rework Making (kg)"><Input type="number" value={reworkMaking} onChange={(e) => setReworkMaking(e.target.value)} disabled={!canEditProduction} /></Field>
-            <Field label="Rework Packing (kg)"><Input type="number" value={reworkPacking} onChange={(e) => setReworkPacking(e.target.value)} disabled={!canEditProduction} /></Field>
+            <Field label="Rework Cooking (kg)">
+              <Input
+                type="number"
+                value={reworkCooking}
+                onChange={(e) => setReworkCooking(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
+            <Field label="Rework Making (kg)">
+              <Input
+                type="number"
+                value={reworkMaking}
+                onChange={(e) => setReworkMaking(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
+            <Field label="Rework Packing (kg)">
+              <Input
+                type="number"
+                value={reworkPacking}
+                onChange={(e) => setReworkPacking(e.target.value)}
+                disabled={!canEditProduction}
+              />
+            </Field>
 
             {productionAreas.length > 0 && (
               <div className="col-span-2 md:col-span-3">
@@ -486,13 +680,22 @@ function EntryPage() {
                           <Field label="Owner">
                             <Select
                               value={sel.ownerId}
-                              onValueChange={(v) => setAreaOwnerSelections((p) => ({ ...p, [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" } }))}
+                              onValueChange={(v) =>
+                                setAreaOwnerSelections((p) => ({
+                                  ...p,
+                                  [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" },
+                                }))
+                              }
                               disabled={!canEditAreaOwners}
                             >
-                              <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Unassigned" />
+                              </SelectTrigger>
                               <SelectContent>
                                 {areaOwners.map((o) => (
-                                  <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+                                  <SelectItem key={o.id} value={o.id}>
+                                    {o.name}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -505,7 +708,15 @@ function EntryPage() {
                               step="0.01"
                               placeholder="0–100"
                               value={sel.score}
-                              onChange={(e) => setAreaOwnerSelections((p) => ({ ...p, [area.id]: { ownerId: p[area.id]?.ownerId ?? "", score: e.target.value } }))}
+                              onChange={(e) =>
+                                setAreaOwnerSelections((p) => ({
+                                  ...p,
+                                  [area.id]: {
+                                    ownerId: p[area.id]?.ownerId ?? "",
+                                    score: e.target.value,
+                                  },
+                                }))
+                              }
                               disabled={!canEditAreaOwners}
                             />
                           </Field>
@@ -528,7 +739,9 @@ function EntryPage() {
                       <Input
                         type="number"
                         value={customValues[f.field_key] ?? ""}
-                        onChange={(e) => setCustomValues((p) => ({ ...p, [f.field_key]: e.target.value }))}
+                        onChange={(e) =>
+                          setCustomValues((p) => ({ ...p, [f.field_key]: e.target.value }))
+                        }
                       />
                     </Field>
                   ))}
@@ -538,7 +751,13 @@ function EntryPage() {
 
             <div className="col-span-2 md:col-span-3">
               <Label className="text-xs">Comments</Label>
-              <Textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={2} className="mt-1" disabled={!canEditNotes} />
+              <Textarea
+                value={comments}
+                onChange={(e) => setComments(e.target.value)}
+                rows={2}
+                className="mt-1"
+                disabled={!canEditNotes}
+              />
             </div>
           </CardContent>
         </Card>
@@ -547,9 +766,14 @@ function EntryPage() {
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle>Downtime Log</CardTitle>
-              <CardDescription>Total: <b>{totalDowntime} min</b></CardDescription>
+              <CardDescription>
+                Total: <b>{totalDowntime} min</b>
+              </CardDescription>
             </div>
-            <Button size="sm" variant="outline" onClick={addDowntime} disabled={!canEditDowntime}><Plus className="mr-1 h-4 w-4" />Add</Button>
+            <Button size="sm" variant="outline" onClick={addDowntime} disabled={!canEditDowntime}>
+              <Plus className="mr-1 h-4 w-4" />
+              Add
+            </Button>
           </CardHeader>
           <CardContent className="space-y-3">
             {downtimes.length === 0 && (
@@ -563,23 +787,64 @@ function EntryPage() {
                   value={d.reason_id}
                   onValueChange={(v) => {
                     const r = reasons.find((x) => x.id === v);
-                    setDowntimes((arr) => arr.map((row, idx) => idx === i ? {
-                      ...row, reason_id: v, reason_name: r?.name ?? row.reason_name, area: r?.area ?? row.area,
-                    } : row));
+                    setDowntimes((arr) =>
+                      arr.map((row, idx) =>
+                        idx === i
+                          ? {
+                              ...row,
+                              reason_id: v,
+                              reason_name: r?.name ?? row.reason_name,
+                              area: r?.area ?? row.area,
+                            }
+                          : row,
+                      ),
+                    );
                   }}
                   disabled={!canEditDowntime}
                 >
-                  <SelectTrigger><SelectValue placeholder="Pick reason" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick reason" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {reasons.map((r) => (<SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>))}
+                    {reasons.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <div className="grid grid-cols-2 gap-2">
-                  <Input placeholder="Area" value={d.area} onChange={(e) => setDowntimes((arr) => arr.map((row, idx) => idx === i ? { ...row, area: e.target.value } : row))} disabled={!canEditDowntime} />
-                  <Input type="number" placeholder="Minutes" value={d.minutes || ""}
-                    onChange={(e) => setDowntimes((arr) => arr.map((row, idx) => idx === i ? { ...row, minutes: Number(e.target.value) } : row))} disabled={!canEditDowntime} />
+                  <Input
+                    placeholder="Area"
+                    value={d.area}
+                    onChange={(e) =>
+                      setDowntimes((arr) =>
+                        arr.map((row, idx) => (idx === i ? { ...row, area: e.target.value } : row)),
+                      )
+                    }
+                    disabled={!canEditDowntime}
+                  />
+                  <Input
+                    type="number"
+                    placeholder="Minutes"
+                    value={d.minutes || ""}
+                    onChange={(e) =>
+                      setDowntimes((arr) =>
+                        arr.map((row, idx) =>
+                          idx === i ? { ...row, minutes: Number(e.target.value) } : row,
+                        ),
+                      )
+                    }
+                    disabled={!canEditDowntime}
+                  />
                 </div>
-                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setDowntimes((arr) => arr.filter((_, idx) => idx !== i))} disabled={!canEditDowntime}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive"
+                  onClick={() => setDowntimes((arr) => arr.filter((_, idx) => idx !== i))}
+                  disabled={!canEditDowntime}
+                >
                   <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
                 </Button>
               </div>
@@ -588,7 +853,11 @@ function EntryPage() {
             <EntryPie
               makingActual={Number(makingActual) || 0}
               packingActual={Number(packingActual) || 0}
-              rework={(Number(reworkCooking) || 0) + (Number(reworkMaking) || 0) + (Number(reworkPacking) || 0)}
+              rework={
+                (Number(reworkCooking) || 0) +
+                (Number(reworkMaking) || 0) +
+                (Number(reworkPacking) || 0)
+              }
               downtimeMin={totalDowntime}
             />
           </CardContent>
@@ -597,11 +866,22 @@ function EntryPage() {
 
       <div className="sticky bottom-4 mt-6 flex justify-end gap-2">
         {existingEntryId && canDelete && (
-          <Button size="lg" variant="outline" className="text-destructive hover:text-destructive" onClick={() => handleDelete()} disabled={deleting || saving || readOnly}>
+          <Button
+            size="lg"
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            onClick={() => handleDelete()}
+            disabled={deleting || saving || readOnly}
+          >
             <Trash2 className="mr-2 h-4 w-4" /> {deleting ? "Deleting…" : "Delete Entry"}
           </Button>
         )}
-        <Button size="lg" onClick={handleSave} disabled={saving || deleting || readOnly || (!existingEntryId && !canCreate)} className="shadow-elevated">
+        <Button
+          size="lg"
+          onClick={handleSave}
+          disabled={saving || deleting || readOnly || (!existingEntryId && !canCreate)}
+          className="shadow-elevated"
+        >
           <Save className="mr-2 h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
         </Button>
       </div>
@@ -618,7 +898,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function EntryPie({ makingActual, packingActual, rework, downtimeMin }: { makingActual: number; packingActual: number; rework: number; downtimeMin: number }) {
+function EntryPie({
+  makingActual,
+  packingActual,
+  rework,
+  downtimeMin,
+}: {
+  makingActual: number;
+  packingActual: number;
+  rework: number;
+  downtimeMin: number;
+}) {
   const data = [
     { name: "Making (kg)", value: makingActual, fill: "var(--color-chart-1)" },
     { name: "Packing (kg)", value: packingActual, fill: "var(--color-chart-2)" },
@@ -628,14 +918,34 @@ function EntryPie({ makingActual, packingActual, rework, downtimeMin }: { making
   if (data.length === 0) return null;
   return (
     <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Entry Composition</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Entry Composition
+      </p>
       <div className="h-56 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} innerRadius={35} paddingAngle={2}>
-              {data.map((d, i) => (<Cell key={i} fill={d.fill} />))}
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={70}
+              innerRadius={35}
+              paddingAngle={2}
+            >
+              {data.map((d, i) => (
+                <Cell key={i} fill={d.fill} />
+              ))}
             </Pie>
-            <RTooltip contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }} />
+            <RTooltip
+              contentStyle={{
+                background: "var(--color-popover)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+            />
             <Legend wrapperStyle={{ fontSize: 11 }} />
           </PieChart>
         </ResponsiveContainer>

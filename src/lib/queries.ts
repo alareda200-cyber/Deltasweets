@@ -136,10 +136,7 @@ export interface DailyEntry {
 export const linesQuery = queryOptions({
   queryKey: ["lines"],
   queryFn: async (): Promise<ProductionLine[]> => {
-    const { data, error } = await supabase
-      .from("production_lines")
-      .select("*")
-      .order("sort_order");
+    const { data, error } = await supabase.from("production_lines").select("*").order("sort_order");
     if (error) throw error;
     return data as ProductionLine[];
   },
@@ -283,7 +280,10 @@ export const entryAreaOwnersForEntriesQuery = (entryIds: string[]) =>
     enabled: entryIds.length > 0,
     queryFn: async (): Promise<EntryAreaOwner[]> => {
       if (entryIds.length === 0) return [];
-      const { data, error } = await supabase.from("entry_area_owners").select("*").in("entry_id", entryIds);
+      const { data, error } = await supabase
+        .from("entry_area_owners")
+        .select("*")
+        .in("entry_id", entryIds);
       if (error) throw error;
       return (data ?? []) as EntryAreaOwner[];
     },
@@ -307,29 +307,23 @@ export const entriesQuery = (lineId: string | null, from: string, to: string) =>
     },
   });
 
-export const entryDowntimesQuery = (lineId: string | null, from: string, to: string) =>
+// Takes entry IDs already fetched by entriesQuery instead of re-querying
+// daily_entries for the same line_id/date range — avoids a duplicate round trip.
+export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
   queryOptions({
-    queryKey: ["entry-downtimes", lineId, from, to],
-    enabled: !!lineId,
+    queryKey: ["entry-downtimes-for-entries", entryIds.slice().sort().join(",")],
+    enabled: entryIds.length > 0,
     queryFn: async (): Promise<EntryDowntime[]> => {
-      if (!lineId) return [];
-      // Get entry IDs in range
-      const { data: entries, error: e1 } = await supabase
-        .from("daily_entries")
-        .select("id")
-        .eq("line_id", lineId)
-        .gte("entry_date", from)
-        .lte("entry_date", to);
-      if (e1) throw e1;
-      const ids = (entries ?? []).map((e) => e.id);
-      if (ids.length === 0) return [];
+      if (entryIds.length === 0) return [];
       // Resolve each downtime's classification (department/type/severity/production area)
       // through its reason via an embedded select — same single round trip,
       // no separate lookup query, no N+1.
       const { data, error } = await supabase
         .from("entry_downtimes")
-        .select("*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id)")
-        .in("entry_id", ids);
+        .select(
+          "*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id)",
+        )
+        .in("entry_id", entryIds);
       if (error) throw error;
       return (data ?? []).map((row: any) => ({
         id: row.id,
@@ -343,30 +337,5 @@ export const entryDowntimesQuery = (lineId: string | null, from: string, to: str
         severity_id: row.downtime_reasons?.severity_id ?? null,
         production_area_id: row.downtime_reasons?.production_area_id ?? null,
       }));
-    },
-  });
-
-export const entryAreaOwnersQuery = (lineId: string | null, from: string, to: string) =>
-  queryOptions({
-    queryKey: ["entry-area-owners", lineId, from, to],
-    enabled: !!lineId,
-    queryFn: async (): Promise<EntryAreaOwner[]> => {
-      if (!lineId) return [];
-      // Get entry IDs in range
-      const { data: entries, error: e1 } = await supabase
-        .from("daily_entries")
-        .select("id")
-        .eq("line_id", lineId)
-        .gte("entry_date", from)
-        .lte("entry_date", to);
-      if (e1) throw e1;
-      const ids = (entries ?? []).map((e) => e.id);
-      if (ids.length === 0) return [];
-      const { data, error } = await supabase
-        .from("entry_area_owners")
-        .select("*")
-        .in("entry_id", ids);
-      if (error) throw error;
-      return data as EntryAreaOwner[];
     },
   });

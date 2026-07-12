@@ -27,6 +27,7 @@ interface AuthContextValue {
   profile: Profile | null;
   role: Role | null;
   loading: boolean;
+  profileLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -34,25 +35,60 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// A session restored from localStorage can outlive the Supabase keys it was
+// issued under (e.g. after a project key rotation) — it still *looks* present
+// to getSession(), but the first authenticated request against it comes back
+// with an invalid/expired-JWT error instead of data.
+function isStaleSessionError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const msg = (error.message ?? "").toLowerCase();
+  return error.code === "PGRST301" || msg.includes("jwt");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(true);
 
   async function loadProfile(userId: string) {
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+    setProfileLoading(true);
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+    if (isStaleSessionError(error)) {
+      // Clear the dead session locally (no network call) so the !session
+      // check in RequireAuth sends the user back to /login instead of
+      // stalling on a session that looks present but no longer validates.
+      await supabase.auth.signOut({ scope: "local" });
+      setSession(null);
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
     if (!error && data) {
       setProfile({
-        id: data.id, email: data.email, display_name: data.display_name,
-        first_name: data.first_name, last_name: data.last_name, username: data.username,
-        phone: data.phone, department_id: data.department_id,
-        role: data.role as Role, status: data.status,
-        must_change_password: data.must_change_password, last_login: data.last_login,
-        avatar_color: data.avatar_color, created_at: data.created_at,
+        id: data.id,
+        email: data.email,
+        display_name: data.display_name,
+        first_name: data.first_name,
+        last_name: data.last_name,
+        username: data.username,
+        phone: data.phone,
+        department_id: data.department_id,
+        role: data.role as Role,
+        status: data.status,
+        must_change_password: data.must_change_password,
+        last_login: data.last_login,
+        avatar_color: data.avatar_color,
+        created_at: data.created_at,
       });
     } else {
       setProfile(null);
     }
+    setProfileLoading(false);
   }
 
   useEffect(() => {
@@ -64,7 +100,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return;
       setSession(data.session);
-      if (data.session?.user) await loadProfile(data.session.user.id);
+      if (data.session?.user) {
+        await loadProfile(data.session.user.id);
+      } else {
+        setProfileLoading(false);
+      }
       setLoading(false);
     });
 
@@ -78,11 +118,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // inactive users, but if a profile's status field ever diverges
           // from that (e.g. manual DB edit), don't let a stale "inactive"
           // session stay signed in silently.
-          const { data: fresh } = await supabase.from("profiles").select("status").eq("id", newSession.user.id).maybeSingle();
+          const { data: fresh } = await supabase
+            .from("profiles")
+            .select("status")
+            .eq("id", newSession.user.id)
+            .maybeSingle();
           if (fresh?.status === "inactive") {
             await supabase.auth.signOut();
             setSession(null);
             setProfile(null);
+            setProfileLoading(false);
             setLoading(false);
             return;
           }
@@ -91,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         setProfile(null);
+        setProfileLoading(false);
       }
       setLoading(false);
     });
@@ -102,6 +148,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function signIn(email: string, password: string) {
+    // A stale/corrupted local session (e.g. left over from before a Supabase
+    // key rotation) can leave supabase-js's internal auth lock stuck, which
+    // makes signInWithPassword hang indefinitely on some devices. Clearing
+    // local session state first (no network call) guarantees a clean slate.
+    await supabase.auth.signOut({ scope: "local" });
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error ? error.message : null };
   }
@@ -113,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setSession(null);
     setProfile(null);
+    setProfileLoading(false);
   }
 
   const value: AuthContextValue = {
@@ -121,9 +173,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile,
     role: profile?.role ?? null,
     loading,
+    profileLoading,
     signIn,
     signOut,
-    refreshProfile: async () => { if (session?.user) await loadProfile(session.user.id); },
+    refreshProfile: async () => {
+      if (session?.user) await loadProfile(session.user.id);
+    },
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

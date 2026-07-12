@@ -1,14 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, lazy, Suspense } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
-import { PerformanceSection } from "@/components/PerformanceSection";
-import { DowntimeSection } from "@/components/DowntimeSection";
-import { ReworkSection } from "@/components/ReworkSection";
-import { TopQualityAreaCard } from "@/components/TopQualityAreaCard";
-import { MaintenanceDowntimeCard } from "@/components/MaintenanceDowntimeCard";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,21 +11,52 @@ import { Button } from "@/components/ui/button";
 import {
   linesQuery,
   entriesQuery,
-  entryDowntimesQuery,
+  entryDowntimesForEntriesQuery,
   productionAreasQuery,
   areaOwnersQuery,
-  entryAreaOwnersQuery,
+  entryAreaOwnersForEntriesQuery,
   departmentsQuery,
   departmentCategoriesQuery,
   downtimeTypesQuery,
   severityLevelsQuery,
 } from "@/lib/queries";
 import { monthRange } from "@/lib/date-utils";
-import { exportDashboardToPdf } from "@/lib/pdf-export";
+import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { PlusSquare, FileDown, Loader2 } from "lucide-react";
+
+// recharts (the bulk of these components' weight) is code-split into its own
+// chunk; loading these lazily keeps it out of the main route bundle and lets
+// the dashboard shell (header, tabs) paint before charts finish downloading.
+const PerformanceSection = lazy(() =>
+  import("@/components/PerformanceSection").then((m) => ({ default: m.PerformanceSection })),
+);
+const DowntimeSection = lazy(() =>
+  import("@/components/DowntimeSection").then((m) => ({ default: m.DowntimeSection })),
+);
+const ReworkSection = lazy(() =>
+  import("@/components/ReworkSection").then((m) => ({ default: m.ReworkSection })),
+);
+const TopQualityAreaCard = lazy(() =>
+  import("@/components/TopQualityAreaCard").then((m) => ({ default: m.TopQualityAreaCard })),
+);
+const MaintenanceDowntimeCard = lazy(() =>
+  import("@/components/MaintenanceDowntimeCard").then((m) => ({
+    default: m.MaintenanceDowntimeCard,
+  })),
+);
+
+function ChartsSkeleton() {
+  return (
+    <div className="mt-6 grid grid-cols-1 gap-6">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="h-64 animate-pulse rounded-2xl border border-border bg-card" />
+      ))}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -42,6 +68,7 @@ export const Route = createFileRoute("/")({
       },
     ],
   }),
+  beforeLoad: requireSession,
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(linesQuery),
@@ -77,6 +104,7 @@ function Dashboard() {
     setExporting(true);
     setExportProgress("Preparing PDF…");
     try {
+      const { exportDashboardToPdf } = await import("@/lib/pdf-export");
       await exportDashboardToPdf({
         container: exportRef.current,
         dashboardName: "Production Scorecard Dashboard",
@@ -192,7 +220,10 @@ function HeroHeader({
   to: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-3xl gradient-hero p-8 text-white shadow-elevated md:p-10">
+    <div
+      data-pdf-section="hero"
+      className="overflow-hidden rounded-3xl gradient-hero p-8 text-white shadow-elevated md:p-10"
+    >
       <p className="text-xs font-semibold uppercase tracking-[0.3em] opacity-80">
         Daily Production Scorecard
       </p>
@@ -220,8 +251,9 @@ function DashboardBody({
 }) {
   const { role } = useAuth();
   const { data: entries = [] } = useSuspenseQuery(entriesQuery(lineId, from, to));
-  const { data: downtimes = [] } = useSuspenseQuery(entryDowntimesQuery(lineId, from, to));
-  const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersQuery(lineId, from, to));
+  const entryIds = useMemo(() => entries.map((e) => e.id), [entries]);
+  const { data: downtimes = [] } = useSuspenseQuery(entryDowntimesForEntriesQuery(entryIds));
+  const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersForEntriesQuery(entryIds));
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
   const { data: departments } = useSuspenseQuery(departmentsQuery);
@@ -241,38 +273,52 @@ function DashboardBody({
   }
 
   return (
-    <div className="mt-6 grid grid-cols-1 gap-6">
-      <PerformanceSection
-        title="1. Making / Depositing Performance"
-        subtitle="Plan vs Actual — Weight (kg)"
-        entries={entries}
-        field="making"
-        accentColor={color}
-      />
-      <PerformanceSection
-        title="2. Packing Performance"
-        subtitle="Plan vs Actual — Packed Quantity (kg)"
-        entries={entries}
-        field="packing"
-        accentColor={color}
-      />
-      <TopQualityAreaCard
-        productionAreas={productionAreas}
-        areaOwners={areaOwners}
-        entryAreaOwners={entryAreaOwners}
-      />
-      <DowntimeSection entries={entries} downtimes={downtimes} />
-      {can(role, "dashboard.viewMaintenanceCard") && (
-        <MaintenanceDowntimeCard
-          downtimes={downtimes}
-          departments={departments}
-          departmentCategories={departmentCategories}
-          downtimeTypes={downtimeTypes}
-          severityLevels={severityLevels}
-        />
-      )}
-      <ReworkSection entries={entries} />
-    </div>
+    <Suspense fallback={<ChartsSkeleton />}>
+      <div className="mt-6 grid grid-cols-1 gap-6">
+        <div data-pdf-section="performance-making">
+          <PerformanceSection
+            title="1. Making / Depositing Performance"
+            subtitle="Plan vs Actual — Weight (kg)"
+            entries={entries}
+            field="making"
+            accentColor={color}
+          />
+        </div>
+        <div data-pdf-section="performance-packing">
+          <PerformanceSection
+            title="2. Packing Performance"
+            subtitle="Plan vs Actual — Packed Quantity (kg)"
+            entries={entries}
+            field="packing"
+            accentColor={color}
+          />
+        </div>
+        <div data-pdf-section="quality">
+          <TopQualityAreaCard
+            productionAreas={productionAreas}
+            areaOwners={areaOwners}
+            entryAreaOwners={entryAreaOwners}
+          />
+        </div>
+        <div data-pdf-section="downtime">
+          <DowntimeSection entries={entries} downtimes={downtimes} />
+        </div>
+        {can(role, "dashboard.viewMaintenanceCard") && (
+          <div data-pdf-section="maintenance">
+            <MaintenanceDowntimeCard
+              downtimes={downtimes}
+              departments={departments}
+              departmentCategories={departmentCategories}
+              downtimeTypes={downtimeTypes}
+              severityLevels={severityLevels}
+            />
+          </div>
+        )}
+        <div data-pdf-section="rework">
+          <ReworkSection entries={entries} />
+        </div>
+      </div>
+    </Suspense>
   );
 }
 
