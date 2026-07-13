@@ -42,7 +42,13 @@
       "Bash(node render-pdf.mjs 'C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-\\\\b44c0d8b-50ef-4227-8ba6-7848ff9e0483\\\\scratchpad/export-desktop.pdf' 'C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-\\\\b44c0d8b-50ef-4227-8ba6-7848ff9e0483\\\\scratchpad')",
       "Bash(node inspect-pdf.mjs 'C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-\\\\b44c0d8b-50ef-4227-8ba6-7848ff9e0483\\\\scratchpad/export-desktop.pdf')",
       "Bash(node inspect-pdf.mjs 'C:\\\\Users\\\\hp\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-\\\\b44c0d8b-50ef-4227-8ba6-7848ff9e0483\\\\scratchpad/export-mobile.pdf')",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(git commit *)",
+      "Bash(mkdir -p /c/Users/hp/AppData/Local/Temp/claude/C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-/0c62dd47-a3c4-48dd-87f2-50d32ab9b14d/scratchpad/pw-test)",
+      "Read(//c/Users/hp/AppData/Local/Temp/claude/C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-/0c62dd47-a3c4-48dd-87f2-50d32ab9b14d/scratchpad/**)",
+      "Bash(tee \"/c/Users/hp/AppData/Local/Temp/claude/C--Users-hp-OneDrive-Desktop-shanawanygroup-main-updated--11-/0c62dd47-a3c4-48dd-87f2-50d32ab9b14d/scratchpad/dev-server.log\")",
+      "Bash(node debug-c.js)",
+      "Bash(node debug-c2.js)"
     ]
   }
 }

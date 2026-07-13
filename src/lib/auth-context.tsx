@@ -45,34 +45,6 @@ function isStaleSessionError(error: { code?: string; message?: string } | null):
   return error.code === "PGRST301" || msg.includes("jwt");
 }
 
-// supabase-js serializes auth.* calls (getSession/signOut/refreshSession/...)
-// behind an internal lock. Calling any of them synchronously from inside an
-// onAuthStateChange callback — which itself runs under that lock — deadlocks:
-// the nested call waits forever for a lock the running callback still holds,
-// so the callback's own `await` never resolves and loading/profileLoading get
-// stuck true forever (Supabase's documented gotcha for this API). Deferring
-// with setTimeout lets the callback finish and release the lock first.
-function deferredSignOut(...args: Parameters<typeof supabase.auth.signOut>) {
-  setTimeout(() => {
-    void supabase.auth.signOut(...args);
-  }, 0);
-}
-
-// A getSession() call can itself get stuck behind a held lock (e.g. a prior
-// tab/session left it in a bad state) — without a bound, that hangs the
-// initial auth check forever and RequireAuth spins indefinitely. Fall back to
-// "no session" so the app degrades to the login screen instead of never
-// resolving.
-const GET_SESSION_TIMEOUT_MS = 5000;
-function getSessionWithTimeout() {
-  return Promise.race([
-    supabase.auth.getSession(),
-    new Promise<{ data: { session: null } }>((resolve) =>
-      setTimeout(() => resolve({ data: { session: null } }), GET_SESSION_TIMEOUT_MS),
-    ),
-  ]);
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -90,9 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Clear the dead session locally (no network call) so the !session
       // check in RequireAuth sends the user back to /login instead of
       // stalling on a session that looks present but no longer validates.
-      // Deferred: loadProfile can run from inside onAuthStateChange, where a
-      // direct signOut() call would deadlock (see deferredSignOut above).
-      deferredSignOut({ scope: "local" });
+      void supabase.auth.signOut({ scope: "local" });
       setSession(null);
       setProfile(null);
       setProfileLoading(false);
@@ -124,21 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    // Session restore on load/refresh — Supabase's own persisted storage
-    // (localStorage, configured in client.ts) already survives a reload;
-    // this just brings it into React state.
-    getSessionWithTimeout().then(async ({ data }) => {
-      if (cancelled) return;
-      setSession(data.session);
-      if (data.session?.user) {
-        await loadProfile(data.session.user.id);
-      } else {
-        setProfileLoading(false);
-      }
-      setLoading(false);
-    });
-
-    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+    async function handleAuthEvent(event: string, newSession: Session | null) {
       if (cancelled) return;
       setSession(newSession);
       if (newSession?.user) {
@@ -154,9 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .eq("id", newSession.user.id)
             .maybeSingle();
           if (fresh?.status === "inactive") {
-            // Deferred for the same reason as above: this runs inside the
-            // onAuthStateChange callback itself.
-            deferredSignOut();
+            void supabase.auth.signOut();
             setSession(null);
             setProfile(null);
             setProfileLoading(false);
@@ -171,6 +125,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfileLoading(false);
       }
       setLoading(false);
+    }
+
+    // onAuthStateChange fires an INITIAL_SESSION event immediately on
+    // subscribe (with the session restored from localStorage, or null) —
+    // that's the single source of truth for "the initial auth check is
+    // done" (supabase-js v2's documented pattern), so `loading` stays true
+    // until this callback has run at least once.
+    //
+    // The callback itself runs under supabase-js's internal auth lock, and
+    // that lock isn't just for auth.* calls — a plain `supabase.from(...)`
+    // query calls `auth.getSession()` internally to attach the bearer token,
+    // so even a "harmless" profile fetch made synchronously in here deadlocks
+    // waiting on the lock the running callback still holds (loadProfile's
+    // `await` then never resolves, and loading/profileLoading get stuck true
+    // forever — this is what caused /login to hang instead of redirecting,
+    // and /users to spin forever, on a fresh page load with a restored
+    // session). Deferring the whole body with setTimeout lets the callback
+    // return and release the lock before any of this runs.
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
+      setTimeout(() => {
+        void handleAuthEvent(event, newSession);
+      }, 0);
     });
 
     return () => {
