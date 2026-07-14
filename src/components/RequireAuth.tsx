@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { can, type Permission } from "@/lib/permissions";
+import { shouldSuppressRedirect } from "@/lib/nav-loop-guard";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
@@ -11,7 +12,7 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!loading && !session) {
+    if (!loading && !session && !shouldSuppressRedirect("/login")) {
       navigate({ to: "/login" });
     }
   }, [loading, session, navigate]);

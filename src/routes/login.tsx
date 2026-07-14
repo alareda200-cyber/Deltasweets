@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { shouldSuppressRedirect } from "@/lib/nav-loop-guard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +26,7 @@ function LoginPage() {
   const [forgotOpen, setForgotOpen] = useState(false);
 
   useEffect(() => {
-    if (!loading && session) navigate({ to: "/" });
+    if (!loading && session && !shouldSuppressRedirect("/")) navigate({ to: "/" });
   }, [loading, session, navigate]);
 
   async function handleSubmit(e: React.FormEvent) {
