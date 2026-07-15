@@ -3,6 +3,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { Role } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
+import { isAuthError } from "@/lib/supabase-errors";
 
 interface Profile {
   id: string;
@@ -35,16 +36,6 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// A session restored from localStorage can outlive the Supabase keys it was
-// issued under (e.g. after a project key rotation) — it still *looks* present
-// to getSession(), but the first authenticated request against it comes back
-// with an invalid/expired-JWT error instead of data.
-function isStaleSessionError(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false;
-  const msg = (error.message ?? "").toLowerCase();
-  return error.code === "PGRST301" || msg.includes("jwt");
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -58,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select("*")
       .eq("id", userId)
       .maybeSingle();
-    if (isStaleSessionError(error)) {
+    if (isAuthError(error)) {
       // Clear the dead session locally (no network call) so the !session
       // check in RequireAuth sends the user back to /login instead of
       // stalling on a session that looks present but no longer validates.
