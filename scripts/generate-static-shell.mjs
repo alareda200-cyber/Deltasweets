@@ -16,6 +16,7 @@
  */
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -56,6 +57,67 @@ function stripBodyToScriptsOnly(html) {
   const strippedBody = `<body${bodyAttrs}>${scriptTags.join("")}</body>`;
   return (
     html.slice(0, bodyMatch.index) + strippedBody + html.slice(bodyMatch.index + fullMatch.length)
+  );
+}
+
+// The captured HTML's <body> carries two classic (non-module) inline
+// <script> tags ahead of the module entry script: a scroll-restoration IIFE
+// and the `window.$_TSR = {...}` hydration-manifest bootstrap (see
+// stripBodyToScriptsOnly's comment for why $_TSR must survive). Inline
+// script content is what forces 'unsafe-inline' into script-src in
+// firebase.json's CSP. Since this shell is static, we can write that same
+// content to a real same-origin file instead and reference it with <script
+// src>, which satisfies script-src 'self' with no 'unsafe-inline' needed.
+// Both scripts already end by calling `document.currentScript.remove()`;
+// that stays correct even merged into one file — `document.currentScript`
+// tracks the script element for the whole synchronous run, and calling
+// .remove() on an already-detached node a second time is a harmless no-op.
+function externalizeInlineScripts(html, publicDir) {
+  const bodyMatch = html.match(/<body([^>]*)>([\s\S]*)<\/body>/i);
+  if (!bodyMatch) {
+    throw new Error(
+      "Could not find <body>...</body> when externalizing inline scripts.",
+    );
+  }
+  const [fullMatch, bodyAttrs, bodyInner] = bodyMatch;
+
+  const scriptTagRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  const PLACEHOLDER = "__TSR_INIT_SCRIPT_PLACEHOLDER__";
+  const inlineParts = [];
+  let placeholderInserted = false;
+  let rebuilt = "";
+  let lastIndex = 0;
+  let match;
+
+  while ((match = scriptTagRe.exec(bodyInner)) !== null) {
+    const [tag, attrs, content] = match;
+    rebuilt += bodyInner.slice(lastIndex, match.index);
+    if (/\bsrc\s*=/.test(attrs)) {
+      rebuilt += tag;
+    } else {
+      inlineParts.push(content);
+      if (!placeholderInserted) {
+        rebuilt += PLACEHOLDER;
+        placeholderInserted = true;
+      }
+    }
+    lastIndex = match.index + tag.length;
+  }
+  rebuilt += bodyInner.slice(lastIndex);
+
+  if (inlineParts.length === 0) {
+    return html;
+  }
+
+  const combined = inlineParts.join(";\n");
+  const hash = createHash("sha256").update(combined).digest("hex").slice(0, 8);
+  const fileName = `tsr-init-${hash}.js`;
+  writeFileSync(path.join(publicDir, "assets", fileName), combined, "utf8");
+
+  rebuilt = rebuilt.replace(PLACEHOLDER, `<script src="/assets/${fileName}"></script>`);
+  const newBody = `<body${bodyAttrs}>${rebuilt}</body>`;
+  return (
+    html.slice(0, bodyMatch.index) + newBody + html.slice(bodyMatch.index + fullMatch.length)
   );
 }
 
@@ -101,8 +163,10 @@ async function main() {
   //
   // What we must NOT keep is /login's server-rendered *DOM* (the <body>
   // content besides scripts) — see stripBodyToScriptsOnly() above.
-  const shellHtml = stripBodyToScriptsOnly(html);
-  const outputPath = path.join(projectRoot, ".output/public/index.html");
+  const publicDir = path.join(projectRoot, ".output/public");
+  const strippedHtml = stripBodyToScriptsOnly(html);
+  const shellHtml = externalizeInlineScripts(strippedHtml, publicDir);
+  const outputPath = path.join(publicDir, "index.html");
   writeFileSync(outputPath, shellHtml, "utf8");
   log(`Wrote static shell to ${outputPath}`);
   log("Done. .output/public/ is now ready for `firebase deploy --only hosting`.");
