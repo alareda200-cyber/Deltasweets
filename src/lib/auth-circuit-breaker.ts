@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { clearLocalSupabaseSession, forceReauth } from "@/lib/auth-error-handler";
 
 const BREAKER_DURATION_MS = 30_000;
@@ -68,6 +69,7 @@ export function installAuthCircuitBreaker() {
         // out before clearing anything — see forceReauth). Act immediately
         // rather than waiting for a downstream query to also fail.
         clearLocalSupabaseSession();
+        toast.error("انتهت الجلسة، سجل دخول من جديد");
         forceReauth();
       }
     }

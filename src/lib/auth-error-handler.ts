@@ -26,9 +26,10 @@ export function clearLocalSupabaseSession() {
 // Used when we can't trust supabase-js to have emitted SIGNED_OUT (so
 // AuthProvider's `session` state and RequireAuth's redirect effect may
 // never fire) — a hard navigation lands on /login regardless of whatever
-// state the in-memory auth client is stuck in.
+// state the in-memory auth client is stuck in. Callers are responsible for
+// toasting first (this only navigates) so a single failure never stacks
+// more than one toast.
 export function forceReauth() {
-  toast.error("انتهت الجلسة، سجل دخول من جديد");
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
     window.location.assign("/login");
   }
