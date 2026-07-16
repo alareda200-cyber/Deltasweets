@@ -4,6 +4,15 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Role } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
 import { isAuthError } from "@/lib/supabase-errors";
+import { installAuthCircuitBreaker } from "@/lib/auth-circuit-breaker";
+
+// Module-scope, not inside the component/effect: must be patched before
+// AuthProvider's effect below makes the first `supabase.auth.*` call (which
+// is what triggers the lazy client Proxy in client.ts to actually construct
+// the client and start issuing requests). client.ts's own fetch override
+// is generated and off-limits (see CLAUDE.md); this wraps the platform
+// fetch it delegates to, from outside that file.
+installAuthCircuitBreaker();
 
 interface Profile {
   id: string;
