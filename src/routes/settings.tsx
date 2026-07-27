@@ -173,18 +173,18 @@ function UsersCard({
           {users.map((u) => (
             <div
               key={u.id}
-              className="flex items-center justify-between rounded-md border border-border p-2 text-sm"
+              className="flex flex-col gap-2 rounded-md border border-border p-2 text-sm md:flex-row md:items-center md:justify-between"
             >
-              <div>
-                <p className="font-medium">{u.display_name || u.email}</p>
-                <p className="text-xs text-muted-foreground">{u.email}</p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{u.display_name || u.email}</p>
+                <p className="truncate text-xs text-muted-foreground">{u.email}</p>
               </div>
               <Select
                 value={u.role}
                 onValueChange={(v) => changeRole(u.id, v as Role)}
                 disabled={u.id === currentUser?.id}
               >
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-full md:w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

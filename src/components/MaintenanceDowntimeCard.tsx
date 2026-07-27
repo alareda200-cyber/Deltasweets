@@ -99,7 +99,7 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
               No downtime classified under "{categoryName}" in this period.
             </div>
           ) : (
-            <div className="mb-6 h-72 w-full">
+            <div className="mb-6 h-[200px] w-full md:h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 40 }}>
                   <defs>

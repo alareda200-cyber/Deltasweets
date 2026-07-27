@@ -59,7 +59,7 @@ export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwner
             <KpiCard label="Number of Entries" value={String(best.count)} icon={Hash} variant="default" />
           </div>
 
-          <div className="h-64 w-full">
+          <div className="h-[200px] w-full md:h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ top: 8, right: 30, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />

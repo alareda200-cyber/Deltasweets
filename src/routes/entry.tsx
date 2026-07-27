@@ -557,9 +557,9 @@ function EntryPage() {
       )}
 
       <Tabs value={lineId} onValueChange={setLineId} className="mb-4">
-        <TabsList className="flex flex-wrap gap-1">
+        <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto">
           {lines.map((l) => (
-            <TabsTrigger key={l.id} value={l.id}>
+            <TabsTrigger key={l.id} value={l.id} className="shrink-0 whitespace-nowrap">
               <span
                 className="mr-2 inline-block h-2 w-2 rounded-full"
                 style={{ background: l.color }}
@@ -579,7 +579,7 @@ function EntryPage() {
             <CardTitle>Entry Details</CardTitle>
             <CardDescription>Plan & actual figures in kilograms.</CardDescription>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-3">
+          <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <Field label="Date">
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
@@ -666,7 +666,7 @@ function EntryPage() {
             </Field>
 
             {productionAreas.length > 0 && (
-              <div className="col-span-2 md:col-span-3">
+              <div className="col-span-1 md:col-span-3">
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Area owners &amp; performance
                 </div>
@@ -676,7 +676,7 @@ function EntryPage() {
                     return (
                       <div key={area.id} className="rounded-lg border border-border p-3">
                         <p className="mb-2 text-sm font-semibold">{area.name}</p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <Field label="Owner">
                             <Select
                               value={sel.ownerId}
@@ -729,11 +729,11 @@ function EntryPage() {
             )}
 
             {customFields.length > 0 && (
-              <div className="col-span-2 md:col-span-3">
+              <div className="col-span-1 md:col-span-3">
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Custom fields for this line
                 </div>
-                <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   {customFields.map((f) => (
                     <Field key={f.id} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`}>
                       <Input
@@ -749,7 +749,7 @@ function EntryPage() {
               </div>
             )}
 
-            <div className="col-span-2 md:col-span-3">
+            <div className="col-span-1 md:col-span-3">
               <Label className="text-xs">Comments</Label>
               <Textarea
                 value={comments}
@@ -813,7 +813,7 @@ function EntryPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <Input
                     placeholder="Area"
                     value={d.area}

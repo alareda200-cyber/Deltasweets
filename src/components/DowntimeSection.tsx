@@ -3,6 +3,7 @@ import type { EntryDowntime, DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt } from "@/lib/date-utils";
 import { Clock, AlertOctagon, Activity } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Props {
   entries: DailyEntry[];
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function DowntimeSection({ entries, downtimes }: Props) {
+  const isMobile = useIsMobile();
   const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
   const totalDown = entries.reduce((s, e) => s + Number(e.downtime_min), 0);
   const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
@@ -32,8 +34,9 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   }
   const sorted = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes).slice(0, 12);
   const total = sorted.reduce((s, r) => s + r.minutes, 0);
+  const nameMaxLen = isMobile ? 8 : 24;
   const chartData = sorted.map((r) => ({
-    name: r.reason.length > 24 ? r.reason.slice(0, 24) + "…" : r.reason,
+    name: r.reason.length > nameMaxLen ? r.reason.slice(0, nameMaxLen) + "…" : r.reason,
     fullName: r.reason,
     area: r.area,
     minutes: r.minutes,
@@ -89,7 +92,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
       ) : (
         <div className="h-96 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 70 }}>
+            <BarChart data={chartData} margin={{ top: 24, right: 20, left: isMobile ? 12 : 0, bottom: isMobile ? 80 : 70 }}>
               <defs>
                 {chartData.map((_, i) => {
                   const hue = 260 - i * 8;
@@ -106,9 +109,9 @@ export function DowntimeSection({ entries, downtimes }: Props) {
               <XAxis
                 dataKey="name"
                 interval={0}
-                angle={-30}
+                angle={isMobile ? -45 : -30}
                 textAnchor="end"
-                height={70}
+                height={isMobile ? 80 : 70}
                 tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
               />
               <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />

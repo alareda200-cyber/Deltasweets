@@ -39,7 +39,7 @@ export function KpiCard({ label, value, sub, icon: Icon, variant = "default" }: 
         </p>
         {Icon && <Icon className={cn("h-4 w-4", accent)} />}
       </div>
-      <p className={cn("mt-2 text-3xl font-bold tracking-tight tabular-nums", accent)}>
+      <p className={cn("mt-2 truncate text-2xl font-bold tracking-tight tabular-nums md:text-3xl", accent)}>
         {value}
       </p>
       {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}

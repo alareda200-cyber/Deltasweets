@@ -47,7 +47,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
           Month to Date
         </p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
           <KpiCard label="Plan (kg)" value={fmt(monthPlan)} icon={Target} variant="primary" />
           <KpiCard label="Actual (kg)" value={fmt(monthActual)} icon={TrendingUp} variant="primary" />
           <KpiCard
@@ -70,7 +70,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           {last ? `Last Day · ${last.entry_date}` : "Last Day · (no entries)"}
         </p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
           <KpiCard label="Plan (kg)" value={fmt(dayPlan)} />
           <KpiCard label="Actual (kg)" value={fmt(dayActual)} />
           <KpiCard
@@ -89,7 +89,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
       {/* Chart */}
       <div>
         <p className="mb-3 text-sm font-semibold">Daily Plan vs Actual (kg)</p>
-        <div className="h-72 w-full">
+        <div className="h-[200px] w-full md:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />

@@ -216,14 +216,14 @@ function UsersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
+                  <TableHead className="max-md:min-w-[160px]">User</TableHead>
                   <TableHead className="hidden md:table-cell">Username</TableHead>
-                  <TableHead className="hidden lg:table-cell">Department</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Department</TableHead>
+                  <TableHead className="max-md:min-w-[110px]">Role</TableHead>
+                  <TableHead className="max-md:min-w-[90px]">Status</TableHead>
                   <TableHead className="hidden lg:table-cell">Last Login</TableHead>
                   <TableHead className="hidden xl:table-cell">Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="max-md:min-w-[60px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -245,8 +245,8 @@ function UsersPage() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{u.username || "—"}</TableCell>
-                    <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">{u.departments?.name || "—"}</TableCell>
-                    <TableCell><Badge variant="secondary">{ROLE_LABELS[u.role as Role] ?? u.role}</Badge></TableCell>
+                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{u.departments?.name || "—"}</TableCell>
+                    <TableCell><Badge variant="secondary" className="whitespace-nowrap">{ROLE_LABELS[u.role as Role] ?? u.role}</Badge></TableCell>
                     <TableCell>
                       <Badge variant={u.status === "active" ? "default" : "destructive"}>{u.status === "active" ? "Active" : "Inactive"}</Badge>
                     </TableCell>

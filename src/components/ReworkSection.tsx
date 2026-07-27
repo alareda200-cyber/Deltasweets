@@ -42,7 +42,7 @@ export function ReworkSection({ entries }: Props) {
       {/* MTD */}
       <div className="mb-3">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">Month to Date</p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
           <KpiCard label="Cooking (kg)" value={fmt(cooking)} variant="primary" />
           <KpiCard label="Making (kg)" value={fmt(making)} variant="primary" />
           <KpiCard label="Packing (kg)" value={fmt(packing)} variant="primary" />
@@ -57,7 +57,7 @@ export function ReworkSection({ entries }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           {last ? `Last Day · ${last.entry_date}` : "Last Day · (no entries)"}
         </p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
           <KpiCard label="Cooking (kg)" value={fmt(dCooking)} />
           <KpiCard label="Making (kg)" value={fmt(dMaking)} />
           <KpiCard label="Packing (kg)" value={fmt(dPacking)} />
@@ -67,7 +67,7 @@ export function ReworkSection({ entries }: Props) {
         </div>
       </div>
 
-      <div className="h-72 w-full">
+      <div className="h-[200px] w-full md:h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 24, right: 8, bottom: 0, left: -8 }}>
             <defs>
