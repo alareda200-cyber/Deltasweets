@@ -1,1 +1,7 @@
 project_id = "azbsooazusvqkodrlzpi"
+
+[functions.send-push]
+# Called by the maintenance_events DB trigger and never directly from the
+# browser, so there's no end-user JWT to verify here — access is instead
+# gated by the PUSH_FUNCTION_SECRET shared-secret check inside the function.
+verify_jwt = false

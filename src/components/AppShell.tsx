@@ -11,6 +11,7 @@ import { MyProfileDialog } from "@/components/MyProfileDialog";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useNotifications } from "@/lib/notifications";
 import { Badge } from "@/components/ui/badge";
+import { PushNotificationToggle } from "@/components/PushNotificationToggle";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
@@ -79,6 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            <PushNotificationToggle />
             <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
