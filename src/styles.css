@@ -121,3 +121,12 @@
 @utility gradient-accent { background: var(--gradient-accent); }
 @utility shadow-card { box-shadow: var(--shadow-card); }
 @utility shadow-elevated { box-shadow: var(--shadow-elevated); }
+
+/* Hides the scrollbar on an overflow-x-auto container (e.g. the mobile nav
+   strip in AppShell) while keeping it scrollable — used where a visible
+   scrollbar would look broken next to icon-only nav items. */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar { display: none; }
+}

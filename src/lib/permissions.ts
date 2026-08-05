@@ -13,7 +13,9 @@ export type Permission =
   | "entry.editNotes"
   | "dashboard.view"
   | "dashboard.viewMaintenanceCard"
-  | "dashboard.exportPdf";
+  | "dashboard.exportPdf"
+  | "maintenance.view"
+  | "maintenance.edit";
 
 const MATRIX: Record<Role, Permission[]> = {
   admin: [
@@ -21,23 +23,24 @@ const MATRIX: Record<Role, Permission[]> = {
     "entry.view", "entry.create", "entry.delete", "entry.history",
     "entry.editProduction", "entry.editDowntime", "entry.editAreaOwners", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
+    "maintenance.view", "maintenance.edit",
   ],
   production: [
     "entry.view", "entry.create", "entry.delete", "entry.history",
     "entry.editProduction", "entry.editDowntime", "entry.editAreaOwners", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
+    "maintenance.view", "maintenance.edit",
   ],
   maintenance: [
     "entry.view", "entry.history",
     "entry.editDowntime", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
+    "maintenance.view", "maintenance.edit",
   ],
   quality: [
     "entry.view", "entry.history",
     "entry.editAreaOwners", "entry.editNotes",
-    "dashboard.view", "dashboard.exportPdf",
-    // Deliberately no "dashboard.viewMaintenanceCard" — Quality must not see
-    // Maintenance-related dashboard content.
+    "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
   ],
   viewer: [
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",

@@ -13,7 +13,14 @@ interface Props {
 export function DowntimeSection({ entries, downtimes }: Props) {
   const isMobile = useIsMobile();
   const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
-  const totalDown = entries.reduce((s, e) => s + Number(e.downtime_min), 0);
+  // Summed from the same combined downtimes array (entry_downtimes +
+  // maintenance_events, see maintenanceEventsAsDowntimes) that feeds the
+  // Pareto chart below — not from entries[].downtime_min, which is a
+  // separately-entered daily-entry field that never picks up maintenance
+  // events logged from /maintenance. Two numbers in the same section
+  // disagreeing about the same total was the bug; this is the single
+  // source of truth for both.
+  const totalDown = downtimes.reduce((s, d) => s + Number(d.minutes), 0);
   const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
 
   // Last day

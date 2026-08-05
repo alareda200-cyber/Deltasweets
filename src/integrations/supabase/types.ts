@@ -12,8 +12,74 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
+      area_owners: {
+        Row: {
+          code: string | null
+          created_at: string
+          department: string | null
+          department_id: string | null
+          employee_id: string | null
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          department?: string | null
+          department_id?: string | null
+          employee_id?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          department?: string | null
+          department_id?: string | null
+          employee_id?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "area_owners_department_id_fkey"
+            columns: ["department_id"]
+            isOneToOne: false
+            referencedRelation: "departments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -55,47 +121,6 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: []
-      }
-      area_owners: {
-        Row: {
-          code: string | null
-          created_at: string
-          department: string | null
-          department_id: string | null
-          employee_id: string | null
-          id: string
-          is_active: boolean
-          name: string
-        }
-        Insert: {
-          code?: string | null
-          created_at?: string
-          department?: string | null
-          department_id?: string | null
-          employee_id?: string | null
-          id?: string
-          is_active?: boolean
-          name: string
-        }
-        Update: {
-          code?: string | null
-          created_at?: string
-          department?: string | null
-          department_id?: string | null
-          employee_id?: string | null
-          id?: string
-          is_active?: boolean
-          name?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "area_owners_department_id_fkey"
-            columns: ["department_id"]
-            isOneToOne: false
-            referencedRelation: "departments"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       daily_entries: {
         Row: {
@@ -284,20 +309,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "downtime_reasons_line_id_fkey"
-            columns: ["line_id"]
-            isOneToOne: false
-            referencedRelation: "production_lines"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "downtime_reasons_production_area_id_fkey"
-            columns: ["production_area_id"]
-            isOneToOne: false
-            referencedRelation: "production_areas"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "downtime_reasons_department_id_fkey"
             columns: ["department_id"]
             isOneToOne: false
@@ -309,6 +320,20 @@ export type Database = {
             columns: ["downtime_type_id"]
             isOneToOne: false
             referencedRelation: "downtime_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "downtime_reasons_line_id_fkey"
+            columns: ["line_id"]
+            isOneToOne: false
+            referencedRelation: "production_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "downtime_reasons_production_area_id_fkey"
+            columns: ["production_area_id"]
+            isOneToOne: false
+            referencedRelation: "production_areas"
             referencedColumns: ["id"]
           },
           {
@@ -349,51 +374,6 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
-      }
-      entry_downtimes: {
-        Row: {
-          area: string
-          created_at: string
-          entry_id: string
-          id: string
-          minutes: number
-          reason_id: string | null
-          reason_name: string
-        }
-        Insert: {
-          area?: string
-          created_at?: string
-          entry_id: string
-          id?: string
-          minutes?: number
-          reason_id?: string | null
-          reason_name: string
-        }
-        Update: {
-          area?: string
-          created_at?: string
-          entry_id?: string
-          id?: string
-          minutes?: number
-          reason_id?: string | null
-          reason_name?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "entry_downtimes_entry_id_fkey"
-            columns: ["entry_id"]
-            isOneToOne: false
-            referencedRelation: "daily_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "entry_downtimes_reason_id_fkey"
-            columns: ["reason_id"]
-            isOneToOne: false
-            referencedRelation: "downtime_reasons"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       entry_area_owners: {
         Row: {
@@ -444,6 +424,51 @@ export type Database = {
           },
         ]
       }
+      entry_downtimes: {
+        Row: {
+          area: string
+          created_at: string
+          entry_id: string
+          id: string
+          minutes: number
+          reason_id: string | null
+          reason_name: string
+        }
+        Insert: {
+          area?: string
+          created_at?: string
+          entry_id: string
+          id?: string
+          minutes?: number
+          reason_id?: string | null
+          reason_name: string
+        }
+        Update: {
+          area?: string
+          created_at?: string
+          entry_id?: string
+          id?: string
+          minutes?: number
+          reason_id?: string | null
+          reason_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entry_downtimes_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "daily_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entry_downtimes_reason_id_fkey"
+            columns: ["reason_id"]
+            isOneToOne: false
+            referencedRelation: "downtime_reasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       line_field_definitions: {
         Row: {
           created_at: string
@@ -484,6 +509,115 @@ export type Database = {
             columns: ["line_id"]
             isOneToOne: false
             referencedRelation: "production_lines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      maintenance_events: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          line_id: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          severity_label: string | null
+          started_at: string
+          status: string
+          technician: string | null
+          title: string
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          line_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity_label?: string | null
+          started_at?: string
+          status?: string
+          technician?: string | null
+          title: string
+          type: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          line_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity_label?: string | null
+          started_at?: string
+          status?: string
+          technician?: string | null
+          title?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_events_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_events_line_id_fkey"
+            columns: ["line_id"]
+            isOneToOne: false
+            referencedRelation: "production_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_events_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      maintenance_notes: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          event_id: string
+          id: string
+          note: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          event_id: string
+          id?: string
+          note: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          event_id?: string
+          id?: string
+          note?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_notes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_notes_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "maintenance_events"
             referencedColumns: ["id"]
           },
         ]
@@ -642,10 +776,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      touch_last_login: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
+      is_admin: { Args: { check_user_id: string }; Returns: boolean }
+      touch_last_login: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
@@ -774,6 +906,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

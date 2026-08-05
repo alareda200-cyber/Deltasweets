@@ -1,7 +1,15 @@
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
-import type { EntryDowntime, Department, DepartmentCategory, DowntimeType, SeverityLevel } from "@/lib/queries";
+import { maintenanceEventsQuery, type EntryDowntime, type Department, type DepartmentCategory, type DowntimeType, type SeverityLevel, type MaintenanceEvent } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
+import { EventDetailDialog } from "./EventDetailDialog";
+import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { fmt } from "@/lib/date-utils";
+import { useAuth } from "@/lib/auth-context";
+import { can } from "@/lib/permissions";
+import { TYPE_LABELS, STATUS_LABELS, typeBadgeVariant, statusBadgeVariant, formatDuration } from "@/lib/maintenance-format";
 import { Wrench, AlertOctagon, Activity } from "lucide-react";
 
 interface Props {
@@ -13,21 +21,49 @@ interface Props {
   categoryName?: string; // which Department Category this card represents; defaults to "Maintenance"
 }
 
-// This card is entirely driven by master data — it never hardcodes a
-// department name (Mechanical/Electrical/etc). It resolves each downtime's
-// department via the classification already joined in entryDowntimesQuery,
-// then keeps only the ones whose department belongs to the requested
-// Department Category. Adding a new department (e.g. "Automation") under
-// the "Maintenance" category makes it appear here automatically — no code
-// change required.
+// This card is driven by master data — it never hardcodes a department name
+// (Mechanical/Electrical/etc) for entry_downtimes rows. It resolves each
+// downtime's department via the classification already joined in
+// entryDowntimesQuery, then keeps only the ones whose department belongs to
+// the requested Department Category. Adding a new department (e.g.
+// "Automation") under the "Maintenance" category makes it appear here
+// automatically — no code change required.
+// The one exception: rows synthesized from maintenance_events (source ===
+// "maintenance", see maintenanceEventsAsDowntimes) have no department_id —
+// there's no per-event department to classify them by — so they're always
+// included here rather than filtered by category membership.
 export function MaintenanceDowntimeCard({ downtimes, departments, departmentCategories, downtimeTypes, severityLevels, categoryName = "Maintenance" }: Props) {
+  // "Open Maintenance Events" below is a separate feature (the
+  // maintenance_events table) from the downtime-by-department data above —
+  // gated on its own permission since this card is embedded both on the
+  // Dashboard (gated by dashboard.viewMaintenanceCard, which viewer/quality
+  // also have) and on /maintenance (gated by maintenance.view). Only
+  // maintenance.view holders should see live open events either place.
+  const { role, user } = useAuth();
+  const canSeeOpenEvents = can(role, "maintenance.view");
+  const canEdit = can(role, "maintenance.edit");
+  const qc = useQueryClient();
+  const { data: allMaintenanceEvents = [] } = useQuery({
+    ...maintenanceEventsQuery(null, null, null, null, null),
+    enabled: canSeeOpenEvents,
+  });
+  const openEvents = allMaintenanceEvents.filter((e) => e.status === "open" || e.status === "in_progress");
+  const [selectedEvent, setSelectedEvent] = useState<MaintenanceEvent | null>(null);
+
+  function invalidateMaintenanceEvents() {
+    qc.invalidateQueries({ queryKey: ["maintenance-events"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-metrics"] });
+  }
+
   const category = departmentCategories.find((c) => c.name.trim().toLowerCase() === categoryName.trim().toLowerCase());
   const categoryDepartmentIds = new Set(
     departments.filter((d) => d.department_category_id === category?.id).map((d) => d.id),
   );
 
   const scoped = category
-    ? downtimes.filter((d) => d.department_id && categoryDepartmentIds.has(d.department_id))
+    ? downtimes.filter(
+        (d) => d.source === "maintenance" || (d.department_id && categoryDepartmentIds.has(d.department_id)),
+      )
     : [];
 
   function nameOf<T extends { id: string; name: string }>(list: T[], id: string | null): string {
@@ -65,7 +101,7 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
       else byReason.set(key, {
         reason: d.reason_name,
         department: nameOf(departments, d.department_id),
-        severity: nameOf(severityLevels, d.severity_id),
+        severity: d.severity_label ?? nameOf(severityLevels, d.severity_id),
         type: nameOf(downtimeTypes, d.downtime_type_id),
         minutes: Number(d.minutes),
       });
@@ -147,6 +183,55 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
             </div>
           )}
         </>
+      )}
+
+      {canSeeOpenEvents && (
+        <div className="mt-6 border-t border-border pt-6">
+          <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Open Maintenance Events</p>
+          {openEvents.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              No open maintenance events
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Event</TableHead>
+                    <TableHead className="hidden md:table-cell">Line</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden lg:table-cell">Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {openEvents.map((e) => {
+                    const durationMs = Date.now() - new Date(e.started_at).getTime();
+                    return (
+                      <TableRow key={e.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedEvent(e)}>
+                        <TableCell className="text-sm font-medium">{e.title}</TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{e.production_lines?.name ?? "—"}</TableCell>
+                        <TableCell><Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge></TableCell>
+                        <TableCell><Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge></TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{new Date(e.started_at).toLocaleString()}</TableCell>
+                        <TableCell className="text-sm tabular-nums">{formatDuration(durationMs)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          <EventDetailDialog
+            event={selectedEvent}
+            canEdit={canEdit}
+            userId={user?.id ?? null}
+            onOpenChange={(o) => !o && setSelectedEvent(null)}
+            onChanged={invalidateMaintenanceEvents}
+          />
+        </div>
       )}
     </section>
   );

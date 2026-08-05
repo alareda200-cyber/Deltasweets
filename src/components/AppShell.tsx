@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, PlusSquare, Settings, Factory, LogOut, Users, User, KeyRound, ChevronDown, ScrollText, Bell, AlertTriangle } from "lucide-react";
+import { LayoutDashboard, PlusSquare, Settings, Factory, LogOut, Users, User, KeyRound, ChevronDown, ScrollText, Bell, AlertTriangle, Wrench } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
   { to: "/entry", label: "Daily Entry", icon: PlusSquare, permission: "entry.view" as const },
+  { to: "/maintenance", label: "Maintenance", icon: Wrench, permission: "maintenance.view" as const },
   { to: "/users", label: "Users", icon: Users, permission: "users.manage" as const },
   { to: "/audit-log", label: "Audit Log", icon: ScrollText, permission: "users.manage" as const },
   { to: "/settings", label: "Settings", icon: Settings, permission: "settings.manage" as const },
@@ -41,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 border-b border-border bg-card/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-6 px-4 md:px-8">
-          <Link to="/" className="flex items-center gap-2.5">
+          <Link to="/" className="flex shrink-0 items-center gap-2.5">
             <div className="grid h-9 w-9 place-items-center rounded-lg gradient-hero shadow-elevated">
               <Factory className="h-5 w-5 text-white" />
             </div>
@@ -52,7 +53,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <p className="-mt-0.5 text-sm font-bold tracking-tight">Scorecard OS</p>
             </div>
           </Link>
-          <nav className="ml-2 flex items-center gap-1">
+          {/* min-w-0 lets this shrink inside the flex row instead of forcing
+              the header wider than the viewport — without it, overflow-x-auto
+              never kicks in because the row just grows to fit every item
+              (this is what caused the 549px-wide header on a 390px mobile
+              viewport once the Maintenance icon pushed nav past 5 items). */}
+          <nav className="ml-2 flex min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide">
             {visibleNav.map((n) => {
               const active = n.to === "/" ? pathname === "/" : pathname.startsWith(n.to);
               return (
@@ -60,7 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   key={n.to}
                   to={n.to}
                   className={cn(
-                    "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                     active
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -72,7 +78,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

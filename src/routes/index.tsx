@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useState, useMemo, useRef, lazy, Suspense } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
+import { MaintenanceEventsCard } from "@/components/MaintenanceEventsCard";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +13,7 @@ import {
   linesQuery,
   entriesQuery,
   entryDowntimesForEntriesQuery,
+  maintenanceEventsAsDowntimes,
   productionAreasQuery,
   areaOwnersQuery,
   entryAreaOwnersForEntriesQuery,
@@ -19,6 +21,7 @@ import {
   departmentCategoriesQuery,
   downtimeTypesQuery,
   severityLevelsQuery,
+  maintenanceEventsQuery,
 } from "@/lib/queries";
 import { monthRange } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
@@ -96,6 +99,13 @@ function Dashboard() {
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
   const exportRef = useRef<HTMLDivElement>(null);
+
+  // Plant-wide open-events count for MaintenanceEventsCard — deliberately not
+  // filtered by lineId/from/to (see that component's comment). Visible to
+  // every role that can reach the Dashboard at all (RequireAuth below already
+  // requires "dashboard.view"), unlike the standalone /maintenance page which
+  // stays gated behind "maintenance.view".
+  const { data: maintenanceEvents = [] } = useQuery(maintenanceEventsQuery(null, null, null, null, null));
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
 
@@ -212,6 +222,10 @@ function Dashboard() {
             </div>
           </div>
 
+          <div className="mt-6" data-pdf-section="maintenance-events">
+            <MaintenanceEventsCard events={maintenanceEvents} />
+          </div>
+
           {activeLine && (
             <DashboardBody lineId={activeLine.id} color={activeLine.color} from={from} to={to} />
           )}
@@ -263,7 +277,14 @@ function DashboardBody({
   const { role } = useAuth();
   const { data: entries = [] } = useSuspenseQuery(entriesQuery(lineId, from, to));
   const entryIds = useMemo(() => entries.map((e) => e.id), [entries]);
-  const { data: downtimes = [] } = useSuspenseQuery(entryDowntimesForEntriesQuery(entryIds));
+  const { data: entryDowntimes = [] } = useSuspenseQuery(entryDowntimesForEntriesQuery(entryIds));
+  // Merges in mechanical/electrical maintenance_events (same line_id/date
+  // range as the rest of the dashboard) so the downtime Pareto chart and the
+  // Maintenance card's Top Reasons list both show real maintenance downtime
+  // alongside entry_downtimes — see maintenanceEventsAsDowntimes.
+  const { data: lineMaintenanceEvents = [] } = useSuspenseQuery(
+    maintenanceEventsQuery(lineId, null, null, from, to),
+  );
   const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersForEntriesQuery(entryIds));
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
@@ -271,6 +292,10 @@ function DashboardBody({
   const { data: departmentCategories } = useSuspenseQuery(departmentCategoriesQuery);
   const { data: downtimeTypes } = useSuspenseQuery(downtimeTypesQuery);
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
+  const downtimes = useMemo(
+    () => [...entryDowntimes, ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, departments, downtimeTypes)],
+    [entryDowntimes, lineMaintenanceEvents, departments, downtimeTypes],
+  );
 
   if (entries.length === 0) {
     return (
