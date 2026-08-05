@@ -26,6 +26,12 @@ dist-ssr
 # Kaspersky-refresh simulation output (scripts/simulate-kaspersky-refresh.mjs)
 tmp/
 
+# Supabase CLI local project state
+supabase/.temp/
+
+# Mobile responsive-audit screenshots (local testing artifacts)
+.mobile-audit-screenshots/
+
 # npm is this project's lock file; bun.lock isn't regenerated here
 bun.lock
 
