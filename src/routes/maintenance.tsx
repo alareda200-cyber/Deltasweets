@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -15,12 +16,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
-import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown } from "lucide-react";
+import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, formatHours, sortByWorstMtbf, toDatetimeLocalValue } from "@/lib/maintenance-format";
 import {
   linesQuery,
@@ -86,6 +88,42 @@ function MaintenancePage() {
   const mttrMechanicalHours = useMemo(() => weightedAverage(metrics, "mechanical", "mttr_hours", "mttr_sample_count"), [metrics]);
   const mtbfElectricalHours = useMemo(() => weightedAverage(metrics, "electrical", "mtbf_hours", "mtbf_gap_count"), [metrics]);
   const mttrElectricalHours = useMemo(() => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"), [metrics]);
+
+  // Reliability Analytics section — every number below is derived from the
+  // already-fetched `events` (same line/type/date filters as the table
+  // above), never a new query, per the maintenance-manager brief this was
+  // built against.
+  const reliabilitySummary = useMemo(() => {
+    const totalDowntimeMinutes = totalDowntimeMinutesOf(events);
+    const repeatFailureRatePct = repeatFailureRateOf(events);
+    const mtbfHours = localMtbfHours(events);
+    const mttrHours = localMttrHours(events);
+    const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
+    return { totalDowntimeMinutes, repeatFailureRatePct, availabilityPct };
+  }, [events]);
+
+  const titleAggregates = useMemo(() => aggregateByTitle(events), [events]);
+
+  const topLossesByDowntime = useMemo(
+    () => [...titleAggregates].sort((a, b) => b.totalMinutes - a.totalMinutes).slice(0, 8),
+    [titleAggregates],
+  );
+  const topLossesByFrequency = useMemo(
+    () => [...titleAggregates].sort((a, b) => b.count - a.count).slice(0, 8),
+    [titleAggregates],
+  );
+  const meanDowntimePerFault = useMemo(
+    () =>
+      titleAggregates
+        .map((t) => ({ ...t, meanMinutes: t.totalMinutes / t.count }))
+        .sort((a, b) => b.meanMinutes - a.meanMinutes),
+    [titleAggregates],
+  );
+  const chronicVsSporadic = useMemo(
+    () => [...titleAggregates].sort((a, b) => b.count - a.count),
+    [titleAggregates],
+  );
+  const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
 
   async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technician: string }) {
     const { data: inserted, error } = await supabase
@@ -262,6 +300,17 @@ function MaintenancePage() {
         </CardContent>
       </Card>
 
+      <ReliabilityAnalyticsSection
+        totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+        repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+        availabilityPct={reliabilitySummary.availabilityPct}
+        topLossesByDowntime={topLossesByDowntime}
+        topLossesByFrequency={topLossesByFrequency}
+        meanDowntimePerFault={meanDowntimePerFault}
+        chronicVsSporadic={chronicVsSporadic}
+        reliabilityByLine={reliabilityByLine}
+      />
+
       <MetricsTable metrics={metrics} />
 
       <CreateEventDialog open={createOpen} onOpenChange={setCreateOpen} lines={lines} onCreate={handleCreate} />
@@ -291,6 +340,329 @@ function weightedAverage(
   if (totalWeight === 0) return null;
   const totalValue = rows.reduce((s, m) => s + (m[field] ?? 0) * m[weightField], 0);
   return totalValue / totalWeight;
+}
+
+// Matches the duration math already used per-row in the events table above
+// (line ~236) — resolved events use resolved_at, still-open events run the
+// clock to now.
+function eventDurationMinutes(e: MaintenanceEvent): number {
+  const startedMs = new Date(e.started_at).getTime();
+  const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+  return Math.max(0, (endMs - startedMs) / 60_000);
+}
+
+function totalDowntimeMinutesOf(events: MaintenanceEvent[]): number {
+  return events.reduce((s, e) => s + eventDurationMinutes(e), 0);
+}
+
+// Repeat = any event whose title (trimmed, case-insensitive) occurs more
+// than once in the current filtered set. 0 events -> 0%, not NaN.
+function repeatFailureRateOf(events: MaintenanceEvent[]): number {
+  if (events.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    const key = e.title.trim().toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const repeatCount = events.filter((e) => (counts.get(e.title.trim().toLowerCase()) ?? 0) > 1).length;
+  return (repeatCount / events.length) * 100;
+}
+
+// Local (filter-scoped) MTBF: average gap in hours between started_at of
+// consecutive events, pooled across whatever the current line/type/date
+// filters resolve to — deliberately not the lifetime per-line+type
+// `metrics` query above. Null with fewer than 2 events (no gap exists).
+function localMtbfHours(events: MaintenanceEvent[]): number | null {
+  if (events.length < 2) return null;
+  const starts = events.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
+  let totalGapHours = 0;
+  for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
+  return totalGapHours / (starts.length - 1);
+}
+
+// Local (filter-scoped) MTTR: average resolved_at - started_at in hours
+// across resolved events only. Null when none are resolved yet.
+function localMttrHours(events: MaintenanceEvent[]): number | null {
+  const durations = events
+    .filter((e) => e.resolved_at)
+    .map((e) => (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) / 3_600_000);
+  if (durations.length === 0) return null;
+  return durations.reduce((s, v) => s + v, 0) / durations.length;
+}
+
+function availabilityPctOf(mtbfHours: number | null, mttrHours: number | null): number | null {
+  if (mtbfHours === null || mttrHours === null) return null;
+  const denom = mtbfHours + mttrHours;
+  if (denom <= 0) return null;
+  return (mtbfHours / denom) * 100;
+}
+
+interface TitleAggregate {
+  title: string;
+  totalMinutes: number;
+  count: number;
+}
+
+// Groups events by title (trimmed, case-insensitive) — the display title
+// keeps the first occurrence's original casing/spacing.
+function aggregateByTitle(events: MaintenanceEvent[]): TitleAggregate[] {
+  const map = new Map<string, TitleAggregate>();
+  for (const e of events) {
+    const key = e.title.trim().toLowerCase();
+    const minutes = eventDurationMinutes(e);
+    const cur = map.get(key);
+    if (cur) {
+      cur.totalMinutes += minutes;
+      cur.count += 1;
+    } else {
+      map.set(key, { title: e.title.trim(), totalMinutes: minutes, count: 1 });
+    }
+  }
+  return Array.from(map.values());
+}
+
+interface LineReliability {
+  lineId: string;
+  lineName: string;
+  mtbfHours: number | null;
+  mttrHours: number | null;
+  availabilityPct: number | null;
+  eventCount: number;
+}
+
+// Same local MTBF/MTTR math as above, grouped per line so each row reflects
+// only that line's events within the current filter.
+function reliabilityByLineOf(events: MaintenanceEvent[]): LineReliability[] {
+  const groups = new Map<string, MaintenanceEvent[]>();
+  for (const e of events) {
+    const key = e.line_id ?? "unassigned";
+    const arr = groups.get(key);
+    if (arr) arr.push(e);
+    else groups.set(key, [e]);
+  }
+  const rows: LineReliability[] = [];
+  for (const [lineId, groupEvents] of groups) {
+    const mtbfHours = localMtbfHours(groupEvents);
+    const mttrHours = localMttrHours(groupEvents);
+    rows.push({
+      lineId,
+      lineName: groupEvents[0].production_lines?.name ?? "—",
+      mtbfHours,
+      mttrHours,
+      availabilityPct: availabilityPctOf(mtbfHours, mttrHours),
+      eventCount: groupEvents.length,
+    });
+  }
+  // Worst availability first; unknown (null, too little data) sorts last —
+  // same "unknown isn't bad" reasoning as sortByWorstMtbf.
+  return rows.sort((a, b) => {
+    if (a.availabilityPct === null && b.availabilityPct === null) return 0;
+    if (a.availabilityPct === null) return 1;
+    if (b.availabilityPct === null) return -1;
+    return a.availabilityPct - b.availabilityPct;
+  });
+}
+
+function EmptyMiniState() {
+  return (
+    <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+      No data for this filter.
+    </div>
+  );
+}
+
+function ReliabilityAnalyticsSection({
+  totalDowntimeMinutes,
+  repeatFailureRatePct,
+  availabilityPct,
+  topLossesByDowntime,
+  topLossesByFrequency,
+  meanDowntimePerFault,
+  chronicVsSporadic,
+  reliabilityByLine,
+}: {
+  totalDowntimeMinutes: number;
+  repeatFailureRatePct: number;
+  availabilityPct: number | null;
+  topLossesByDowntime: TitleAggregate[];
+  topLossesByFrequency: TitleAggregate[];
+  meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
+  chronicVsSporadic: TitleAggregate[];
+  reliabilityByLine: LineReliability[];
+}) {
+  const isMobile = useIsMobile();
+  const nameMaxLen = isMobile ? 10 : 20;
+
+  const downtimeChartData = topLossesByDowntime.map((t) => ({
+    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
+    fullName: t.title,
+    minutes: Math.round(t.totalMinutes),
+  }));
+  const frequencyChartData = topLossesByFrequency.map((t) => ({
+    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
+    fullName: t.title,
+    count: t.count,
+  }));
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Reliability Analytics</h2>
+        <p className="text-sm text-muted-foreground">Computed from the events matching the filters above.</p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <KpiCard
+          label="Total Downtime"
+          value={formatDuration(totalDowntimeMinutes * 60_000)}
+          sub="Sum of event durations in this filter"
+          icon={Timer}
+          variant="warning"
+        />
+        <KpiCard
+          label="Repeat Failure Rate"
+          value={`${repeatFailureRatePct.toFixed(1)}%`}
+          sub="Events whose title recurs ÷ total"
+          icon={Repeat}
+          variant={repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success"}
+        />
+        <KpiCard
+          label="Availability"
+          value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`}
+          sub="MTBF ÷ (MTBF + MTTR)"
+          icon={Gauge}
+          variant={availabilityPct === null ? "default" : availabilityPct >= 90 ? "success" : availabilityPct >= 75 ? "warning" : "danger"}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">Top Losses by Downtime</h3></CardHeader>
+          <CardContent>
+            {downtimeChartData.length === 0 ? (
+              <EmptyMiniState />
+            ) : (
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={downtimeChartData} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+                    <YAxis type="category" dataKey="name" width={isMobile ? 70 : 120} tick={{ fontSize: 11, fill: "var(--color-foreground)" }} />
+                    <Tooltip
+                      contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }}
+                      formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
+                      labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    />
+                    <Bar dataKey="minutes" radius={[0, 6, 6, 0]} fill="#ef4444" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">Top Losses by Frequency</h3></CardHeader>
+          <CardContent>
+            {frequencyChartData.length === 0 ? (
+              <EmptyMiniState />
+            ) : (
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={frequencyChartData} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+                    <YAxis type="category" dataKey="name" width={isMobile ? 70 : 120} tick={{ fontSize: 11, fill: "var(--color-foreground)" }} />
+                    <Tooltip
+                      contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }}
+                      formatter={(value: number) => [`${value} event${value === 1 ? "" : "s"}`, "Frequency"]}
+                      labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    />
+                    <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="#3b82f6" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">Mean Downtime per Fault</h3></CardHeader>
+          <CardContent>
+            {meanDowntimePerFault.length === 0 ? (
+              <EmptyMiniState />
+            ) : (
+              <ul className="space-y-2">
+                {meanDowntimePerFault.slice(0, 10).map((t) => (
+                  <li key={t.title} className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0">
+                    <span className="truncate">{t.title}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold">Chronic vs Sporadic</h3></CardHeader>
+          <CardContent>
+            {chronicVsSporadic.length === 0 ? (
+              <EmptyMiniState />
+            ) : (
+              <ul className="space-y-2">
+                {chronicVsSporadic.slice(0, 10).map((t) => (
+                  <li key={t.title} className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0">
+                    <span className="truncate">{t.title}</span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="tabular-nums text-muted-foreground">{t.count}x</span>
+                      <Badge variant={t.count > 1 ? "destructive" : "outline"}>{t.count > 1 ? "Chronic" : "Sporadic"}</Badge>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">Reliability by Line</h3>
+          <p className="text-xs text-muted-foreground">Sorted worst availability first, computed from the currently filtered events.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Line</TableHead>
+                  <TableHead>MTBF</TableHead>
+                  <TableHead>MTTR</TableHead>
+                  <TableHead>Availability</TableHead>
+                  <TableHead className="hidden sm:table-cell">Events</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {reliabilityByLine.length === 0 && (
+                  <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">No events match this filter.</TableCell></TableRow>
+                )}
+                {reliabilityByLine.map((r) => (
+                  <TableRow key={r.lineId}>
+                    <TableCell className="text-sm">{r.lineName}</TableCell>
+                    <TableCell className="tabular-nums">{formatHours(r.mtbfHours)}</TableCell>
+                    <TableCell className="tabular-nums">{formatHours(r.mttrHours)}</TableCell>
+                    <TableCell className="tabular-nums">{r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{r.eventCount}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
