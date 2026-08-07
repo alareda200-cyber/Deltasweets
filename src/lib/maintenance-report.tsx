@@ -358,7 +358,7 @@ function ReportLayout({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
           <ReportKpiCard label="Maintenance Events Downtime" value={formatDuration(totalDowntimeMinutes * 60_000)} accent="#d97706" />
           <ReportKpiCard label="Repeat Failure Rate" value={`${repeatFailureRatePct.toFixed(1)}%`} accent="#dc2626" />
-          <ReportKpiCard label="Availability" value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`} accent="#059669" />
+          <ReportKpiCard label="Equipment Availability" value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`} accent="#059669" />
         </div>
       </div>
 
@@ -443,7 +443,7 @@ function ReportLayout({
               <th style={th}>Line</th>
               <th style={th}>MTBF</th>
               <th style={th}>MTTR</th>
-              <th style={th}>Availability</th>
+              <th style={th}>Equipment Availability</th>
               <th style={th}>Events</th>
             </tr>
           </thead>

@@ -39,15 +39,19 @@ export function DowntimeSection({ entries, downtimes }: Props) {
     if (cur) cur.minutes += Number(d.minutes);
     else byReason.set(key, { reason: d.reason_name, area: d.area, minutes: Number(d.minutes) });
   }
-  const sorted = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes).slice(0, 12);
-  const total = sorted.reduce((s, r) => s + r.minutes, 0);
+  const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
+  const sorted = allReasons.slice(0, 12);
   const nameMaxLen = isMobile ? 8 : 24;
   const chartData = sorted.map((r) => ({
     name: r.reason.length > nameMaxLen ? r.reason.slice(0, nameMaxLen) + "…" : r.reason,
     fullName: r.reason,
     area: r.area,
     minutes: r.minutes,
-    pct: total > 0 ? Math.round((r.minutes / total) * 1000) / 10 : 0,
+    // % of Total Downtime (totalDown, the KPI above) rather than % of just
+    // the top-12 shown here — otherwise these bars silently re-normalize to
+    // sum to 100% even when more than 12 distinct reasons exist, disagreeing
+    // with the Total Downtime KPI above.
+    pct: totalDown > 0 ? Math.round((r.minutes / totalDown) * 1000) / 10 : 0,
   }));
 
   return (
@@ -55,6 +59,11 @@ export function DowntimeSection({ entries, downtimes }: Props) {
       <header className="mb-6">
         <h2 className="text-xl font-bold tracking-tight md:text-2xl">3. Downtime, Stoppages & Loss %</h2>
         <p className="mt-1 text-sm text-muted-foreground">Pareto breakdown by cause and area</p>
+        {allReasons.length > 12 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Showing top 12 of {allReasons.length} causes — bar % is share of Total Downtime.
+          </p>
+        )}
       </header>
 
       {/* MTD */}

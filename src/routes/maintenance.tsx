@@ -548,9 +548,9 @@ function ReliabilityAnalyticsSection({
           variant={repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success"}
         />
         <KpiCard
-          label="Availability"
+          label="Equipment Availability"
           value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`}
-          sub="MTBF ÷ (MTBF + MTTR)"
+          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
           icon={Gauge}
           variant={availabilityPct === null ? "default" : availabilityPct >= 90 ? "success" : availabilityPct >= 75 ? "warning" : "danger"}
         />
@@ -663,7 +663,7 @@ function ReliabilityAnalyticsSection({
                   <TableHead>Line</TableHead>
                   <TableHead>MTBF</TableHead>
                   <TableHead>MTTR</TableHead>
-                  <TableHead>Availability</TableHead>
+                  <TableHead>Equipment Availability</TableHead>
                   <TableHead className="hidden sm:table-cell">Events</TableHead>
                 </TableRow>
               </TableHeader>

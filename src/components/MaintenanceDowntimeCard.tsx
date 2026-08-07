@@ -110,13 +110,17 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
     if (cur) cur.minutes += Number(d.minutes);
     else byReason.set(d.reason_name, { reason: d.reason_name, minutes: Number(d.minutes) });
   }
-  const sortedReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes).slice(0, 12);
-  const chartTotal = sortedReasons.reduce((s, r) => s + r.minutes, 0);
+  const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
+  const sortedReasons = allReasons.slice(0, 12);
   const chartData = sortedReasons.map((r) => ({
     name: r.reason.length > 18 ? `${r.reason.slice(0, 18)}…` : r.reason,
     fullName: r.reason,
     minutes: r.minutes,
-    pct: chartTotal > 0 ? Math.round((r.minutes / chartTotal) * 1000) / 10 : 0,
+    // % of totalMinutes (the "Maintenance downtime (all sources)" KPI above)
+    // rather than % of just the top-12 shown — keeps this chart's
+    // percentages from silently re-normalizing to 100% when more than 12
+    // distinct reasons exist, so they stay comparable to that KPI.
+    pct: totalMinutes > 0 ? Math.round((r.minutes / totalMinutes) * 1000) / 10 : 0,
   }));
 
   const rankedReasons = (() => {
@@ -193,7 +197,13 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
               No downtime classified under "{categoryName}" in this period.
             </div>
           ) : (
-            <div className="mb-6 h-[240px] w-full md:h-80">
+            <div className="mb-6">
+              {allReasons.length > 12 && (
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Showing top 12 of {allReasons.length} causes — bar % is share of "all sources" downtime.
+                </p>
+              )}
+              <div className="h-[240px] w-full md:h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 60 }}>
                   <defs>
@@ -222,6 +232,7 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              </div>
             </div>
           )}
 
