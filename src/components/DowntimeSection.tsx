@@ -27,9 +27,12 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   const last = entries[entries.length - 1];
   const lastIds = new Set(entries.filter((e) => e.entry_date === last?.entry_date).map((e) => e.id));
   const dayAvail = last ? entries.filter((e) => e.entry_date === last.entry_date).reduce((s, e) => s + Number(e.available_min), 0) : 0;
-  const dayDown = last ? entries.filter((e) => e.entry_date === last.entry_date).reduce((s, e) => s + Number(e.downtime_min), 0) : 0;
-  const dayLossPct = dayAvail > 0 ? (dayDown / dayAvail) * 100 : 0;
   const dayDowntimes = downtimes.filter((d) => lastIds.has(d.entry_id));
+  // Same combined-array reasoning as totalDown above — not entries[].downtime_min,
+  // which never picks up maintenance_events, so Last Day would silently
+  // under-count relative to the MTD numbers right above it.
+  const dayDown = dayDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
+  const dayLossPct = dayAvail > 0 ? (dayDown / dayAvail) * 100 : 0;
 
   // Pareto: group downtimes by reason
   const byReason = new Map<string, { reason: string; area: string; minutes: number }>();
