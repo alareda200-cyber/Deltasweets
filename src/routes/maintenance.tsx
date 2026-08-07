@@ -99,7 +99,7 @@ function MaintenancePage() {
     const mtbfHours = localMtbfHours(events);
     const mttrHours = localMttrHours(events);
     const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
-    return { totalDowntimeMinutes, repeatFailureRatePct, availabilityPct };
+    return { totalDowntimeMinutes, repeatFailureRatePct, mtbfHours, mttrHours, availabilityPct };
   }, [events]);
 
   const titleAggregates = useMemo(() => aggregateByTitle(events), [events]);
@@ -119,10 +119,22 @@ function MaintenancePage() {
         .sort((a, b) => b.meanMinutes - a.meanMinutes),
     [titleAggregates],
   );
-  const chronicVsSporadic = useMemo(
-    () => [...titleAggregates].sort((a, b) => b.count - a.count),
-    [titleAggregates],
-  );
+  // Chronic = recurred (count > 1) AND its average duration is worse than
+  // the overall (current-filter) MTTR — a fault that only ever ran short
+  // shouldn't count as chronic just because it happened twice. Sporadic is
+  // everything else, including every single-occurrence fault, by
+  // definition (see reliability-management brief this was built against).
+  // When MTTR itself is unknown (no resolved events yet), nothing can be
+  // judged "above average" honestly, so nothing is marked chronic.
+  const chronicVsSporadic = useMemo(() => {
+    const mttrThresholdMinutes = reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
+    return meanDowntimePerFault
+      .map((t) => ({
+        ...t,
+        chronic: t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [meanDowntimePerFault, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
 
   async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technician: string }) {
@@ -170,6 +182,13 @@ function MaintenancePage() {
         mttrMechanicalHours,
         mtbfElectricalHours,
         mttrElectricalHours,
+        totalDowntimeMinutes: reliabilitySummary.totalDowntimeMinutes,
+        repeatFailureRatePct: reliabilitySummary.repeatFailureRatePct,
+        availabilityPct: reliabilitySummary.availabilityPct,
+        topLossesByDowntime,
+        topLossesByFrequency,
+        chronicVsSporadic,
+        reliabilityByLine,
         onProgress: (msg) => setReportProgress(msg),
       });
       toast.success("Maintenance report exported");
@@ -259,16 +278,17 @@ function MaintenancePage() {
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden lg:table-cell">Started</TableHead>
                   <TableHead>Duration</TableHead>
+                  <TableHead className="hidden md:table-cell">Technician</TableHead>
                   <TableHead className="hidden md:table-cell">Notes</TableHead>
                   <TableHead className="hidden lg:table-cell">Resolved by</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
-                  <TableRow><TableCell colSpan={9} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={10} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
                 )}
                 {!isLoading && events.length === 0 && (
-                  <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No maintenance events match this filter.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No maintenance events match this filter.</TableCell></TableRow>
                 )}
                 {events.map((e) => {
                   const durationMs = (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) - new Date(e.started_at).getTime();
@@ -287,6 +307,7 @@ function MaintenancePage() {
                       <TableCell><Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge></TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{new Date(e.started_at).toLocaleString()}</TableCell>
                       <TableCell className="text-sm tabular-nums">{formatDuration(durationMs)}</TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{e.technician || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{firstNote ? truncateNote(firstNote) : "—"}</TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                         {e.status === "resolved" ? (e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—") : "—"}
@@ -487,7 +508,7 @@ function ReliabilityAnalyticsSection({
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: TitleAggregate[];
+  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
   reliabilityByLine: LineReliability[];
 }) {
   const isMobile = useIsMobile();
@@ -513,9 +534,9 @@ function ReliabilityAnalyticsSection({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard
-          label="Total Downtime"
+          label="Maintenance events downtime"
           value={formatDuration(totalDowntimeMinutes * 60_000)}
-          sub="Sum of event durations in this filter"
+          sub="from /maintenance records only"
           icon={Timer}
           variant="warning"
         />
@@ -605,7 +626,10 @@ function ReliabilityAnalyticsSection({
         </Card>
 
         <Card>
-          <CardHeader><h3 className="text-sm font-semibold">Chronic vs Sporadic</h3></CardHeader>
+          <CardHeader>
+            <h3 className="text-sm font-semibold">Chronic vs Sporadic</h3>
+            <p className="text-xs text-muted-foreground">Chronic = recurred + above-avg duration</p>
+          </CardHeader>
           <CardContent>
             {chronicVsSporadic.length === 0 ? (
               <EmptyMiniState />
@@ -616,7 +640,7 @@ function ReliabilityAnalyticsSection({
                     <span className="truncate">{t.title}</span>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="tabular-nums text-muted-foreground">{t.count}x</span>
-                      <Badge variant={t.count > 1 ? "destructive" : "outline"}>{t.count > 1 ? "Chronic" : "Sporadic"}</Badge>
+                      <Badge variant={t.chronic ? "destructive" : "outline"}>{t.chronic ? "Chronic" : "Sporadic"}</Badge>
                     </div>
                   </li>
                 ))}

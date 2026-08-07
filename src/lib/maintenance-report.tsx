@@ -42,6 +42,21 @@ export interface MaintenanceReportOptions {
   mttrMechanicalHours: number | null;
   mtbfElectricalHours: number | null;
   mttrElectricalHours: number | null;
+  // Reliability Analytics numbers — the exact same values already computed
+  // by the live /maintenance page's own useMemo hooks (see
+  // src/routes/maintenance.tsx), passed through rather than re-derived here,
+  // so the report can never drift from what the page shows for the same
+  // filter. topLossesByDowntime/topLossesByFrequency are sliced to the top 5
+  // by the caller (or here, defensively); chronicVsSporadic is passed in
+  // full so the summary counts below are accurate, not just the visible
+  // slice.
+  totalDowntimeMinutes: number;
+  repeatFailureRatePct: number;
+  availabilityPct: number | null;
+  topLossesByDowntime: { title: string; totalMinutes: number }[];
+  topLossesByFrequency: { title: string; count: number }[];
+  chronicVsSporadic: { title: string; count: number; chronic: boolean }[];
+  reliabilityByLine: { lineName: string; mtbfHours: number | null; mttrHours: number | null; availabilityPct: number | null; eventCount: number }[];
   onProgress?: (message: string) => void;
 }
 
@@ -191,6 +206,25 @@ function DowntimeBar({ label, minutes, pct, color }: { label: string; minutes: n
   );
 }
 
+// Same visual language as DowntimeBar but for a plain count rather than a
+// minutes+percentage-of-whole pair (frequency bars compare "how many times"
+// not "how much of the total").
+function FrequencyBar({ label, count, pct, color }: { label: string; count: number; pct: number; color: string }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ fontWeight: 700, color: "#1e293b" }}>{label}</span>
+        <span style={{ color: "#64748b" }}>
+          {count} event{count === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div style={{ height: 14, borderRadius: 6, background: "#f1f5f9", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${count > 0 ? Math.max(pct, 3) : 0}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
 function ReportLayout({
   events,
   metrics,
@@ -200,6 +234,13 @@ function ReportLayout({
   mttrMechanicalHours,
   mtbfElectricalHours,
   mttrElectricalHours,
+  totalDowntimeMinutes,
+  repeatFailureRatePct,
+  availabilityPct,
+  topLossesByDowntime,
+  topLossesByFrequency,
+  chronicVsSporadic,
+  reliabilityByLine,
 }: Pick<
   MaintenanceReportOptions,
   | "events"
@@ -210,6 +251,13 @@ function ReportLayout({
   | "mttrMechanicalHours"
   | "mtbfElectricalHours"
   | "mttrElectricalHours"
+  | "totalDowntimeMinutes"
+  | "repeatFailureRatePct"
+  | "availabilityPct"
+  | "topLossesByDowntime"
+  | "topLossesByFrequency"
+  | "chronicVsSporadic"
+  | "reliabilityByLine"
 >) {
   const mechMinutes = events.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
   const elecMinutes = events.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
@@ -217,6 +265,14 @@ function ReportLayout({
   const mechPct = totalMinutes > 0 ? (mechMinutes / totalMinutes) * 100 : 0;
   const elecPct = totalMinutes > 0 ? (elecMinutes / totalMinutes) * 100 : 0;
   const sortedMetrics = sortByWorstMtbf(metrics);
+
+  const top5Downtime = topLossesByDowntime.slice(0, 5);
+  const top5Frequency = topLossesByFrequency.slice(0, 5);
+  const chronicTitles = chronicVsSporadic.filter((t) => t.chronic);
+  const sporadicTitles = chronicVsSporadic.filter((t) => !t.chronic);
+  const chronicEventCount = chronicTitles.reduce((s, t) => s + t.count, 0);
+  const sporadicEventCount = sporadicTitles.reduce((s, t) => s + t.count, 0);
+  const topChronic = [...chronicTitles].sort((a, b) => b.count - a.count).slice(0, 5);
 
   return (
     <div style={{ width: CAPTURE_WIDTH, background: "#ffffff", fontFamily: "Arial, Helvetica, sans-serif", color: "#1e293b" }}>
@@ -295,6 +351,125 @@ function ReportLayout({
       </div>
 
       <div
+        data-pdf-section="reliability-kpis"
+        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+      >
+        <p style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 800 }}>Reliability Analytics</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+          <ReportKpiCard label="Maintenance Events Downtime" value={formatDuration(totalDowntimeMinutes * 60_000)} accent="#d97706" />
+          <ReportKpiCard label="Repeat Failure Rate" value={`${repeatFailureRatePct.toFixed(1)}%`} accent="#dc2626" />
+          <ReportKpiCard label="Availability" value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`} accent="#059669" />
+        </div>
+      </div>
+
+      <div
+        data-pdf-section="reliability-top-losses"
+        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+      >
+        <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800 }}>Top 5 Losses — By Downtime</p>
+        {top5Downtime.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>No downtime in the exported events.</p>
+        ) : (
+          top5Downtime.map((t) => (
+            <DowntimeBar
+              key={t.title}
+              label={t.title}
+              minutes={t.totalMinutes}
+              pct={totalDowntimeMinutes > 0 ? (t.totalMinutes / totalDowntimeMinutes) * 100 : 0}
+              color="#ef4444"
+            />
+          ))
+        )}
+        <p style={{ margin: "8px 0 12px", fontSize: 13, fontWeight: 800 }}>Top 5 Losses — By Frequency</p>
+        {top5Frequency.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#64748b" }}>No events in this export.</p>
+        ) : (
+          top5Frequency.map((t) => (
+            <FrequencyBar
+              key={t.title}
+              label={t.title}
+              count={t.count}
+              pct={events.length > 0 ? (t.count / events.length) * 100 : 0}
+              color="#3b82f6"
+            />
+          ))
+        )}
+      </div>
+
+      <div
+        data-pdf-section="reliability-chronic"
+        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+      >
+        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Chronic vs Sporadic Summary</p>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>Chronic = recurred + above-average duration.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 16 }}>
+          <ReportKpiCard label="Chronic Faults" value={`${chronicTitles.length} titles · ${chronicEventCount} events`} accent="#dc2626" />
+          <ReportKpiCard label="Sporadic Faults" value={`${sporadicTitles.length} titles · ${sporadicEventCount} events`} accent="#64748b" />
+        </div>
+        {topChronic.length > 0 && (
+          <>
+            <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+              Top Chronic Faults
+            </p>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={th}>Title</th>
+                  <th style={th}>Occurrences</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topChronic.map((t) => (
+                  <tr key={t.title}>
+                    <td style={td}>{t.title}</td>
+                    <td style={td}>{t.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+
+      <div
+        data-pdf-section="reliability-by-line"
+        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+      >
+        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Reliability by Line</p>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>Computed from the exported (currently filtered) events.</p>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>Line</th>
+              <th style={th}>MTBF</th>
+              <th style={th}>MTTR</th>
+              <th style={th}>Availability</th>
+              <th style={th}>Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reliabilityByLine.length === 0 ? (
+              <tr>
+                <td style={td} colSpan={5}>
+                  No events match the current filters.
+                </td>
+              </tr>
+            ) : (
+              reliabilityByLine.map((r) => (
+                <tr key={r.lineName}>
+                  <td style={td}>{r.lineName}</td>
+                  <td style={td}>{formatHours(r.mtbfHours)}</td>
+                  <td style={td}>{formatHours(r.mttrHours)}</td>
+                  <td style={td}>{r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}</td>
+                  <td style={td}>{r.eventCount}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div
         data-pdf-section="metrics-table"
         style={{ margin: "0 20px 20px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
@@ -360,6 +535,13 @@ export async function exportMaintenanceReportToPdf({
   mttrMechanicalHours,
   mtbfElectricalHours,
   mttrElectricalHours,
+  totalDowntimeMinutes,
+  repeatFailureRatePct,
+  availabilityPct,
+  topLossesByDowntime,
+  topLossesByFrequency,
+  chronicVsSporadic,
+  reliabilityByLine,
   onProgress,
 }: MaintenanceReportOptions): Promise<void> {
   onProgress?.("Preparing report…");
@@ -386,6 +568,13 @@ export async function exportMaintenanceReportToPdf({
           mttrMechanicalHours={mttrMechanicalHours}
           mtbfElectricalHours={mtbfElectricalHours}
           mttrElectricalHours={mttrElectricalHours}
+          totalDowntimeMinutes={totalDowntimeMinutes}
+          repeatFailureRatePct={repeatFailureRatePct}
+          availabilityPct={availabilityPct}
+          topLossesByDowntime={topLossesByDowntime}
+          topLossesByFrequency={topLossesByFrequency}
+          chronicVsSporadic={chronicVsSporadic}
+          reliabilityByLine={reliabilityByLine}
         />,
       );
       // Two frames: one for React's commit to paint, one to let layout

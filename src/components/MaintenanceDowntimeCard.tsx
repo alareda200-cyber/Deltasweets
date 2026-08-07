@@ -125,7 +125,13 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
       ) : (
         <>
           <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <KpiCard label="Maintenance Downtime (min)" value={fmt(totalMinutes)} icon={Wrench} variant="primary" />
+            <KpiCard
+              label="Maintenance downtime (all sources)"
+              value={fmt(totalMinutes)}
+              sub="maintenance events + daily entry"
+              icon={Wrench}
+              variant="primary"
+            />
             <KpiCard label="Events" value={String(eventCount)} icon={AlertOctagon} variant="default" />
             <KpiCard label="Critical Minutes" value={fmt(criticalMinutes)} icon={Activity} variant={criticalMinutes > 0 ? "danger" : "success"} />
           </div>
