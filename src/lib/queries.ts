@@ -59,6 +59,15 @@ export interface EntryDowntime {
   // field (no master-data list, unlike severity_id) — so it's carried here
   // rather than resolved via severity_id like a real entry_downtimes row.
   severity_label?: string;
+  // Whether the linked downtime_reasons row is still active in Settings.
+  // A reason retired from Settings (e.g. a defunct "Preventive
+  // Maintenance" bucket) stays on old entry_downtimes rows for historical
+  // integrity, but shouldn't count in live downtime analysis (Pareto
+  // chart, Top Reasons, KPI totals) — consumers should treat
+  // `is_active === false` as "hide this row". null means there's no linked
+  // reason to check (or, for source: "maintenance" rows, doesn't apply —
+  // those are always set true, never hidden by this rule).
+  is_active: boolean | null;
 }
 
 export interface ProductionArea {
@@ -330,7 +339,7 @@ export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
       const { data, error } = await supabase
         .from("entry_downtimes")
         .select(
-          "*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id)",
+          "*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id, is_active)",
         )
         .in("entry_id", entryIds);
       if (error) throw error;
@@ -345,6 +354,7 @@ export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
         downtime_type_id: row.downtime_reasons?.downtime_type_id ?? null,
         severity_id: row.downtime_reasons?.severity_id ?? null,
         production_area_id: row.downtime_reasons?.production_area_id ?? null,
+        is_active: row.downtime_reasons?.is_active ?? null,
         source: "entry" as const,
       }));
     },
@@ -471,6 +481,9 @@ export function maintenanceEventsAsDowntimes(
       severity_id: null,
       severity_label: e.severity_label ?? undefined,
       production_area_id: null,
+      // Not reason-based, so the is_active-deactivation rule (see
+      // EntryDowntime.is_active) never hides these rows.
+      is_active: true,
       source: "maintenance" as const,
     };
   });

@@ -293,7 +293,17 @@ function DashboardBody({
   const { data: downtimeTypes } = useSuspenseQuery(downtimeTypesQuery);
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const downtimes = useMemo(
-    () => [...entryDowntimes, ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, departments, downtimeTypes)],
+    () =>
+      [...entryDowntimes, ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, departments, downtimeTypes)].filter(
+        // Historical entry_downtimes rows can point at a downtime_reasons
+        // row that's since been deactivated in Settings (e.g. a retired
+        // "Preventive Maintenance" reason) — it stays in the DB for
+        // historical integrity, but shouldn't count in live downtime
+        // analysis. Filtering once here keeps every downstream consumer of
+        // `downtimes` (Pareto chart, Top Reasons, KPI totals) automatically
+        // consistent instead of drifting from each other.
+        (d) => d.is_active !== false,
+      ),
     [entryDowntimes, lineMaintenanceEvents, departments, downtimeTypes],
   );
 
@@ -347,6 +357,8 @@ function DashboardBody({
               departmentCategories={departmentCategories}
               downtimeTypes={downtimeTypes}
               severityLevels={severityLevels}
+              entries={entries}
+              maintenanceEvents={lineMaintenanceEvents}
             />
           </div>
         )}
