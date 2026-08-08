@@ -7,10 +7,10 @@ import type { MaintenanceEvent } from "@/lib/queries";
 
 const STALE_OPEN_HOURS = 4;
 
-// Combined across mechanical+electrical, plant-wide, and computed purely
-// client-side from the `events` prop (already the full unfiltered
-// maintenance_events list — see the Dashboard's fetch of this card) — no
-// extra query needed. Gap/duration math intentionally mirrors
+// Combined across mechanical+electrical, scoped to the selected line, and
+// computed purely client-side from the `events` prop (already filtered by
+// lineId — see the Dashboard's fetch of this card) — no extra query needed.
+// Gap/duration math intentionally mirrors
 // maintenanceMetricsQuery in queries.ts (average gap between consecutive
 // started_at for MTBF, average resolved_at-started_at for MTTR), just
 // scoped to one calendar month rather than lifetime, so a month boundary
@@ -42,9 +42,11 @@ function monthStats(events: MaintenanceEvent[], monthsAgo: number) {
   return { eventCount: inMonth.length, mtbfHours, mttrHours };
 }
 
-// Plant-wide, not scoped to the Dashboard's line/date-range filters — an
-// open mechanical/electrical event is a live operational concern regardless
-// of which line or reporting period is currently selected above it.
+// Scoped to the Dashboard's selected line (the `events` prop is already
+// filtered by lineId — see the Dashboard's fetch of this card), but not to
+// its date-range filter — an open mechanical/electrical event is a live
+// operational concern regardless of which reporting period is currently
+// selected above it.
 export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }) {
   const openMechanical = events.filter((e) => e.type === "mechanical" && e.status !== "resolved");
   const openElectrical = events.filter((e) => e.type === "electrical" && e.status !== "resolved");
@@ -65,7 +67,7 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
     >
       <header className="mb-4">
         <h2 className="text-lg font-semibold">Maintenance</h2>
-        <p className="text-sm text-muted-foreground">Open events across the plant.</p>
+        <p className="text-sm text-muted-foreground">Open events for the selected line.</p>
         {hasStaleOpen && (
           <p className="mt-1 text-xs font-medium text-destructive">
             An open event has been unresolved for over {STALE_OPEN_HOURS} hours.

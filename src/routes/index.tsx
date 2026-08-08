@@ -100,12 +100,13 @@ function Dashboard() {
   const [exportProgress, setExportProgress] = useState("");
   const exportRef = useRef<HTMLDivElement>(null);
 
-  // Plant-wide open-events count for MaintenanceEventsCard — deliberately not
-  // filtered by lineId/from/to (see that component's comment). Visible to
-  // every role that can reach the Dashboard at all (RequireAuth below already
-  // requires "dashboard.view"), unlike the standalone /maintenance page which
-  // stays gated behind "maintenance.view".
-  const { data: maintenanceEvents = [] } = useQuery(maintenanceEventsQuery(null, null, null, null, null));
+  // Scoped to the currently selected line (see that component's comment) —
+  // not date-range filtered, so an open event stays visible regardless of
+  // the From/To window above it. Visible to every role that can reach the
+  // Dashboard at all (RequireAuth below already requires "dashboard.view"),
+  // unlike the standalone /maintenance page which stays gated behind
+  // "maintenance.view".
+  const { data: maintenanceEvents = [] } = useQuery(maintenanceEventsQuery(lineId, null, null, null, null));
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
 
