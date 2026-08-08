@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { iso } from "@/lib/date-utils";
 
 export interface ProductionLine {
   id: string;
@@ -68,6 +69,13 @@ export interface EntryDowntime {
   // reason to check (or, for source: "maintenance" rows, doesn't apply —
   // those are always set true, never hidden by this rule).
   is_active: boolean | null;
+  // Local calendar date (YYYY-MM-DD, see date-utils.iso) the underlying
+  // event occurred on. Only set for source: "maintenance" rows — real
+  // entry_downtimes rows don't carry their own date here (callers instead
+  // match entry_id against the already-fetched daily_entries), and
+  // entry_id on a maintenance-derived row is the maintenance_events row's
+  // own id, not a daily_entries id, so it can't be used the same way.
+  event_date?: string;
 }
 
 export interface ProductionArea {
@@ -485,6 +493,8 @@ export function maintenanceEventsAsDowntimes(
       // EntryDowntime.is_active) never hides these rows.
       is_active: true,
       source: "maintenance" as const,
+      // Local calendar date the event started on — see EntryDowntime.event_date.
+      event_date: iso(new Date(e.started_at)),
     };
   });
 }

@@ -6,7 +6,7 @@ import { KpiCard } from "./KpiCard";
 import { EventDetailDialog } from "./EventDetailDialog";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { fmt } from "@/lib/date-utils";
+import { fmt, iso } from "@/lib/date-utils";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { TYPE_LABELS, STATUS_LABELS, typeBadgeVariant, statusBadgeVariant, formatDuration } from "@/lib/maintenance-format";
@@ -69,8 +69,13 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
   // last element is the most recent day — same "last day" the Dashboard's
   // other sections (Making/Packing/Downtime) key off of.
   const lastEntryDate = entries.length > 0 ? entries[entries.length - 1].entry_date : null;
+  // entry_date is a plain local calendar date, but started_at is a UTC ISO
+  // timestamp — comparing via .slice(0, 10) compares against the UTC
+  // calendar date instead, which misclassifies events near local midnight
+  // in any non-UTC timezone. iso() converts to the local calendar date
+  // first, matching how entry_date itself is produced (see date-utils.ts).
   const lastDayMaintenanceEvents = lastEntryDate
-    ? maintenanceEvents.filter((e) => e.started_at.slice(0, 10) === lastEntryDate)
+    ? maintenanceEvents.filter((e) => iso(new Date(e.started_at)) === lastEntryDate)
     : [];
   const lastDayMaintenanceMinutes = lastDayMaintenanceEvents.reduce((s, e) => s + eventDurationMinutes(e), 0);
 

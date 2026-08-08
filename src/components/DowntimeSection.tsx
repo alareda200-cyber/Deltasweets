@@ -27,7 +27,15 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   const last = entries[entries.length - 1];
   const lastIds = new Set(entries.filter((e) => e.entry_date === last?.entry_date).map((e) => e.id));
   const dayAvail = last ? entries.filter((e) => e.entry_date === last.entry_date).reduce((s, e) => s + Number(e.available_min), 0) : 0;
-  const dayDowntimes = downtimes.filter((d) => lastIds.has(d.entry_id));
+  // Maintenance-derived rows (source: "maintenance") don't have a real
+  // daily_entries id in entry_id — it's the maintenance_events row's own id
+  // (see maintenanceEventsAsDowntimes) — so lastIds.has(d.entry_id) never
+  // matches them and they'd silently drop out of "Last Day" even though
+  // totalDown above correctly includes them. Match those via their own
+  // event_date instead; real entry rows keep matching through lastIds.
+  const dayDowntimes = downtimes.filter((d) =>
+    d.source === "maintenance" ? d.event_date === last?.entry_date : lastIds.has(d.entry_id),
+  );
   // Same combined-array reasoning as totalDown above — not entries[].downtime_min,
   // which never picks up maintenance_events, so Last Day would silently
   // under-count relative to the MTD numbers right above it.
