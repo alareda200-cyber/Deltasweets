@@ -137,6 +137,21 @@ export interface SeverityLevel {
   is_active: boolean;
 }
 
+// Standalone master-data list of maintenance staff, assignable to
+// maintenance_events via technician_ids — deliberately not filtered to
+// is_active here (unlike ProductionArea/AreaOwner/etc. above) because the
+// Settings page needs to see and re-activate inactive technicians too;
+// callers that only want assignable staff (the Maintenance page's
+// multi-select) filter client-side instead.
+export interface Technician {
+  id: string;
+  name: string;
+  role: "Technician" | "Engineer" | "Supervisor" | "Operator" | null;
+  department: "Mechanical" | "Electrical" | "Production" | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface DailyEntry {
   id: string;
   line_id: string;
@@ -256,6 +271,15 @@ export const severityLevelsQuery = queryOptions({
       .order("display_order");
     if (error) throw error;
     return data as SeverityLevel[];
+  },
+});
+
+export const techniciansQuery = queryOptions({
+  queryKey: ["technicians"],
+  queryFn: async (): Promise<Technician[]> => {
+    const { data, error } = await supabase.from("technicians").select("*").order("name");
+    if (error) throw error;
+    return data as Technician[];
   },
 });
 
@@ -386,9 +410,19 @@ export interface MaintenanceEvent {
   // Free text, no master-data list — see
   // 20260804220000_maintenance_events_severity.sql.
   severity_label: string | null;
-  // Free text — who actually did the work, which may differ from
-  // created_by (whoever was logged in when the event was entered).
+  // Deprecated free-text technician name — superseded by technician_ids
+  // below (see 20260809120000_technicians.sql). Left populated on
+  // historical rows but no longer written to by the create/edit forms.
   technician: string | null;
+  // Who actually did the work, which may differ from created_by (whoever
+  // was logged in when the event was entered). References technicians.id.
+  technician_ids: string[];
+  // Resolved from technician_ids against the technicians table by
+  // maintenanceEventsQuery below — PostgREST can't embed a relation over a
+  // uuid[] column, so this is joined client-side in the query itself
+  // (once, here) rather than duplicated in every caller that displays
+  // names. Omits any id whose technician has since been deleted.
+  technician_names: string[];
   production_lines: { name: string } | null;
   // Embedded (not a separate batch query) so the events table can show a
   // notes preview per row without an N+1 fetch — ordered oldest-first so
@@ -432,9 +466,23 @@ export const maintenanceEventsQuery = (
       if (status) query = query.eq("status", status);
       if (from) query = query.gte("started_at", from);
       if (to) query = query.lte("started_at", to);
-      const { data, error } = await query;
+      // Run alongside the events query, not after it — the technicians
+      // table is tiny and this keeps the roundtrip parallel instead of
+      // serial.
+      const [{ data, error }, { data: techs, error: techsError }] = await Promise.all([
+        query,
+        supabase.from("technicians").select("id, name"),
+      ]);
       if (error) throw error;
-      return (data ?? []) as unknown as MaintenanceEvent[];
+      if (techsError) throw techsError;
+      const technicianNameById = new Map((techs ?? []).map((t) => [t.id, t.name]));
+      const rows = (data ?? []) as unknown as (MaintenanceEvent & { technician_ids: string[] })[];
+      return rows.map((row) => ({
+        ...row,
+        technician_names: row.technician_ids
+          .map((id) => technicianNameById.get(id))
+          .filter((name): name is string => Boolean(name)),
+      }));
     },
   });
 

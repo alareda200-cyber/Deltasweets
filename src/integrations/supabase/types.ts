@@ -526,6 +526,7 @@ export type Database = {
           started_at: string
           status: string
           technician: string | null
+          technician_ids: string[]
           title: string
           type: string
         }
@@ -541,6 +542,7 @@ export type Database = {
           started_at?: string
           status?: string
           technician?: string | null
+          technician_ids?: string[]
           title: string
           type: string
         }
@@ -556,6 +558,7 @@ export type Database = {
           started_at?: string
           status?: string
           technician?: string | null
+          technician_ids?: string[]
           title?: string
           type?: string
         }
@@ -797,6 +800,33 @@ export type Database = {
           is_active?: boolean
           name?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      technicians: {
+        Row: {
+          created_at: string | null
+          department: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          role: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          department?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          role?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          department?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          role?: string | null
         }
         Relationships: []
       }

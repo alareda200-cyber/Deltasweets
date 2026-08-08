@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, useQueryClient, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -21,6 +21,8 @@ import { ALL_ROLES, ROLE_LABELS, type Role } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { requireSession } from "@/lib/require-session";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import {
   linesQuery,
   reasonsQuery,
@@ -31,6 +33,8 @@ import {
   downtimeTypesQuery,
   severityLevelsQuery,
   departmentCategoriesQuery,
+  techniciansQuery,
+  type Technician,
 } from "@/lib/queries";
 
 // Shared validation for every master-data add-form (Lines, Areas, Owners, Reasons,
@@ -61,6 +65,7 @@ export const Route = createFileRoute("/settings")({
       context.queryClient.ensureQueryData(downtimeTypesQuery),
       context.queryClient.ensureQueryData(severityLevelsQuery),
       context.queryClient.ensureQueryData(departmentCategoriesQuery),
+      context.queryClient.ensureQueryData(techniciansQuery),
     ]),
   component: () => (
     <RequireAuth requirePermission="settings.manage">
@@ -78,6 +83,7 @@ function SettingsPage() {
   const { data: downtimeTypes } = useSuspenseQuery(downtimeTypesQuery);
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const { data: departmentCategories } = useSuspenseQuery(departmentCategoriesQuery);
+  const { data: technicians } = useSuspenseQuery(techniciansQuery);
   const { data: users = [] } = useQuery({
     queryKey: ["profiles"],
     queryFn: async () => {
@@ -95,7 +101,7 @@ function SettingsPage() {
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Manage production lines, custom fields, downtime reasons, production areas, area owners,
-          department categories, departments, downtime types, and severity levels.
+          department categories, departments, downtime types, severity levels, and technicians.
         </p>
       </div>
 
@@ -126,8 +132,9 @@ function SettingsPage() {
         <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <UsersCard users={users} qc={qc} />
+        <TechniciansCard technicians={technicians} qc={qc} />
       </div>
 
       {selectedLine && (
@@ -203,6 +210,231 @@ function UsersCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// role/department are DB CHECK-constrained (see
+// 20260809120000_technicians.sql) rather than driven by a master-data
+// table like Departments above — there's no expectation of adding a fifth
+// role or department without a migration, so a fixed list here is fine.
+const TECHNICIAN_ROLES = ["Technician", "Engineer", "Supervisor", "Operator"] as const;
+const TECHNICIAN_DEPARTMENTS = ["Mechanical", "Electrical", "Production"] as const;
+
+function TechniciansCard({
+  technicians,
+  qc,
+}: {
+  technicians: Technician[];
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<Technician | null>(null);
+
+  function openAdd() {
+    setEditing(null);
+    setDialogOpen(true);
+  }
+  function openEdit(t: Technician) {
+    setEditing(t);
+    setDialogOpen(true);
+  }
+
+  async function del(t: Technician) {
+    if (!confirm(`Delete technician "${t.name}"? Existing events keep their assignment as a name-less id.`)) return;
+    const { error } = await supabase.from("technicians").delete().eq("id", t.id);
+    if (error) return toast.error(error.message);
+    toast.success(`Technician "${t.name}" deleted`);
+    void logAudit("settings.delete", "technician", t.id, { name: t.name });
+    qc.invalidateQueries({ queryKey: ["technicians"] });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <CardTitle>Technicians</CardTitle>
+            <CardDescription>
+              Maintenance staff assignable to events on the Maintenance page. Only active
+              technicians can be newly assigned.
+            </CardDescription>
+          </div>
+          <Button size="sm" onClick={openAdd}>
+            <Plus className="mr-1 h-4 w-4" />
+            Add Technician
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-1.5">
+          {technicians.map((t) => (
+            <div
+              key={t.id}
+              className="flex items-center justify-between rounded-md border border-border p-2 text-sm"
+            >
+              <div>
+                <p className="flex items-center gap-2 font-medium">
+                  {t.name}
+                  {!t.is_active && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                      Inactive
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {[t.role, t.department].filter(Boolean).join(" · ") || "—"}
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={() => openEdit(t)}>
+                  <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => del(t)}>
+                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          {technicians.length === 0 && (
+            <p className="p-4 text-center text-sm text-muted-foreground">No technicians yet.</p>
+          )}
+        </div>
+      </CardContent>
+      <TechnicianDialog open={dialogOpen} onOpenChange={setDialogOpen} technician={editing} qc={qc} />
+    </Card>
+  );
+}
+
+function TechnicianDialog({
+  open,
+  onOpenChange,
+  technician,
+  qc,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  technician: Technician | null;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const isEditing = !!technician;
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<string>("");
+  const [department, setDepartment] = useState<string>("");
+  const [isActive, setIsActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Re-seed the form whenever a different technician is opened for editing,
+  // or the dialog is opened fresh for "Add" (technician === null) — keyed
+  // on id (not the whole object) so a background refetch while open
+  // doesn't clobber in-progress edits, same reasoning as EventDetailDialog.
+  useEffect(() => {
+    if (!open) return;
+    setName(technician?.name ?? "");
+    setRole(technician?.role ?? "");
+    setDepartment(technician?.department ?? "");
+    setIsActive(technician?.is_active ?? true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, technician?.id]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return toast.error("Name is required");
+    setSaving(true);
+    try {
+      const payload = {
+        name: name.trim(),
+        role: role || null,
+        department: department || null,
+        is_active: isActive,
+      };
+      if (isEditing) {
+        const { error } = await supabase.from("technicians").update(payload).eq("id", technician.id);
+        if (error) throw error;
+        toast.success(`Technician "${name}" updated`);
+        void logAudit("settings.update", "technician", technician.id, { name });
+      } else {
+        const { error } = await supabase.from("technicians").insert(payload);
+        if (error) throw error;
+        toast.success(`Technician "${name}" added`);
+        void logAudit("settings.create", "technician", undefined, { name });
+      }
+      qc.invalidateQueries({ queryKey: ["technicians"] });
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save technician");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{isEditing ? "Edit Technician" : "Add Technician"}</DialogTitle>
+          <DialogDescription>
+            {isEditing
+              ? "Update this technician's details, or deactivate them without deleting their history."
+              : "Add a new maintenance staff member, assignable to events once saved."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <Label>Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Role (optional)</Label>
+              <Select value={role || "none"} onValueChange={(v) => setRole(v === "none" ? "" : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {TECHNICIAN_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Department (optional)</Label>
+              <Select value={department || "none"} onValueChange={(v) => setDepartment(v === "none" ? "" : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select department" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {TECHNICIAN_DEPARTMENTS.map((d) => (
+                    <SelectItem key={d} value={d}>
+                      {d}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border p-3">
+            <div>
+              <Label className="text-sm">Active</Label>
+              <p className="text-xs text-muted-foreground">Inactive technicians can't be newly assigned to events.</p>
+            </div>
+            <Switch checked={isActive} onCheckedChange={setIsActive} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : isEditing ? "Update" : "Add Technician"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

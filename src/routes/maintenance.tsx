@@ -24,10 +24,12 @@ import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, formatHours, sortByWorstMtbf, toDatetimeLocalValue } from "@/lib/maintenance-format";
+import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import {
   linesQuery,
   maintenanceEventsQuery,
   maintenanceMetricsQuery,
+  techniciansQuery,
   type MaintenanceEvent,
   type MaintenanceType,
   type MaintenanceStatus,
@@ -137,7 +139,7 @@ function MaintenancePage() {
   }, [meanDowntimePerFault, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
 
-  async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technician: string }) {
+  async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[] }) {
     const { data: inserted, error } = await supabase
       .from("maintenance_events")
       .insert({
@@ -147,7 +149,7 @@ function MaintenancePage() {
         description: data.description.trim() || null,
         started_at: data.startedAt,
         severity_label: data.severityLabel.trim() || null,
-        technician: data.technician.trim() || null,
+        technician_ids: data.technicianIds,
         created_by: user?.id ?? null,
       })
       .select()
@@ -307,7 +309,7 @@ function MaintenancePage() {
                       <TableCell><Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge></TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{new Date(e.started_at).toLocaleString()}</TableCell>
                       <TableCell className="text-sm tabular-nums">{formatDuration(durationMs)}</TableCell>
-                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{e.technician || "—"}</TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}</TableCell>
                       <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{firstNote ? truncateNote(firstNote) : "—"}</TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                         {e.status === "resolved" ? (e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—") : "—"}
@@ -736,7 +738,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   lines: { id: string; name: string }[];
-  onCreate: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technician: string }) => Promise<void>;
+  onCreate: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[] }) => Promise<void>;
 }) {
   const [lineId, setLineId] = useState("");
   const [type, setType] = useState<MaintenanceType>("mechanical");
@@ -744,11 +746,13 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
   const [description, setDescription] = useState("");
   const [startedAt, setStartedAt] = useState(() => toDatetimeLocalValue(new Date()));
   const [severityLabel, setSeverityLabel] = useState("");
-  const [technician, setTechnician] = useState("");
+  const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const { data: technicians = [] } = useQuery(techniciansQuery);
+  const activeTechnicians = technicians.filter((t) => t.is_active);
 
   function reset() {
-    setLineId(""); setType("mechanical"); setTitle(""); setDescription(""); setStartedAt(toDatetimeLocalValue(new Date())); setSeverityLabel(""); setTechnician("");
+    setLineId(""); setType("mechanical"); setTitle(""); setDescription(""); setStartedAt(toDatetimeLocalValue(new Date())); setSeverityLabel(""); setTechnicianIds([]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -763,7 +767,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
     }
     setSubmitting(true);
     try {
-      await onCreate({ lineId, type, title, description, startedAt: new Date(startedAt).toISOString(), severityLabel, technician });
+      await onCreate({ lineId, type, title, description, startedAt: new Date(startedAt).toISOString(), severityLabel, technicianIds });
       reset();
     } finally {
       setSubmitting(false);
@@ -809,8 +813,8 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
               </Select>
             </div>
             <div>
-              <Label>Technician (optional)</Label>
-              <Input value={technician} onChange={(e) => setTechnician(e.target.value)} placeholder="Who did the work" />
+              <Label>Technicians (optional)</Label>
+              <TechnicianMultiSelect technicians={activeTechnicians} selectedIds={technicianIds} onChange={setTechnicianIds} />
             </div>
           </div>
           <div><Label>Title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} required /></div>

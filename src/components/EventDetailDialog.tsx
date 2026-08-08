@@ -15,7 +15,8 @@ import { Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
-import { maintenanceNotesQuery, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
+import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
+import { maintenanceNotesQuery, techniciansQuery, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, toDatetimeLocalValue } from "@/lib/maintenance-format";
 
 // Shared between src/routes/maintenance.tsx (clicking a row in the full
@@ -33,7 +34,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   const [startedAt, setStartedAt] = useState("");
   const [resolvedAt, setResolvedAt] = useState("");
   const [severityLabel, setSeverityLabel] = useState("");
-  const [technician, setTechnician] = useState("");
+  const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -42,6 +43,14 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
   const { data: notes = [], refetch: refetchNotes } = useQuery(maintenanceNotesQuery(event?.id ?? null));
+  const { data: technicians = [] } = useQuery(techniciansQuery);
+  // Keep whoever is already assigned selectable even if they've since gone
+  // inactive (dropping them from technicianIds just because the roster
+  // changed would silently erase a real historical assignment) — only new
+  // picks are restricted to is_active technicians.
+  const assignableTechnicians = technicians.filter(
+    (t) => t.is_active || technicianIds.includes(t.id),
+  );
 
   // Reset the edit form whenever a *different* event is opened — keyed on
   // id (not the whole event object) so a background refetch of the events
@@ -52,7 +61,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       setStartedAt(toDatetimeLocalValue(new Date(event.started_at)));
       setResolvedAt(event.resolved_at ? toDatetimeLocalValue(new Date(event.resolved_at)) : "");
       setSeverityLabel(event.severity_label ?? "");
-      setTechnician(event.technician ?? "");
+      setTechnicianIds(event.technician_ids);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event?.id]);
@@ -83,13 +92,13 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
         resolved_at: string | null;
         resolved_by?: string | null;
         severity_label: string | null;
-        technician: string | null;
+        technician_ids: string[];
       } = {
         status,
         started_at: new Date(startedAt).toISOString(),
         resolved_at: status === "resolved" ? new Date(resolvedAt).toISOString() : null,
         severity_label: severityLabel.trim() || null,
-        technician: technician.trim() || null,
+        technician_ids: technicianIds,
       };
       if (becomingResolved) {
         // Attribute the resolution to whoever is saving it right now — only
@@ -202,12 +211,18 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                   </p>
                 )}
               </div>
-              <div>
-                <Label className="text-xs">Technician</Label>
+              <div className="col-span-2">
+                <Label className="text-xs">Technicians</Label>
                 {canEdit ? (
-                  <Input value={technician} onChange={(e) => setTechnician(e.target.value)} placeholder="Who did the work" className="mt-1" />
+                  <div className="mt-1">
+                    <TechnicianMultiSelect
+                      technicians={assignableTechnicians}
+                      selectedIds={technicianIds}
+                      onChange={setTechnicianIds}
+                    />
+                  </div>
                 ) : (
-                  <p className="mt-1">{technician || "—"}</p>
+                  <p className="mt-1">{event.technician_names.length > 0 ? event.technician_names.join(", ") : "—"}</p>
                 )}
               </div>
               <div>

@@ -341,7 +341,7 @@ function ReportLayout({
                       (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) - new Date(e.started_at).getTime(),
                     )}
                   </td>
-                  <td style={td}>{e.technician || "—"}</td>
+                  <td style={td}>{e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}</td>
                   <td style={td}>{e.status === "resolved" ? personLabel(e.resolved_by_profile) : "—"}</td>
                 </tr>
               ))
