@@ -38,6 +38,10 @@ export interface MaintenanceReportOptions {
   // it doesn't re-derive MTBF/MTTR math itself.
   totalEvents: number;
   openCount: number;
+  // Preventive events are kept out of openCount (which feeds the same
+  // mechanical/electrical-only reliability story as the KPI cards above it)
+  // and shown as its own card instead — see MaintenanceType docs.
+  openPreventiveCount: number;
   mtbfMechanicalHours: number | null;
   mttrMechanicalHours: number | null;
   mtbfElectricalHours: number | null;
@@ -230,6 +234,7 @@ function ReportLayout({
   metrics,
   totalEvents,
   openCount,
+  openPreventiveCount,
   mtbfMechanicalHours,
   mttrMechanicalHours,
   mtbfElectricalHours,
@@ -247,6 +252,7 @@ function ReportLayout({
   | "metrics"
   | "totalEvents"
   | "openCount"
+  | "openPreventiveCount"
   | "mtbfMechanicalHours"
   | "mttrMechanicalHours"
   | "mtbfElectricalHours"
@@ -261,9 +267,11 @@ function ReportLayout({
 >) {
   const mechMinutes = events.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
   const elecMinutes = events.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
-  const totalMinutes = mechMinutes + elecMinutes;
+  const prevMinutes = events.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDurationMinutes(e), 0);
+  const totalMinutes = mechMinutes + elecMinutes + prevMinutes;
   const mechPct = totalMinutes > 0 ? (mechMinutes / totalMinutes) * 100 : 0;
   const elecPct = totalMinutes > 0 ? (elecMinutes / totalMinutes) * 100 : 0;
+  const prevPct = totalMinutes > 0 ? (prevMinutes / totalMinutes) * 100 : 0;
   const sortedMetrics = sortByWorstMtbf(metrics);
 
   const top5Downtime = topLossesByDowntime.slice(0, 5);
@@ -286,19 +294,21 @@ function ReportLayout({
         <ReportKpiCard label="MTTR (Mechanical)" value={formatHours(mttrMechanicalHours)} accent="#4f46e5" />
         <ReportKpiCard label="MTBF (Electrical)" value={formatHours(mtbfElectricalHours)} accent="#f59e0b" />
         <ReportKpiCard label="MTTR (Electrical)" value={formatHours(mttrElectricalHours)} accent="#f59e0b" />
+        <ReportKpiCard label="Open Preventive" value={String(openPreventiveCount)} accent={openPreventiveCount > 0 ? "#d97706" : "#16a34a"} />
       </div>
 
       <div
         data-pdf-section="chart"
         style={{ margin: "16px 20px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
-        <p style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 800 }}>Downtime by Type — Mechanical vs Electrical</p>
+        <p style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 800 }}>Downtime by Type — Mechanical vs Electrical vs Preventive</p>
         {totalMinutes === 0 ? (
           <p style={{ fontSize: 12, color: "#64748b" }}>No downtime in the exported events.</p>
         ) : (
           <>
             <DowntimeBar label="Mechanical" minutes={mechMinutes} pct={mechPct} color="#4f46e5" />
             <DowntimeBar label="Electrical" minutes={elecMinutes} pct={elecPct} color="#f59e0b" />
+            <DowntimeBar label="Preventive" minutes={prevMinutes} pct={prevPct} color="#16a34a" />
           </>
         )}
       </div>
@@ -531,6 +541,7 @@ export async function exportMaintenanceReportToPdf({
   metrics,
   totalEvents,
   openCount,
+  openPreventiveCount,
   mtbfMechanicalHours,
   mttrMechanicalHours,
   mtbfElectricalHours,
@@ -564,6 +575,7 @@ export async function exportMaintenanceReportToPdf({
           metrics={metrics}
           totalEvents={totalEvents}
           openCount={openCount}
+          openPreventiveCount={openPreventiveCount}
           mtbfMechanicalHours={mtbfMechanicalHours}
           mttrMechanicalHours={mttrMechanicalHours}
           mtbfElectricalHours={mtbfElectricalHours}

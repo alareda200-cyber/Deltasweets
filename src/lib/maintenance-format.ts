@@ -5,11 +5,17 @@ import type { MaintenanceType, MaintenanceStatus, MaintenanceMetric } from "@/li
 // Events" list) — both render the same event rows and must stay visually
 // consistent, so labels/formatting live here once instead of twice.
 
-export const TYPE_LABELS: Record<MaintenanceType, string> = { mechanical: "Mechanical", electrical: "Electrical" };
+export const TYPE_LABELS: Record<MaintenanceType, string> = {
+  mechanical: "Mechanical",
+  electrical: "Electrical",
+  preventive: "Preventive Maintenance",
+};
 export const STATUS_LABELS: Record<MaintenanceStatus, string> = { open: "Open", in_progress: "In Progress", resolved: "Resolved" };
 
 export function typeBadgeVariant(t: MaintenanceType) {
-  return t === "mechanical" ? "secondary" : "outline";
+  if (t === "mechanical") return "secondary";
+  if (t === "preventive") return "default";
+  return "outline";
 }
 
 export function statusBadgeVariant(s: MaintenanceStatus): "default" | "secondary" | "destructive" | "outline" {

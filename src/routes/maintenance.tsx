@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
-import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge } from "lucide-react";
+import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge, CalendarCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
@@ -85,6 +85,7 @@ function MaintenancePage() {
 
   const openMechanical = allEvents.filter((e) => e.type === "mechanical" && e.status !== "resolved").length;
   const openElectrical = allEvents.filter((e) => e.type === "electrical" && e.status !== "resolved").length;
+  const openPreventive = allEvents.filter((e) => e.type === "preventive" && e.status !== "resolved").length;
 
   const mtbfMechanicalHours = useMemo(() => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"), [metrics]);
   const mttrMechanicalHours = useMemo(() => weightedAverage(metrics, "mechanical", "mttr_hours", "mttr_sample_count"), [metrics]);
@@ -180,6 +181,7 @@ function MaintenancePage() {
         metrics,
         totalEvents: allEvents.length,
         openCount: openMechanical + openElectrical,
+        openPreventiveCount: openPreventive,
         mtbfMechanicalHours,
         mttrMechanicalHours,
         mtbfElectricalHours,
@@ -209,7 +211,7 @@ function MaintenancePage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Maintenance</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Mechanical & electrical maintenance events, reliability metrics.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Mechanical, electrical & preventive maintenance events, reliability metrics.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleExportReport} disabled={exportingReport}>
@@ -235,6 +237,13 @@ function MaintenancePage() {
         <KpiCard label="Open Electrical" value={String(openElectrical)} icon={Zap} variant={openElectrical > 0 ? "warning" : "success"} />
         <KpiCard label="MTBF (Electrical)" value={formatHours(mtbfElectricalHours)} sub="Avg. time between failures" icon={Activity} variant="primary" />
         <KpiCard label="MTTR (Electrical)" value={formatHours(mttrElectricalHours)} sub="Avg. time to repair" icon={Timer} variant="primary" />
+        <KpiCard
+          label="Open Preventive"
+          value={String(openPreventive)}
+          sub="Scheduled maintenance, not counted in MTBF"
+          icon={CalendarCheck}
+          variant={openPreventive > 0 ? "warning" : "success"}
+        />
       </div>
 
       <Card>
@@ -253,6 +262,7 @@ function MaintenancePage() {
                 <SelectItem value="all">All Types</SelectItem>
                 <SelectItem value="mechanical">Mechanical</SelectItem>
                 <SelectItem value="electrical">Electrical</SelectItem>
+                <SelectItem value="preventive">Preventive Maintenance</SelectItem>
               </SelectContent>
             </Select>
             <Select value={status || "all"} onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}>
@@ -395,19 +405,24 @@ function repeatFailureRateOf(events: MaintenanceEvent[]): number {
 // consecutive events, pooled across whatever the current line/type/date
 // filters resolve to — deliberately not the lifetime per-line+type
 // `metrics` query above. Null with fewer than 2 events (no gap exists).
+// Preventive events are excluded — scheduled maintenance isn't a "failure",
+// so it shouldn't dilute time-between-failures math (same reasoning as
+// maintenanceMetricsQuery in src/lib/queries.ts).
 function localMtbfHours(events: MaintenanceEvent[]): number | null {
-  if (events.length < 2) return null;
-  const starts = events.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
+  const failureEvents = events.filter((e) => e.type !== "preventive");
+  if (failureEvents.length < 2) return null;
+  const starts = failureEvents.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
   let totalGapHours = 0;
   for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
   return totalGapHours / (starts.length - 1);
 }
 
 // Local (filter-scoped) MTTR: average resolved_at - started_at in hours
-// across resolved events only. Null when none are resolved yet.
+// across resolved events only. Null when none are resolved yet. Preventive
+// events are excluded — see localMtbfHours above.
 function localMttrHours(events: MaintenanceEvent[]): number | null {
   const durations = events
-    .filter((e) => e.resolved_at)
+    .filter((e) => e.type !== "preventive" && e.resolved_at)
     .map((e) => (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) / 3_600_000);
   if (durations.length === 0) return null;
   return durations.reduce((s, v) => s + v, 0) / durations.length;
@@ -779,7 +794,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Maintenance Event</DialogTitle>
-          <DialogDescription>Log a new mechanical or electrical issue.</DialogDescription>
+          <DialogDescription>Log a new mechanical, electrical, or preventive maintenance issue.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
@@ -797,6 +812,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
                 <SelectContent>
                   <SelectItem value="mechanical">Mechanical</SelectItem>
                   <SelectItem value="electrical">Electrical</SelectItem>
+                  <SelectItem value="preventive">Preventive Maintenance</SelectItem>
                 </SelectContent>
               </Select>
             </div>

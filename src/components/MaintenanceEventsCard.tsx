@@ -55,8 +55,12 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
     (e) => now - new Date(e.started_at).getTime() > STALE_OPEN_HOURS * 3_600_000,
   );
 
-  const thisMonth = useMemo(() => monthStats(events, 0), [events]);
-  const lastMonth = useMemo(() => monthStats(events, 1), [events]);
+  // Preventive events are scheduled, not failures — excluded here so they
+  // don't dilute the MTBF/MTTR trend this card is built around (same
+  // reasoning as localMtbfHours/localMttrHours on the /maintenance page).
+  const failureEvents = useMemo(() => events.filter((e) => e.type !== "preventive"), [events]);
+  const thisMonth = useMemo(() => monthStats(failureEvents, 0), [failureEvents]);
+  const lastMonth = useMemo(() => monthStats(failureEvents, 1), [failureEvents]);
 
   return (
     <section

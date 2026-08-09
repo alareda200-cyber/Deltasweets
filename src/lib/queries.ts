@@ -401,7 +401,7 @@ export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
     },
   });
 
-export type MaintenanceType = "mechanical" | "electrical";
+export type MaintenanceType = "mechanical" | "electrical" | "preventive";
 export type MaintenanceStatus = "open" | "in_progress" | "resolved";
 
 export interface MaintenanceEvent {
@@ -520,13 +520,23 @@ export function maintenanceEventsAsDowntimes(
   const now = Date.now();
   const mechanicalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "mechanical maintenance")?.id ?? null;
   const electricalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "electrical maintenance")?.id ?? null;
-  // Every maintenance_events row is an unplanned equipment failure/repair —
-  // scheduled/preventive maintenance is tracked separately as an ordinary
-  // downtime_reasons entry, not through this table.
+  // Resolves to null (→ "Unclassified" in MaintenanceDowntimeCard's nameOf())
+  // until a "Preventive Maintenance" department row exists in Settings —
+  // same fallback behavior mechanical/electrical had before their
+  // departments were seeded.
+  const preventiveDeptId = departments.find((d) => d.name.trim().toLowerCase() === "preventive maintenance")?.id ?? null;
+  // Mechanical/electrical events are unplanned equipment failures/repairs;
+  // preventive events are scheduled maintenance by definition, so they're
+  // classified as Planned downtime instead — same "Unclassified if the
+  // master-data row is missing" fallback as the department lookups above.
   const unplannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "unplanned")?.id ?? null;
+  const plannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "planned")?.id ?? null;
   return events.map((e) => {
     const startedMs = new Date(e.started_at).getTime();
     const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : now;
+    const pareto_reason_name =
+      e.type === "mechanical" ? "Mechanical Maintenance" : e.type === "electrical" ? "Electrical Maintenance" : "Preventive Maintenance";
+    const department_id = e.type === "mechanical" ? mechanicalDeptId : e.type === "electrical" ? electricalDeptId : preventiveDeptId;
     return {
       id: `maintenance-${e.id}`,
       entry_id: e.id,
@@ -534,16 +544,16 @@ export function maintenanceEventsAsDowntimes(
       // Each event keeps its own title as the reason name, so
       // MaintenanceDowntimeCard's Top Reasons list/chart (which groups by
       // reason_name) still shows one row per event instead of every
-      // mechanical (or every electrical) event collapsing together. The
+      // mechanical/electrical/preventive event collapsing together. The
       // overall Pareto chart (DowntimeSection) groups by pareto_reason_name
       // instead, below, to get the aggregated per-type bar.
       reason_name: e.title,
       // See EntryDowntime.pareto_reason_name.
-      pareto_reason_name: e.type === "mechanical" ? "Mechanical Maintenance" : "Electrical Maintenance",
+      pareto_reason_name,
       area: e.production_lines?.name ?? "—",
       minutes: Math.max(0, (endMs - startedMs) / 60_000),
-      department_id: e.type === "mechanical" ? mechanicalDeptId : electricalDeptId,
-      downtime_type_id: unplannedTypeId,
+      department_id,
+      downtime_type_id: e.type === "preventive" ? plannedTypeId : unplannedTypeId,
       severity_id: null,
       severity_label: e.severity_label ?? undefined,
       production_area_id: null,
@@ -599,6 +609,13 @@ export interface MaintenanceMetric {
 // Grouping by line is required before computing gaps: pooling two lines'
 // started_at values together would produce a meaningless gap between an
 // event on one line and an unrelated event on another.
+//
+// Preventive events are excluded entirely — MTBF/MTTR measure unplanned
+// failure behavior (time between failures, time to repair a failure), and a
+// scheduled preventive visit is neither. Preventive still counts toward
+// Downtime/Availability elsewhere (see totalDowntimeMinutesOf in
+// src/routes/maintenance.tsx), just not this reliability-by-failure-type
+// table.
 export const maintenanceMetricsQuery = () =>
   queryOptions({
     queryKey: ["maintenance-metrics"],
@@ -622,7 +639,7 @@ export const maintenanceMetricsQuery = () =>
         { line_id: string; line_name: string; type: MaintenanceType; starts: number[]; durationsHours: number[] }
       >();
       for (const row of (data ?? []) as unknown as Row[]) {
-        if (!row.line_id) continue;
+        if (!row.line_id || row.type === "preventive") continue;
         const key = `${row.line_id}::${row.type}`;
         let g = groups.get(key);
         if (!g) {
