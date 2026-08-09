@@ -189,7 +189,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   required
-                  className="text-base font-semibold"
+                  className="pr-10 text-base font-semibold"
                   aria-label="Title"
                 />
               ) : (
