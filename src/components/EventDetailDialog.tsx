@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +16,7 @@ import { Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
+import { can } from "@/lib/permissions";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import { maintenanceNotesQuery, techniciansQuery, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, toDatetimeLocalValue } from "@/lib/maintenance-format";
@@ -30,6 +32,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   onOpenChange: (o: boolean) => void;
   onChanged: () => void;
 }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [status, setStatus] = useState<MaintenanceStatus>("open");
   const [startedAt, setStartedAt] = useState("");
   const [resolvedAt, setResolvedAt] = useState("");
@@ -40,8 +44,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   const [deleting, setDeleting] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
-  const { profile } = useAuth();
-  const isAdmin = profile?.role === "admin";
+  const { role } = useAuth();
+  const canDelete = can(role, "maintenance.delete");
   const { data: notes = [], refetch: refetchNotes } = useQuery(maintenanceNotesQuery(event?.id ?? null));
   const { data: technicians = [] } = useQuery(techniciansQuery);
   // Keep whoever is already assigned selectable even if they've since gone
@@ -57,6 +61,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   // list while this dialog is open doesn't clobber in-progress edits.
   useEffect(() => {
     if (event) {
+      setTitle(event.title);
+      setDescription(event.description ?? "");
       setStatus(event.status);
       setStartedAt(toDatetimeLocalValue(new Date(event.started_at)));
       setResolvedAt(event.resolved_at ? toDatetimeLocalValue(new Date(event.resolved_at)) : "");
@@ -75,6 +81,10 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
 
   async function handleSave() {
     if (!event) return;
+    if (!title.trim()) {
+      toast.error("Title is required.");
+      return;
+    }
     if (!startedAt) {
       toast.error("Started At is required.");
       return;
@@ -87,6 +97,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
     try {
       const becomingResolved = status === "resolved" && event.status !== "resolved";
       const updatePayload: {
+        title: string;
+        description: string | null;
         status: MaintenanceStatus;
         started_at: string;
         resolved_at: string | null;
@@ -94,6 +106,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
         severity_label: string | null;
         technician_ids: string[];
       } = {
+        title: title.trim(),
+        description: description.trim() || null,
         status,
         started_at: new Date(startedAt).toISOString(),
         resolved_at: status === "resolved" ? new Date(resolvedAt).toISOString() : null,
@@ -112,7 +126,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       const { error } = await supabase.from("maintenance_events").update(updatePayload).eq("id", event.id);
       if (error) throw error;
       toast.success("Event updated");
-      void logAudit("maintenance.update_event", "maintenance_event", event.id, { status, startedAt, resolvedAt });
+      void logAudit("maintenance.update_event", "maintenance_event", event.id, { title, status, startedAt, resolvedAt });
       onChanged();
       onOpenChange(false);
     } catch (err) {
@@ -169,7 +183,19 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       <Dialog open={!!event} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{event.title}</DialogTitle>
+            <DialogTitle asChild={canEdit}>
+              {canEdit ? (
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  required
+                  className="text-base font-semibold"
+                  aria-label="Title"
+                />
+              ) : (
+                event.title
+              )}
+            </DialogTitle>
             <DialogDescription>{event.production_lines?.name ?? "—"}</DialogDescription>
           </DialogHeader>
 
@@ -177,7 +203,20 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={typeBadgeVariant(event.type)}>{TYPE_LABELS[event.type]}</Badge>
             </div>
-            {event.description && <p className="text-muted-foreground">{event.description}</p>}
+            {canEdit ? (
+              <div>
+                <Label className="text-xs">Description</Label>
+                <Textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className="mt-1"
+                  placeholder="Description (optional)"
+                />
+              </div>
+            ) : (
+              event.description && <p className="text-muted-foreground">{event.description}</p>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
@@ -245,7 +284,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
               )}
               {status === "resolved" && (
                 <div>
-                  <Label className="text-xs">Resolved by</Label>
+                  <Label className="text-xs">Closed by</Label>
                   <p className="mt-1">{event.resolved_by_profile?.display_name || event.resolved_by_profile?.email || "—"}</p>
                 </div>
               )}
@@ -255,14 +294,14 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
               </div>
             </div>
 
-            {(canEdit || isAdmin) && (
+            {(canEdit || canDelete) && (
               <div className="flex gap-2">
                 {canEdit && (
                   <Button size="sm" onClick={handleSave} disabled={saving} className="flex-1">
                     {saving ? "Saving…" : "Save Changes"}
                   </Button>
                 )}
-                {isAdmin && (
+                {canDelete && (
                   <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteOpen(true)} aria-label="Delete event">
                     <Trash2 className="h-4 w-4" />
                   </Button>

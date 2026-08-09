@@ -73,7 +73,9 @@
       "Bash(supabase *)",
       "Bash(supabase gen *)",
       "Bash(echo \"exit:$?\")",
-      "Read(//c/Users/hp/Downloads/**)"
+      "Read(//c/Users/hp/Downloads/**)",
+      "Bash(git config *)",
+      "WebFetch(domain:delta-sweets-kandi.web.app)"
     ],
     "ask": [
       "Bash(firebase deploy *)",

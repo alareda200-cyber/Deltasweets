@@ -42,13 +42,19 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   const dayDown = dayDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
   const dayLossPct = dayAvail > 0 ? (dayDown / dayAvail) * 100 : 0;
 
-  // Pareto: group downtimes by reason
+  // Pareto: group downtimes by reason. Maintenance-derived rows group by
+  // pareto_reason_name ("Mechanical Maintenance" / "Electrical Maintenance")
+  // instead of their per-event reason_name, so every mechanical (or every
+  // electrical) fault rolls into a single bar here — the per-event detail
+  // (Servo 1004, Servo 1002, ...) still shows separately in
+  // MaintenanceDowntimeCard, which groups by reason_name, not this.
   const byReason = new Map<string, { reason: string; area: string; minutes: number }>();
   for (const d of downtimes) {
-    const key = `${d.reason_name} | ${d.area}`;
+    const reason = d.pareto_reason_name ?? d.reason_name;
+    const key = `${reason} | ${d.area}`;
     const cur = byReason.get(key);
     if (cur) cur.minutes += Number(d.minutes);
-    else byReason.set(key, { reason: d.reason_name, area: d.area, minutes: Number(d.minutes) });
+    else byReason.set(key, { reason, area: d.area, minutes: Number(d.minutes) });
   }
   const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
   const sorted = allReasons.slice(0, 12);

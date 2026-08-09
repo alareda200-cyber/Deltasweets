@@ -15,7 +15,8 @@ export type Permission =
   | "dashboard.viewMaintenanceCard"
   | "dashboard.exportPdf"
   | "maintenance.view"
-  | "maintenance.edit";
+  | "maintenance.edit"
+  | "maintenance.delete";
 
 const MATRIX: Record<Role, Permission[]> = {
   admin: [
@@ -23,7 +24,7 @@ const MATRIX: Record<Role, Permission[]> = {
     "entry.view", "entry.create", "entry.delete", "entry.history",
     "entry.editProduction", "entry.editDowntime", "entry.editAreaOwners", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
-    "maintenance.view", "maintenance.edit",
+    "maintenance.view", "maintenance.edit", "maintenance.delete",
   ],
   production: [
     "entry.view", "entry.create", "entry.delete", "entry.history",
@@ -35,7 +36,7 @@ const MATRIX: Record<Role, Permission[]> = {
     "entry.view", "entry.history",
     "entry.editDowntime", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
-    "maintenance.view", "maintenance.edit",
+    "maintenance.view", "maintenance.edit", "maintenance.delete",
   ],
   quality: [
     "entry.view", "entry.history",

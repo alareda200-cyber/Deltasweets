@@ -76,6 +76,15 @@ export interface EntryDowntime {
   // entry_id on a maintenance-derived row is the maintenance_events row's
   // own id, not a daily_entries id, so it can't be used the same way.
   event_date?: string;
+  // Aggregated label ("Mechanical Maintenance" / "Electrical Maintenance")
+  // for the overall Pareto chart (DowntimeSection), which groups by this
+  // instead of reason_name for source: "maintenance" rows so every
+  // mechanical (or electrical) event rolls into one bar there. reason_name
+  // itself stays the per-event title — MaintenanceDowntimeCard's own
+  // chart/Top Reasons list groups by reason_name, not this, so the
+  // per-servo detail (Servo 1004, Servo 1002, ...) is unaffected. Undefined
+  // for real entry_downtimes rows, which have no type to aggregate by.
+  pareto_reason_name?: string;
 }
 
 export interface ProductionArea {
@@ -431,7 +440,7 @@ export interface MaintenanceEvent {
   // Null whenever the viewer's role can't read another user's profiles row
   // (see "Users can read own profile" / "Admins can read all profiles" in
   // 20260707145601_auth_and_roles.sql) — not an error, just degrades the
-  // "Resolved by" display to "—" for non-admin viewers of someone else's
+  // "Closed by" display to "—" for non-admin viewers of someone else's
   // resolution.
   resolved_by_profile: { display_name: string | null; email: string } | null;
 }
@@ -522,14 +531,15 @@ export function maintenanceEventsAsDowntimes(
       id: `maintenance-${e.id}`,
       entry_id: e.id,
       reason_id: null,
-      // Each event keeps its own title as the reason name, so it stays its
-      // own row in the Top Reasons list instead of every mechanical (or
-      // every electrical) event collapsing into one merged row keyed by a
-      // shared reason_name — that merge was also silently picking an
-      // arbitrary single event's severity/department to represent the
-      // whole merged bucket. department_id below still classifies by type
-      // for the Pareto chart's department-level grouping, unaffected by this.
+      // Each event keeps its own title as the reason name, so
+      // MaintenanceDowntimeCard's Top Reasons list/chart (which groups by
+      // reason_name) still shows one row per event instead of every
+      // mechanical (or every electrical) event collapsing together. The
+      // overall Pareto chart (DowntimeSection) groups by pareto_reason_name
+      // instead, below, to get the aggregated per-type bar.
       reason_name: e.title,
+      // See EntryDowntime.pareto_reason_name.
+      pareto_reason_name: e.type === "mechanical" ? "Mechanical Maintenance" : "Electrical Maintenance",
       area: e.production_lines?.name ?? "—",
       minutes: Math.max(0, (endMs - startedMs) / 60_000),
       department_id: e.type === "mechanical" ? mechanicalDeptId : electricalDeptId,

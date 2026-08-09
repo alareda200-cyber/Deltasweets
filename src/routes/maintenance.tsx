@@ -282,7 +282,7 @@ function MaintenancePage() {
                   <TableHead>Duration</TableHead>
                   <TableHead className="hidden md:table-cell">Technician</TableHead>
                   <TableHead className="hidden md:table-cell">Notes</TableHead>
-                  <TableHead className="hidden lg:table-cell">Resolved by</TableHead>
+                  <TableHead className="hidden lg:table-cell">Closed by</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
