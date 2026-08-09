@@ -443,6 +443,27 @@ export interface MaintenanceEvent {
   // "Closed by" display to "—" for non-admin viewers of someone else's
   // resolution.
   resolved_by_profile: { display_name: string | null; email: string } | null;
+  // References maintenance_stoppages.id — set when this event was logged as
+  // (or later added to) part of a multi-event stoppage rather than a
+  // standalone failure. See MaintenanceStoppage and
+  // 20260810120000_maintenance_stoppages.sql.
+  stoppage_id: string | null;
+}
+
+export interface MaintenanceStoppage {
+  id: string;
+  line_id: string | null;
+  started_at: string;
+  // Auto-derived from member events by syncStoppageAggregate — never set
+  // directly by the UI (there's no "resolve this stoppage" control; it
+  // resolves itself once every member event does). Null while open/in
+  // progress, or while the stoppage has no member events yet.
+  resolved_at: string | null;
+  status: MaintenanceStatus;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  production_lines: { name: string } | null;
 }
 
 export interface MaintenanceNote {
@@ -495,6 +516,144 @@ export const maintenanceEventsQuery = (
     },
   });
 
+// Full stoppage list, optionally scoped to a line — no date filter (mirrors
+// maintenanceMetricsQuery's "lifetime" reasoning: callers that need a
+// specific stoppage's window read it off the row itself via started_at/
+// resolved_at, not off this query's own filters).
+export const maintenanceStoppagesQuery = (lineId?: string | null) =>
+  queryOptions({
+    queryKey: ["maintenance-stoppages", lineId],
+    queryFn: async (): Promise<MaintenanceStoppage[]> => {
+      let query = supabase
+        .from("maintenance_stoppages")
+        .select("*, production_lines(name)")
+        .order("started_at", { ascending: false });
+      if (lineId) query = query.eq("line_id", lineId);
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []) as unknown as MaintenanceStoppage[];
+    },
+  });
+
+// Single stoppage row, live-refetchable by id — backs StoppageDialog's
+// "detail" view once a stoppage has been created, so its status/resolved_at
+// (kept current by syncStoppageAggregate below) stay visible as member
+// events are added/resolved without the dialog holding a stale local copy.
+export const maintenanceStoppageQuery = (stoppageId: string | null) =>
+  queryOptions({
+    queryKey: ["maintenance-stoppage", stoppageId],
+    enabled: !!stoppageId,
+    queryFn: async (): Promise<MaintenanceStoppage | null> => {
+      if (!stoppageId) return null;
+      const { data, error } = await supabase
+        .from("maintenance_stoppages")
+        .select("*, production_lines(name)")
+        .eq("id", stoppageId)
+        .single();
+      if (error) throw error;
+      return data as unknown as MaintenanceStoppage;
+    },
+  });
+
+// Lightweight member-event list for StoppageDialog's "Events in this
+// stoppage" section — deliberately not the full MaintenanceEvent shape (no
+// notes/technicians/resolved_by embed) since this list only needs to show
+// what's already there and its status, not support full editing (editing a
+// member event happens through the normal EventDetailDialog, opened from the
+// main events table like any other event).
+export interface StoppageMemberEvent {
+  id: string;
+  type: MaintenanceType;
+  title: string;
+  status: MaintenanceStatus;
+  started_at: string;
+  resolved_at: string | null;
+}
+
+export const stoppageEventsQuery = (stoppageId: string | null) =>
+  queryOptions({
+    queryKey: ["maintenance-stoppage-events", stoppageId],
+    enabled: !!stoppageId,
+    queryFn: async (): Promise<StoppageMemberEvent[]> => {
+      if (!stoppageId) return [];
+      const { data, error } = await supabase
+        .from("maintenance_events")
+        .select("id, type, title, status, started_at, resolved_at")
+        .eq("stoppage_id", stoppageId)
+        .order("started_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as StoppageMemberEvent[];
+    },
+  });
+
+// Recomputes and persists a stoppage's status/resolved_at from its current
+// member events — there's no DB trigger for this (this table follows the
+// rest of the app in keeping derived state in application code, not
+// Postgres), so every mutation that can change a member event's
+// status/resolved_at, or add/remove a member, must call this afterward.
+// Callers: MaintenancePage's insertEvent (new member added),
+// EventDetailDialog's save/delete (member status changed or member removed).
+//
+// Resolved (with resolved_at = the latest member's resolved_at) only when
+// EVERY member is resolved; in_progress if at least one member has started
+// work; open otherwise — including when the stoppage has no members left,
+// which resets resolved_at to null rather than leaving it stale.
+export async function syncStoppageAggregate(stoppageId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("maintenance_events")
+    .select("status, resolved_at")
+    .eq("stoppage_id", stoppageId);
+  if (error) throw error;
+  const members = (data ?? []) as { status: MaintenanceStatus; resolved_at: string | null }[];
+
+  let status: MaintenanceStatus = "open";
+  let resolvedAt: string | null = null;
+  if (members.length > 0) {
+    if (members.every((m) => m.status === "resolved")) {
+      status = "resolved";
+      resolvedAt =
+        members
+          .map((m) => m.resolved_at)
+          .filter((v): v is string => !!v)
+          .sort()
+          .at(-1) ?? null;
+    } else if (members.some((m) => m.status === "in_progress" || m.status === "resolved")) {
+      status = "in_progress";
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("maintenance_stoppages")
+    .update({ status, resolved_at: resolvedAt })
+    .eq("id", stoppageId);
+  if (updateError) throw updateError;
+}
+
+// Which type "wins" a multi-event stoppage for classification/display
+// purposes (the Dashboard Pareto chart, the /maintenance PDF report's
+// Stoppages summary) — most-represented type among its member events. Ties
+// default to mechanical (checked first below), including the
+// all-equal-counts case.
+export function majorityMaintenanceType(events: { type: MaintenanceType }[]): MaintenanceType {
+  const counts: Record<MaintenanceType, number> = { mechanical: 0, electrical: 0, preventive: 0 };
+  for (const e of events) counts[e.type]++;
+  let winner: MaintenanceType = "mechanical";
+  for (const t of ["electrical", "preventive"] as const) {
+    if (counts[t] > counts[winner]) winner = t;
+  }
+  return winner;
+}
+
+// A stoppage's own window (started_at → resolved_at, or now while still
+// open/in-progress) — independent of any single member event's own
+// started_at/resolved_at. See maintenanceEventsAsDowntimes below for why
+// this matters (double-counting avoidance).
+export function stoppageDurationMinutes(stoppage: MaintenanceStoppage): number {
+  const startedMs = new Date(stoppage.started_at).getTime();
+  const endMs = stoppage.status === "resolved" && stoppage.resolved_at ? new Date(stoppage.resolved_at).getTime() : Date.now();
+  return Math.max(0, (endMs - startedMs) / 60_000);
+}
+
 // Converts maintenance_events rows already fetched via maintenanceEventsQuery
 // into EntryDowntime-shaped rows, so the Dashboard's downtime Pareto chart
 // and the Maintenance card's Top Reasons list can merge them in with real
@@ -512,12 +671,21 @@ export const maintenanceEventsQuery = (
 // 20260804220000_maintenance_events_severity.sql) is free text, passed
 // through as severity_label rather than a severity_id, honestly showing
 // "Unclassified" only when nobody filled it in.
+//
+// Stoppages (see MaintenanceStoppage): events sharing a stoppage_id are one
+// physical downtime window, not several — grouped into a single row here
+// using the stoppage's own started_at/resolved_at (stoppageDurationMinutes),
+// classified by majorityMaintenanceType, so the Pareto chart/downtime totals
+// don't double-count the same outage once per member event. This only
+// affects this Dashboard-facing conversion; the /maintenance page's own
+// per-event MTBF/MTTR and Reliability Analytics numbers are deliberately
+// unaffected (see localMtbfHours/localMttrHours in src/routes/maintenance.tsx).
 export function maintenanceEventsAsDowntimes(
   events: MaintenanceEvent[],
+  stoppages: MaintenanceStoppage[],
   departments: Department[],
   downtimeTypes: DowntimeType[],
 ): EntryDowntime[] {
-  const now = Date.now();
   const mechanicalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "mechanical maintenance")?.id ?? null;
   const electricalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "electrical maintenance")?.id ?? null;
   // Resolves to null (→ "Unclassified" in MaintenanceDowntimeCard's nameOf())
@@ -531,12 +699,21 @@ export function maintenanceEventsAsDowntimes(
   // master-data row is missing" fallback as the department lookups above.
   const unplannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "unplanned")?.id ?? null;
   const plannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "planned")?.id ?? null;
-  return events.map((e) => {
+
+  function typeMeta(type: MaintenanceType): { paretoReasonName: string; departmentId: string | null; downtimeTypeId: string | null } {
+    if (type === "mechanical") return { paretoReasonName: "Mechanical Maintenance", departmentId: mechanicalDeptId, downtimeTypeId: unplannedTypeId };
+    if (type === "electrical") return { paretoReasonName: "Electrical Maintenance", departmentId: electricalDeptId, downtimeTypeId: unplannedTypeId };
+    return { paretoReasonName: "Preventive Maintenance", departmentId: preventiveDeptId, downtimeTypeId: plannedTypeId };
+  }
+
+  // Builds one EntryDowntime row from a single standalone event — shared by
+  // the no-stoppage path below and the defensive fallback for a stoppage_id
+  // whose parent row wasn't found in `stoppages` (stale cache; the FK
+  // guarantees it exists in the DB).
+  function rowFromEvent(e: MaintenanceEvent): EntryDowntime {
     const startedMs = new Date(e.started_at).getTime();
-    const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : now;
-    const pareto_reason_name =
-      e.type === "mechanical" ? "Mechanical Maintenance" : e.type === "electrical" ? "Electrical Maintenance" : "Preventive Maintenance";
-    const department_id = e.type === "mechanical" ? mechanicalDeptId : e.type === "electrical" ? electricalDeptId : preventiveDeptId;
+    const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+    const meta = typeMeta(e.type);
     return {
       id: `maintenance-${e.id}`,
       entry_id: e.id,
@@ -548,12 +725,11 @@ export function maintenanceEventsAsDowntimes(
       // overall Pareto chart (DowntimeSection) groups by pareto_reason_name
       // instead, below, to get the aggregated per-type bar.
       reason_name: e.title,
-      // See EntryDowntime.pareto_reason_name.
-      pareto_reason_name,
+      pareto_reason_name: meta.paretoReasonName,
       area: e.production_lines?.name ?? "—",
       minutes: Math.max(0, (endMs - startedMs) / 60_000),
-      department_id,
-      downtime_type_id: e.type === "preventive" ? plannedTypeId : unplannedTypeId,
+      department_id: meta.departmentId,
+      downtime_type_id: meta.downtimeTypeId,
       severity_id: null,
       severity_label: e.severity_label ?? undefined,
       production_area_id: null,
@@ -564,7 +740,52 @@ export function maintenanceEventsAsDowntimes(
       // Local calendar date the event started on — see EntryDowntime.event_date.
       event_date: iso(new Date(e.started_at)),
     };
-  });
+  }
+
+  const standaloneRows = events.filter((e) => !e.stoppage_id).map(rowFromEvent);
+
+  const stoppageGroups = new Map<string, MaintenanceEvent[]>();
+  for (const e of events) {
+    if (!e.stoppage_id) continue;
+    const group = stoppageGroups.get(e.stoppage_id);
+    if (group) group.push(e);
+    else stoppageGroups.set(e.stoppage_id, [e]);
+  }
+  const stoppageById = new Map(stoppages.map((s) => [s.id, s]));
+
+  const stoppageRows: EntryDowntime[] = [];
+  for (const [stoppageId, members] of stoppageGroups) {
+    const stoppage = stoppageById.get(stoppageId);
+    if (!stoppage) {
+      // Parent row not in the list passed in — degrade to one row per
+      // member rather than silently dropping the downtime.
+      stoppageRows.push(...members.map(rowFromEvent));
+      continue;
+    }
+    const majorityType = majorityMaintenanceType(members);
+    const meta = typeMeta(majorityType);
+    stoppageRows.push({
+      id: `stoppage-${stoppageId}`,
+      entry_id: stoppageId,
+      reason_id: null,
+      reason_name: members.length === 1 ? members[0].title : `Stoppage (${members.length} events)`,
+      pareto_reason_name: meta.paretoReasonName,
+      area: stoppage.production_lines?.name ?? members[0].production_lines?.name ?? "—",
+      minutes: stoppageDurationMinutes(stoppage),
+      department_id: meta.departmentId,
+      downtime_type_id: meta.downtimeTypeId,
+      severity_id: null,
+      // No single severity applies to a multi-event stoppage — left
+      // unclassified rather than guessing from one arbitrary member.
+      severity_label: undefined,
+      production_area_id: null,
+      is_active: true,
+      source: "maintenance" as const,
+      event_date: iso(new Date(stoppage.started_at)),
+    });
+  }
+
+  return [...standaloneRows, ...stoppageRows];
 }
 
 export const maintenanceNotesQuery = (eventId: string | null) =>

@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
-import type { MaintenanceEvent, MaintenanceMetric } from "@/lib/queries";
+import type { MaintenanceEvent, MaintenanceMetric, MaintenanceType, MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, formatDuration, formatHours, sortByWorstMtbf } from "@/lib/maintenance-format";
 
 const LOGO_MAX_HEIGHT = 36; // pt
@@ -61,6 +61,20 @@ export interface MaintenanceReportOptions {
   topLossesByFrequency: { title: string; count: number }[];
   chronicVsSporadic: { title: string; count: number; chronic: boolean }[];
   reliabilityByLine: { lineName: string; mtbfHours: number | null; mttrHours: number | null; availabilityPct: number | null; eventCount: number }[];
+  // Stoppages (see MaintenanceStoppage) referenced by `events` above, one row
+  // each — computed by the caller (src/routes/maintenance.tsx's
+  // stoppagesSummaryOf) so this module stays a pure presenter, same as every
+  // other *Summary/*ByLine prop.
+  stoppagesSummary: {
+    id: string;
+    lineName: string;
+    majorityType: MaintenanceType;
+    eventCount: number;
+    startedAt: string;
+    status: MaintenanceStatus;
+    resolvedAt: string | null;
+    durationMinutes: number;
+  }[];
   onProgress?: (message: string) => void;
 }
 
@@ -246,6 +260,7 @@ function ReportLayout({
   topLossesByFrequency,
   chronicVsSporadic,
   reliabilityByLine,
+  stoppagesSummary,
 }: Pick<
   MaintenanceReportOptions,
   | "events"
@@ -264,6 +279,7 @@ function ReportLayout({
   | "topLossesByFrequency"
   | "chronicVsSporadic"
   | "reliabilityByLine"
+  | "stoppagesSummary"
 >) {
   const mechMinutes = events.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
   const elecMinutes = events.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
@@ -295,6 +311,7 @@ function ReportLayout({
         <ReportKpiCard label="MTBF (Electrical)" value={formatHours(mtbfElectricalHours)} accent="#f59e0b" />
         <ReportKpiCard label="MTTR (Electrical)" value={formatHours(mttrElectricalHours)} accent="#f59e0b" />
         <ReportKpiCard label="Open Preventive" value={String(openPreventiveCount)} accent={openPreventiveCount > 0 ? "#d97706" : "#16a34a"} />
+        <ReportKpiCard label="Total Stoppages" value={String(stoppagesSummary.length)} accent="#1e293b" />
       </div>
 
       <div
@@ -342,7 +359,10 @@ function ReportLayout({
               events.map((e) => (
                 <tr key={e.id}>
                   <td style={td}>{e.title}</td>
-                  <td style={td}>{TYPE_LABELS[e.type]}</td>
+                  <td style={td}>
+                    {TYPE_LABELS[e.type]}
+                    {e.stoppage_id && <span style={{ color: "#64748b" }}> · Stoppage</span>}
+                  </td>
                   <td style={td}>{e.severity_label || "Unclassified"}</td>
                   <td style={td}>{STATUS_LABELS[e.status]}</td>
                   <td style={td}>{new Date(e.started_at).toLocaleString()}</td>
@@ -480,6 +500,49 @@ function ReportLayout({
       </div>
 
       <div
+        data-pdf-section="stoppages-summary"
+        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+      >
+        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Stoppages</p>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>
+          Groups of maintenance events that make up a single downtime window — each row's duration is the stoppage's own
+          window, not the sum of its member events (see the "Part of Stoppage" events above).
+        </p>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>Line</th>
+              <th style={th}>Type</th>
+              <th style={th}>Events</th>
+              <th style={th}>Started</th>
+              <th style={th}>Status</th>
+              <th style={th}>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stoppagesSummary.length === 0 ? (
+              <tr>
+                <td style={td} colSpan={6}>
+                  No stoppages in the exported events.
+                </td>
+              </tr>
+            ) : (
+              stoppagesSummary.map((s) => (
+                <tr key={s.id}>
+                  <td style={td}>{s.lineName}</td>
+                  <td style={td}>{TYPE_LABELS[s.majorityType]}</td>
+                  <td style={td}>{s.eventCount}</td>
+                  <td style={td}>{new Date(s.startedAt).toLocaleString()}</td>
+                  <td style={td}>{STATUS_LABELS[s.status]}</td>
+                  <td style={td}>{formatDuration(s.durationMinutes * 60_000)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div
         data-pdf-section="metrics-table"
         style={{ margin: "0 20px 20px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
@@ -553,6 +616,7 @@ export async function exportMaintenanceReportToPdf({
   topLossesByFrequency,
   chronicVsSporadic,
   reliabilityByLine,
+  stoppagesSummary,
   onProgress,
 }: MaintenanceReportOptions): Promise<void> {
   onProgress?.("Preparing report…");
@@ -587,6 +651,7 @@ export async function exportMaintenanceReportToPdf({
           topLossesByFrequency={topLossesByFrequency}
           chronicVsSporadic={chronicVsSporadic}
           reliabilityByLine={reliabilityByLine}
+          stoppagesSummary={stoppagesSummary}
         />,
       );
       // Two frames: one for React's commit to paint, one to let layout

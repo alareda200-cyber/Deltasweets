@@ -7,18 +7,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription,
   AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
-import { maintenanceNotesQuery, techniciansQuery, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
+import { maintenanceNotesQuery, techniciansQuery, syncStoppageAggregate, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, toDatetimeLocalValue } from "@/lib/maintenance-format";
 
 // Shared between src/routes/maintenance.tsx (clicking a row in the full
@@ -127,6 +127,17 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       if (error) throw error;
       toast.success("Event updated");
       void logAudit("maintenance.update_event", "maintenance_event", event.id, { title, status, startedAt, resolvedAt });
+      if (event.stoppage_id) {
+        // This event's status/resolved_at may have just changed — the
+        // parent stoppage's own status/resolved_at (all-members-resolved,
+        // latest resolved_at) needs to reflect that. Non-fatal: the event
+        // itself already saved successfully.
+        try {
+          await syncStoppageAggregate(event.stoppage_id);
+        } catch (err) {
+          console.error("Failed to sync stoppage aggregate", err);
+        }
+      }
       onChanged();
       onOpenChange(false);
     } catch (err) {
@@ -144,6 +155,16 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       if (error) throw error;
       toast.success("Maintenance event deleted");
       void logAudit("maintenance.delete_event", "maintenance_event", event.id, { title: event.title });
+      if (event.stoppage_id) {
+        // This was a member of a stoppage — recompute now that it's gone
+        // (the stoppage may go back to open/in_progress, or lose its
+        // resolved_at, depending on what's left).
+        try {
+          await syncStoppageAggregate(event.stoppage_id);
+        } catch (err) {
+          console.error("Failed to sync stoppage aggregate", err);
+        }
+      }
       onChanged();
       setConfirmDeleteOpen(false);
       onOpenChange(false);
@@ -181,27 +202,34 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   return (
     <>
       <Dialog open={!!event} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" hideClose>
           <DialogHeader>
-            <DialogTitle asChild={canEdit}>
-              {canEdit ? (
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  required
-                  className="pr-10 text-base font-semibold"
-                  aria-label="Title"
-                />
-              ) : (
-                event.title
-              )}
-            </DialogTitle>
+            <div className="flex items-start gap-2">
+              <DialogTitle asChild={canEdit} className="flex-1 min-w-0">
+                {canEdit ? (
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    required
+                    className="text-base font-semibold"
+                    aria-label="Title"
+                  />
+                ) : (
+                  <span className="block truncate">{event.title}</span>
+                )}
+              </DialogTitle>
+              <DialogClose className="mt-1 shrink-0 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+                <X className="h-4 w-4" />
+                <span className="sr-only">Close</span>
+              </DialogClose>
+            </div>
             <DialogDescription>{event.production_lines?.name ?? "—"}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={typeBadgeVariant(event.type)}>{TYPE_LABELS[event.type]}</Badge>
+              {event.stoppage_id && <Badge variant="outline">Part of Stoppage</Badge>}
             </div>
             {canEdit ? (
               <div>

@@ -22,6 +22,7 @@ import {
   downtimeTypesQuery,
   severityLevelsQuery,
   maintenanceEventsQuery,
+  maintenanceStoppagesQuery,
 } from "@/lib/queries";
 import { monthRange } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
@@ -286,6 +287,11 @@ function DashboardBody({
   const { data: lineMaintenanceEvents = [] } = useSuspenseQuery(
     maintenanceEventsQuery(lineId, null, null, from, to),
   );
+  // No date filter (unlike lineMaintenanceEvents above) — a stoppage
+  // referenced by an in-window event still needs its own started_at/
+  // resolved_at looked up regardless of whether those fall inside [from,
+  // to], see maintenanceEventsAsDowntimes.
+  const { data: lineMaintenanceStoppages = [] } = useSuspenseQuery(maintenanceStoppagesQuery(lineId));
   const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersForEntriesQuery(entryIds));
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
@@ -295,7 +301,10 @@ function DashboardBody({
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const downtimes = useMemo(
     () =>
-      [...entryDowntimes, ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, departments, downtimeTypes)].filter(
+      [
+        ...entryDowntimes,
+        ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, lineMaintenanceStoppages, departments, downtimeTypes),
+      ].filter(
         // Historical entry_downtimes rows can point at a downtime_reasons
         // row that's since been deactivated in Settings (e.g. a retired
         // "Preventive Maintenance" reason) — it stays in the DB for
@@ -305,7 +314,7 @@ function DashboardBody({
         // consistent instead of drifting from each other.
         (d) => d.is_active !== false,
       ),
-    [entryDowntimes, lineMaintenanceEvents, departments, downtimeTypes],
+    [entryDowntimes, lineMaintenanceEvents, lineMaintenanceStoppages, departments, downtimeTypes],
   );
 
   if (entries.length === 0) {

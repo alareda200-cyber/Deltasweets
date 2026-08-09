@@ -82,6 +82,13 @@ export function MaintenanceDowntimeCard({ downtimes, departments, departmentCate
   function invalidateMaintenanceEvents() {
     qc.invalidateQueries({ queryKey: ["maintenance-events"] });
     qc.invalidateQueries({ queryKey: ["maintenance-metrics"] });
+    // EventDetailDialog (opened below) resyncs the parent stoppage row
+    // itself when a member event changes — these three cover every query
+    // key shape a stoppage can be cached under (see
+    // src/routes/maintenance.tsx's invalidateAll for the same list).
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppages"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppage"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppage-events"] });
   }
 
   const category = departmentCategories.find((c) => c.name.trim().toLowerCase() === categoryName.trim().toLowerCase());

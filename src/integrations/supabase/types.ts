@@ -525,6 +525,7 @@ export type Database = {
           severity_label: string | null
           started_at: string
           status: string
+          stoppage_id: string | null
           technician: string | null
           technician_ids: string[]
           title: string
@@ -541,6 +542,7 @@ export type Database = {
           severity_label?: string | null
           started_at?: string
           status?: string
+          stoppage_id?: string | null
           technician?: string | null
           technician_ids?: string[]
           title: string
@@ -557,6 +559,7 @@ export type Database = {
           severity_label?: string | null
           started_at?: string
           status?: string
+          stoppage_id?: string | null
           technician?: string | null
           technician_ids?: string[]
           title?: string
@@ -582,6 +585,13 @@ export type Database = {
             columns: ["resolved_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_events_stoppage_id_fkey"
+            columns: ["stoppage_id"]
+            isOneToOne: false
+            referencedRelation: "maintenance_stoppages"
             referencedColumns: ["id"]
           },
         ]
@@ -621,6 +631,54 @@ export type Database = {
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "maintenance_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      maintenance_stoppages: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          id: string
+          line_id: string | null
+          notes: string | null
+          resolved_at: string | null
+          started_at: string
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          line_id?: string | null
+          notes?: string | null
+          resolved_at?: string | null
+          started_at?: string
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          line_id?: string | null
+          notes?: string | null
+          resolved_at?: string | null
+          started_at?: string
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maintenance_stoppages_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_stoppages_line_id_fkey"
+            columns: ["line_id"]
+            isOneToOne: false
+            referencedRelation: "production_lines"
             referencedColumns: ["id"]
           },
         ]

@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
-import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge, CalendarCheck } from "lucide-react";
+import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge, CalendarCheck, Layers } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
@@ -29,11 +29,19 @@ import {
   linesQuery,
   maintenanceEventsQuery,
   maintenanceMetricsQuery,
+  maintenanceStoppagesQuery,
+  maintenanceStoppageQuery,
+  stoppageEventsQuery,
+  syncStoppageAggregate,
+  majorityMaintenanceType,
+  stoppageDurationMinutes,
   techniciansQuery,
   type MaintenanceEvent,
   type MaintenanceType,
   type MaintenanceStatus,
   type MaintenanceMetric,
+  type MaintenanceStoppage,
+  type StoppageMemberEvent,
 } from "@/lib/queries";
 
 export const Route = createFileRoute("/maintenance")({
@@ -63,6 +71,7 @@ function MaintenancePage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [stoppageDialogOpen, setStoppageDialogOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<MaintenanceEvent | null>(null);
   const [exportingReport, setExportingReport] = useState(false);
   const [reportProgress, setReportProgress] = useState("");
@@ -73,14 +82,28 @@ function MaintenancePage() {
   // cards silently change to match.
   const { data: allEvents = [] } = useQuery(maintenanceEventsQuery(null, null, null, null, null));
   const { data: metrics = [] } = useQuery(maintenanceMetricsQuery());
+  // Global (unfiltered) stoppage list — used to look up each stoppage
+  // referenced by `events`/`allEvents` for the "Part of Stoppage" badge and
+  // the PDF report's Stoppages summary; StoppageDialog fetches its own
+  // single-stoppage/member-event queries instead of reading from this list.
+  const { data: stoppages = [] } = useQuery(maintenanceStoppagesQuery());
 
   const { data: events = [], isLoading } = useQuery(
     maintenanceEventsQuery(lineId || null, type || null, status || null, from || null, to || null),
   );
 
+  // Covers every query-key prefix a stoppage can be cached under (list,
+  // single-row detail, member-event list) — see maintenanceStoppagesQuery /
+  // maintenanceStoppageQuery / stoppageEventsQuery in src/lib/queries.ts.
+  // Called after any event mutation, not just stoppage-specific ones,
+  // because EventDetailDialog/insertEvent already resync the affected
+  // stoppage row in the DB — this just makes sure the cache catches up.
   function invalidateAll() {
     qc.invalidateQueries({ queryKey: ["maintenance-events"] });
     qc.invalidateQueries({ queryKey: ["maintenance-metrics"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppages"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppage"] });
+    qc.invalidateQueries({ queryKey: ["maintenance-stoppage-events"] });
   }
 
   const openMechanical = allEvents.filter((e) => e.type === "mechanical" && e.status !== "resolved").length;
@@ -139,8 +162,29 @@ function MaintenancePage() {
       .sort((a, b) => b.count - a.count);
   }, [meanDowntimePerFault, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
+  // Stoppages referenced by the currently-filtered `events` — same
+  // "exported (currently filtered) events" semantics reliabilityByLine
+  // above already uses, so the PDF report's Stoppages summary always
+  // matches what's actually in the export.
+  const stoppagesSummary = useMemo(() => stoppagesSummaryOf(events, stoppages), [events, stoppages]);
 
-  async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[] }) {
+  // Shared by the top-level "New event" dialog and StoppageDialog's nested
+  // "Add Event" — inserts the row, and when it's linked to a stoppage
+  // (stoppageId set), resyncs that stoppage's status/resolved_at
+  // afterward. Returns the new event's id on success, null on failure, so
+  // each caller can decide what "success" means for its own dialog (close
+  // it, keep it open to add another event, etc.) without duplicating the
+  // insert/audit-log logic.
+  async function insertEvent(data: {
+    lineId: string;
+    type: MaintenanceType;
+    title: string;
+    description: string;
+    startedAt: string;
+    severityLabel: string;
+    technicianIds: string[];
+    stoppageId: string | null;
+  }): Promise<string | null> {
     const { data: inserted, error } = await supabase
       .from("maintenance_events")
       .insert({
@@ -152,17 +196,31 @@ function MaintenancePage() {
         severity_label: data.severityLabel.trim() || null,
         technician_ids: data.technicianIds,
         created_by: user?.id ?? null,
+        stoppage_id: data.stoppageId,
       })
       .select()
       .single();
     if (error) {
       toast.error(error.message);
-      return;
+      return null;
     }
     toast.success("Maintenance event created");
-    void logAudit("maintenance.create_event", "maintenance_event", inserted.id, { type: data.type, title: data.title });
+    void logAudit("maintenance.create_event", "maintenance_event", inserted.id, { type: data.type, title: data.title, stoppageId: data.stoppageId });
+    if (data.stoppageId) {
+      try {
+        await syncStoppageAggregate(data.stoppageId);
+      } catch (err) {
+        // Non-fatal — the event itself was created successfully.
+        console.error("Failed to sync stoppage aggregate", err);
+      }
+    }
     invalidateAll();
-    setCreateOpen(false);
+    return inserted.id;
+  }
+
+  async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) {
+    const id = await insertEvent(data);
+    if (id) setCreateOpen(false);
   }
 
   const lineName = lineId ? (lines.find((l) => l.id === lineId)?.name ?? "All Lines") : "All Lines";
@@ -193,6 +251,7 @@ function MaintenancePage() {
         topLossesByFrequency,
         chronicVsSporadic,
         reliabilityByLine,
+        stoppagesSummary,
         onProgress: (msg) => setReportProgress(msg),
       });
       toast.success("Maintenance report exported");
@@ -222,6 +281,11 @@ function MaintenancePage() {
             )}
             {exportingReport ? reportProgress || "Exporting…" : "Export Report"}
           </Button>
+          {canEdit && (
+            <Button variant="outline" onClick={() => setStoppageDialogOpen(true)}>
+              <Layers className="mr-1.5 h-4 w-4" />New Stoppage
+            </Button>
+          )}
           {canEdit && (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-1.5 h-4 w-4" />New event
@@ -312,7 +376,12 @@ function MaintenancePage() {
                         {e.description && <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">{e.description}</p>}
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{e.production_lines?.name ?? "—"}</TableCell>
-                      <TableCell><Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge></TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                          {e.stoppage_id && <Badge variant="outline" className="text-[10px]">Part of Stoppage</Badge>}
+                        </div>
+                      </TableCell>
                       <TableCell className="hidden sm:table-cell">
                         {e.severity_label ? <Badge variant={severityBadgeVariant(e.severity_label)}>{e.severity_label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
@@ -347,6 +416,14 @@ function MaintenancePage() {
       <MetricsTable metrics={metrics} />
 
       <CreateEventDialog open={createOpen} onOpenChange={setCreateOpen} lines={lines} onCreate={handleCreate} />
+      <StoppageDialog
+        open={stoppageDialogOpen}
+        onOpenChange={setStoppageDialogOpen}
+        lines={lines}
+        canEdit={canEdit}
+        userId={user?.id ?? null}
+        onCreateEvent={insertEvent}
+      />
       <EventDetailDialog
         event={selectedEvent}
         canEdit={canEdit}
@@ -499,6 +576,49 @@ function reliabilityByLineOf(events: MaintenanceEvent[]): LineReliability[] {
     if (b.availabilityPct === null) return -1;
     return a.availabilityPct - b.availabilityPct;
   });
+}
+
+interface StoppageSummaryRow {
+  id: string;
+  lineName: string;
+  majorityType: MaintenanceType;
+  eventCount: number;
+  startedAt: string;
+  status: MaintenanceStatus;
+  resolvedAt: string | null;
+  durationMinutes: number;
+}
+
+// Groups the currently-filtered `events` by stoppage_id, joins each group
+// against the (unfiltered) `stoppages` list for its window/status, and
+// returns one summary row per stoppage — backs the PDF report's Stoppages
+// section. Events with no stoppage_id contribute nothing here (they're
+// already covered by the report's ordinary Events table).
+function stoppagesSummaryOf(events: MaintenanceEvent[], stoppages: MaintenanceStoppage[]): StoppageSummaryRow[] {
+  const stoppageById = new Map(stoppages.map((s) => [s.id, s]));
+  const groups = new Map<string, MaintenanceEvent[]>();
+  for (const e of events) {
+    if (!e.stoppage_id) continue;
+    const arr = groups.get(e.stoppage_id);
+    if (arr) arr.push(e);
+    else groups.set(e.stoppage_id, [e]);
+  }
+  const rows: StoppageSummaryRow[] = [];
+  for (const [stoppageId, members] of groups) {
+    const stoppage = stoppageById.get(stoppageId);
+    if (!stoppage) continue; // stale cache — FK guarantees this exists in the DB
+    rows.push({
+      id: stoppageId,
+      lineName: stoppage.production_lines?.name ?? members[0].production_lines?.name ?? "—",
+      majorityType: majorityMaintenanceType(members),
+      eventCount: members.length,
+      startedAt: stoppage.started_at,
+      status: stoppage.status,
+      resolvedAt: stoppage.resolved_at,
+      durationMinutes: stoppageDurationMinutes(stoppage),
+    });
+  }
+  return rows.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 }
 
 function EmptyMiniState() {
@@ -749,13 +869,18 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
   );
 }
 
-function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
+function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   lines: { id: string; name: string }[];
-  onCreate: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[] }) => Promise<void>;
+  // When set, this dialog creates an event pre-linked to an already-created
+  // stoppage (see StoppageDialog's "Add Event") — the line is locked to the
+  // stoppage's own line (a stoppage's member events all share one line) and
+  // every created row carries stoppageId.
+  stoppage?: { id: string; lineId: string } | null;
+  onCreate: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) => Promise<void>;
 }) {
-  const [lineId, setLineId] = useState("");
+  const [lineId, setLineId] = useState(stoppage?.lineId ?? "");
   const [type, setType] = useState<MaintenanceType>("mechanical");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -767,7 +892,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
   const activeTechnicians = technicians.filter((t) => t.is_active);
 
   function reset() {
-    setLineId(""); setType("mechanical"); setTitle(""); setDescription(""); setStartedAt(toDatetimeLocalValue(new Date())); setSeverityLabel(""); setTechnicianIds([]);
+    setLineId(stoppage?.lineId ?? ""); setType("mechanical"); setTitle(""); setDescription(""); setStartedAt(toDatetimeLocalValue(new Date())); setSeverityLabel(""); setTechnicianIds([]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -782,7 +907,7 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
     }
     setSubmitting(true);
     try {
-      await onCreate({ lineId, type, title, description, startedAt: new Date(startedAt).toISOString(), severityLabel, technicianIds });
+      await onCreate({ lineId, type, title, description, startedAt: new Date(startedAt).toISOString(), severityLabel, technicianIds, stoppageId: stoppage?.id ?? null });
       reset();
     } finally {
       setSubmitting(false);
@@ -794,13 +919,15 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Maintenance Event</DialogTitle>
-          <DialogDescription>Log a new mechanical, electrical, or preventive maintenance issue.</DialogDescription>
+          <DialogDescription>
+            {stoppage ? "Log an event as part of this stoppage." : "Log a new mechanical, electrical, or preventive maintenance issue."}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Line</Label>
-              <Select value={lineId} onValueChange={setLineId}>
+              <Select value={lineId} onValueChange={setLineId} disabled={!!stoppage}>
                 <SelectTrigger><SelectValue placeholder="Select line" /></SelectTrigger>
                 <SelectContent>{lines.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
               </Select>
@@ -843,6 +970,156 @@ function CreateEventDialog({ open, onOpenChange, lines, onCreate }: {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// A stoppage groups several maintenance events (e.g. a line down for
+// several concurrent reasons) into a single downtime window — see
+// MaintenanceStoppage in src/lib/queries.ts. Two-phase UI: first pick a
+// line + Started At and create the (initially empty) stoppage row itself,
+// then add member events to it one at a time via the same CreateEventDialog
+// used for standalone events. status/resolved_at are never edited directly
+// here — they're derived from member events by syncStoppageAggregate,
+// called after every add (and, from EventDetailDialog, every member
+// status change/delete).
+function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEvent }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  lines: { id: string; name: string }[];
+  canEdit: boolean;
+  userId: string | null;
+  onCreateEvent: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) => Promise<string | null>;
+}) {
+  const [stoppageId, setStoppageId] = useState<string | null>(null);
+  const [lineId, setLineId] = useState("");
+  const [startedAt, setStartedAt] = useState(() => toDatetimeLocalValue(new Date()));
+  const [creating, setCreating] = useState(false);
+  const [addEventOpen, setAddEventOpen] = useState(false);
+
+  const { data: stoppage } = useQuery(maintenanceStoppageQuery(stoppageId));
+  const { data: members = [] } = useQuery(stoppageEventsQuery(stoppageId));
+
+  function reset() {
+    setStoppageId(null);
+    setLineId("");
+    setStartedAt(toDatetimeLocalValue(new Date()));
+  }
+
+  async function handleCreateStoppage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!lineId) {
+      toast.error("Please select a line.");
+      return;
+    }
+    if (!startedAt) {
+      toast.error("Started At is required.");
+      return;
+    }
+    setCreating(true);
+    try {
+      const { data: inserted, error } = await supabase
+        .from("maintenance_stoppages")
+        .insert({ line_id: lineId, started_at: new Date(startedAt).toISOString(), created_by: userId })
+        .select()
+        .single();
+      if (error) throw error;
+      toast.success("Stoppage created — add events to it below.");
+      void logAudit("maintenance.create_stoppage", "maintenance_stoppage", inserted.id, { lineId });
+      setStoppageId(inserted.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create stoppage");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{stoppageId ? "Stoppage" : "New Stoppage"}</DialogTitle>
+            <DialogDescription>
+              {stoppageId
+                ? "Add the individual maintenance events that make up this stoppage."
+                : "Groups several maintenance events into one downtime window — pick the line and when the stoppage started, then add its events."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {!stoppageId ? (
+            <form onSubmit={handleCreateStoppage} className="space-y-3">
+              <div>
+                <Label>Line</Label>
+                <Select value={lineId} onValueChange={setLineId}>
+                  <SelectTrigger><SelectValue placeholder="Select line" /></SelectTrigger>
+                  <SelectContent>{lines.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Started At</Label>
+                <Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} required />
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                <Button type="submit" disabled={creating}>{creating ? "Creating…" : "Create Stoppage"}</Button>
+              </DialogFooter>
+            </form>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">{stoppage?.production_lines?.name ?? "—"}</span>
+                <Badge variant={statusBadgeVariant(stoppage?.status ?? "open")}>{STATUS_LABELS[stoppage?.status ?? "open"]}</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Started {stoppage ? new Date(stoppage.started_at).toLocaleString() : "—"}
+                {stoppage?.resolved_at && <> → Resolved {new Date(stoppage.resolved_at).toLocaleString()}</>}
+              </p>
+
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Events in this stoppage</p>
+                {members.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No events added yet.</p>
+                ) : (
+                  <ul className="max-h-64 space-y-2 overflow-y-auto">
+                    {members.map((m: StoppageMemberEvent) => (
+                      <li key={m.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{m.title}</p>
+                          <p className="text-xs text-muted-foreground">{TYPE_LABELS[m.type]}</p>
+                        </div>
+                        <Badge variant={statusBadgeVariant(m.status)}>{STATUS_LABELS[m.status]}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canEdit && (
+                  <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setAddEventOpen(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />Add Event
+                  </Button>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Done</Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {stoppageId && (
+        <CreateEventDialog
+          open={addEventOpen}
+          onOpenChange={setAddEventOpen}
+          lines={lines}
+          stoppage={{ id: stoppageId, lineId: stoppage?.line_id ?? lineId }}
+          onCreate={async (data) => {
+            const id = await onCreateEvent(data);
+            if (id) setAddEventOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 }
 
