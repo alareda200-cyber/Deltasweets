@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { AppShell } from "@/components/AppShell";
@@ -11,19 +11,75 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
-import { Wrench, Zap, Activity, Timer, Plus, Loader2, FileDown, Repeat, Gauge, CalendarCheck, Layers } from "lucide-react";
+import {
+  Wrench,
+  Zap,
+  Activity,
+  Timer,
+  Plus,
+  Loader2,
+  FileDown,
+  Repeat,
+  Gauge,
+  CalendarCheck,
+  Layers,
+  AlertTriangle,
+  Trash2,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, formatHours, sortByWorstMtbf, toDatetimeLocalValue } from "@/lib/maintenance-format";
+import {
+  TYPE_LABELS,
+  STATUS_LABELS,
+  SEVERITY_LABEL_OPTIONS,
+  typeBadgeVariant,
+  statusBadgeVariant,
+  severityBadgeVariant,
+  formatDuration,
+  formatHours,
+  sortByWorstMtbf,
+  toDatetimeLocalValue,
+} from "@/lib/maintenance-format";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import {
   linesQuery,
@@ -63,6 +119,7 @@ function MaintenancePage() {
   const { data: lines } = useSuspenseQuery(linesQuery);
   const { role, user, profile } = useAuth();
   const canEdit = can(role, "maintenance.edit");
+  const canDelete = can(role, "maintenance.delete");
   const qc = useQueryClient();
 
   const [lineId, setLineId] = useState("");
@@ -72,6 +129,11 @@ function MaintenancePage() {
   const [to, setTo] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [stoppageDialogOpen, setStoppageDialogOpen] = useState(false);
+  // Set when a row in the Stoppages tab is clicked (view an existing
+  // stoppage) — distinct from stoppageDialogOpen (the "New Stoppage" button,
+  // which starts the create flow). Both drive the same StoppageDialog
+  // instance below; see closeStoppageDialog.
+  const [viewStoppageId, setViewStoppageId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<MaintenanceEvent | null>(null);
   const [exportingReport, setExportingReport] = useState(false);
   const [reportProgress, setReportProgress] = useState("");
@@ -106,14 +168,32 @@ function MaintenancePage() {
     qc.invalidateQueries({ queryKey: ["maintenance-stoppage-events"] });
   }
 
-  const openMechanical = allEvents.filter((e) => e.type === "mechanical" && e.status !== "resolved").length;
-  const openElectrical = allEvents.filter((e) => e.type === "electrical" && e.status !== "resolved").length;
-  const openPreventive = allEvents.filter((e) => e.type === "preventive" && e.status !== "resolved").length;
+  const openMechanical = allEvents.filter(
+    (e) => e.type === "mechanical" && e.status !== "resolved",
+  ).length;
+  const openElectrical = allEvents.filter(
+    (e) => e.type === "electrical" && e.status !== "resolved",
+  ).length;
+  const openPreventive = allEvents.filter(
+    (e) => e.type === "preventive" && e.status !== "resolved",
+  ).length;
 
-  const mtbfMechanicalHours = useMemo(() => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"), [metrics]);
-  const mttrMechanicalHours = useMemo(() => weightedAverage(metrics, "mechanical", "mttr_hours", "mttr_sample_count"), [metrics]);
-  const mtbfElectricalHours = useMemo(() => weightedAverage(metrics, "electrical", "mtbf_hours", "mtbf_gap_count"), [metrics]);
-  const mttrElectricalHours = useMemo(() => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"), [metrics]);
+  const mtbfMechanicalHours = useMemo(
+    () => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"),
+    [metrics],
+  );
+  const mttrMechanicalHours = useMemo(
+    () => weightedAverage(metrics, "mechanical", "mttr_hours", "mttr_sample_count"),
+    [metrics],
+  );
+  const mtbfElectricalHours = useMemo(
+    () => weightedAverage(metrics, "electrical", "mtbf_hours", "mtbf_gap_count"),
+    [metrics],
+  );
+  const mttrElectricalHours = useMemo(
+    () => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"),
+    [metrics],
+  );
 
   // Reliability Analytics section — every number below is derived from the
   // already-fetched `events` (same line/type/date filters as the table
@@ -153,11 +233,13 @@ function MaintenancePage() {
   // When MTTR itself is unknown (no resolved events yet), nothing can be
   // judged "above average" honestly, so nothing is marked chronic.
   const chronicVsSporadic = useMemo(() => {
-    const mttrThresholdMinutes = reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
+    const mttrThresholdMinutes =
+      reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
     return meanDowntimePerFault
       .map((t) => ({
         ...t,
-        chronic: t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
+        chronic:
+          t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
       }))
       .sort((a, b) => b.count - a.count);
   }, [meanDowntimePerFault, reliabilitySummary.mttrHours]);
@@ -166,7 +248,46 @@ function MaintenancePage() {
   // "exported (currently filtered) events" semantics reliabilityByLine
   // above already uses, so the PDF report's Stoppages summary always
   // matches what's actually in the export.
-  const stoppagesSummary = useMemo(() => stoppagesSummaryOf(events, stoppages), [events, stoppages]);
+  const stoppagesSummary = useMemo(
+    () => stoppagesSummaryOf(events, stoppages),
+    [events, stoppages],
+  );
+
+  // Every stoppage (unfiltered — the Stoppages tab is a management view,
+  // not scoped to the events table's line/type/status/date filters above),
+  // each with its member-event count computed from allEvents (also
+  // unfiltered) rather than a second query. eventCount === 0 is what makes a
+  // row "orphaned" — see allStoppagesOf.
+  const allStoppageRows = useMemo(
+    () => allStoppagesOf(stoppages, allEvents),
+    [stoppages, allEvents],
+  );
+  const orphanedStoppageCount = useMemo(
+    () => allStoppageRows.filter((s) => s.eventCount === 0).length,
+    [allStoppageRows],
+  );
+
+  function closeStoppageDialog() {
+    setStoppageDialogOpen(false);
+    setViewStoppageId(null);
+  }
+
+  // Deletion is restricted to orphaned (zero-event) stoppages by the caller
+  // (StoppagesSection only renders the delete control when eventCount === 0)
+  // — Postgres itself backs that up too: maintenance_events.stoppage_id has
+  // no ON DELETE clause, so a stoppage that still has member events can't be
+  // deleted regardless (see 20260810130000_maintenance_role_can_delete_stoppages.sql).
+  async function handleDeleteStoppage(stoppageId: string): Promise<boolean> {
+    const { error } = await supabase.from("maintenance_stoppages").delete().eq("id", stoppageId);
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    toast.success("Stoppage deleted");
+    void logAudit("maintenance.delete_stoppage", "maintenance_stoppage", stoppageId);
+    invalidateAll();
+    return true;
+  }
 
   // Shared by the top-level "New event" dialog and StoppageDialog's nested
   // "Add Event" — inserts the row, and when it's linked to a stoppage
@@ -205,7 +326,11 @@ function MaintenancePage() {
       return null;
     }
     toast.success("Maintenance event created");
-    void logAudit("maintenance.create_event", "maintenance_event", inserted.id, { type: data.type, title: data.title, stoppageId: data.stoppageId });
+    void logAudit("maintenance.create_event", "maintenance_event", inserted.id, {
+      type: data.type,
+      title: data.title,
+      stoppageId: data.stoppageId,
+    });
     if (data.stoppageId) {
       try {
         await syncStoppageAggregate(data.stoppageId);
@@ -218,7 +343,16 @@ function MaintenancePage() {
     return inserted.id;
   }
 
-  async function handleCreate(data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) {
+  async function handleCreate(data: {
+    lineId: string;
+    type: MaintenanceType;
+    title: string;
+    description: string;
+    startedAt: string;
+    severityLabel: string;
+    technicianIds: string[];
+    stoppageId: string | null;
+  }) {
     const id = await insertEvent(data);
     if (id) setCreateOpen(false);
   }
@@ -255,7 +389,12 @@ function MaintenancePage() {
         onProgress: (msg) => setReportProgress(msg),
       });
       toast.success("Maintenance report exported");
-      void logAudit("maintenance.export_report", "maintenance_event", undefined, { lineName, from, to, eventCount: events.length });
+      void logAudit("maintenance.export_report", "maintenance_event", undefined, {
+        lineName,
+        from,
+        to,
+        eventCount: events.length,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`Report export failed: ${msg}`);
@@ -270,7 +409,9 @@ function MaintenancePage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Maintenance</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Mechanical, electrical & preventive maintenance events, reliability metrics.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Mechanical, electrical & preventive maintenance events, reliability metrics.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleExportReport} disabled={exportingReport}>
@@ -283,24 +424,60 @@ function MaintenancePage() {
           </Button>
           {canEdit && (
             <Button variant="outline" onClick={() => setStoppageDialogOpen(true)}>
-              <Layers className="mr-1.5 h-4 w-4" />New Stoppage
+              <Layers className="mr-1.5 h-4 w-4" />
+              New Stoppage
             </Button>
           )}
           {canEdit && (
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-1.5 h-4 w-4" />New event
+              <Plus className="mr-1.5 h-4 w-4" />
+              New event
             </Button>
           )}
         </div>
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <KpiCard label="Open Mechanical" value={String(openMechanical)} icon={Wrench} variant={openMechanical > 0 ? "warning" : "success"} />
-        <KpiCard label="MTBF (Mechanical)" value={formatHours(mtbfMechanicalHours)} sub="Avg. time between failures" icon={Activity} variant="primary" />
-        <KpiCard label="MTTR (Mechanical)" value={formatHours(mttrMechanicalHours)} sub="Avg. time to repair" icon={Timer} variant="primary" />
-        <KpiCard label="Open Electrical" value={String(openElectrical)} icon={Zap} variant={openElectrical > 0 ? "warning" : "success"} />
-        <KpiCard label="MTBF (Electrical)" value={formatHours(mtbfElectricalHours)} sub="Avg. time between failures" icon={Activity} variant="primary" />
-        <KpiCard label="MTTR (Electrical)" value={formatHours(mttrElectricalHours)} sub="Avg. time to repair" icon={Timer} variant="primary" />
+        <KpiCard
+          label="Open Mechanical"
+          value={String(openMechanical)}
+          icon={Wrench}
+          variant={openMechanical > 0 ? "warning" : "success"}
+        />
+        <KpiCard
+          label="MTBF (Mechanical)"
+          value={formatHours(mtbfMechanicalHours)}
+          sub="Avg. time between failures"
+          icon={Activity}
+          variant="primary"
+        />
+        <KpiCard
+          label="MTTR (Mechanical)"
+          value={formatHours(mttrMechanicalHours)}
+          sub="Avg. time to repair"
+          icon={Timer}
+          variant="primary"
+        />
+        <KpiCard
+          label="Open Electrical"
+          value={String(openElectrical)}
+          icon={Zap}
+          variant={openElectrical > 0 ? "warning" : "success"}
+        />
+        <KpiCard
+          label="MTBF (Electrical)"
+          value={formatHours(mtbfElectricalHours)}
+          sub="Avg. time between failures"
+          icon={Activity}
+          variant="primary"
+        />
+        <KpiCard
+          label="MTTR (Electrical)"
+          value={formatHours(mttrElectricalHours)}
+          sub="Avg. time to repair"
+          icon={Timer}
+          variant="primary"
+        />
         <KpiCard
           label="Open Preventive"
           value={String(openPreventive)}
@@ -310,97 +487,211 @@ function MaintenancePage() {
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            <Select value={lineId || "all"} onValueChange={(v) => setLineId(v === "all" ? "" : v)}>
-              <SelectTrigger><SelectValue placeholder="All Lines" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Lines</SelectItem>
-                {lines.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={type || "all"} onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}>
-              <SelectTrigger><SelectValue placeholder="All Types" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="mechanical">Mechanical</SelectItem>
-                <SelectItem value="electrical">Electrical</SelectItem>
-                <SelectItem value="preventive">Preventive Maintenance</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={status || "all"} onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}>
-              <SelectTrigger><SelectValue placeholder="All Statuses" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-              </SelectContent>
-            </Select>
-            <div><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9" /></div>
-            <div><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" /></div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Event</TableHead>
-                  <TableHead className="hidden md:table-cell">Line</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="hidden sm:table-cell">Severity</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Started</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead className="hidden md:table-cell">Technician</TableHead>
-                  <TableHead className="hidden md:table-cell">Notes</TableHead>
-                  <TableHead className="hidden lg:table-cell">Closed by</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading && (
-                  <TableRow><TableCell colSpan={10} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
-                )}
-                {!isLoading && events.length === 0 && (
-                  <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No maintenance events match this filter.</TableCell></TableRow>
-                )}
-                {events.map((e) => {
-                  const durationMs = (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) - new Date(e.started_at).getTime();
-                  const firstNote = e.maintenance_notes[0]?.note;
-                  return (
-                    <TableRow key={e.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedEvent(e)}>
-                      <TableCell>
-                        <p className="text-sm font-medium leading-tight">{e.title}</p>
-                        {e.description && <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">{e.description}</p>}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{e.production_lines?.name ?? "—"}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
-                          {e.stoppage_id && <Badge variant="outline" className="text-[10px]">Part of Stoppage</Badge>}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        {e.severity_label ? <Badge variant={severityBadgeVariant(e.severity_label)}>{e.severity_label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell><Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge></TableCell>
-                      <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{new Date(e.started_at).toLocaleString()}</TableCell>
-                      <TableCell className="text-sm tabular-nums">{formatDuration(durationMs)}</TableCell>
-                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}</TableCell>
-                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{firstNote ? truncateNote(firstNote) : "—"}</TableCell>
-                      <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                        {e.status === "resolved" ? (e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—") : "—"}
-                      </TableCell>
+      <Tabs defaultValue="events">
+        <TabsList>
+          <TabsTrigger value="events">Events</TabsTrigger>
+          <TabsTrigger value="stoppages" className="gap-1.5">
+            Stoppages
+            {orphanedStoppageCount > 0 && (
+              <Badge
+                variant="destructive"
+                className="h-4 min-w-4 justify-center px-1 text-[10px] leading-none"
+              >
+                {orphanedStoppageCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="events">
+          <Card>
+            <CardHeader>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <Select
+                  value={lineId || "all"}
+                  onValueChange={(v) => setLineId(v === "all" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Lines" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Lines</SelectItem>
+                    {lines.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={type || "all"}
+                  onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="mechanical">Mechanical</SelectItem>
+                    <SelectItem value="electrical">Electrical</SelectItem>
+                    <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={status || "all"}
+                  onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div>
+                  <Label className="text-xs">From</Label>
+                  <Input
+                    type="date"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">To</Label>
+                  <Input
+                    type="date"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Event</TableHead>
+                      <TableHead className="hidden md:table-cell">Line</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="hidden sm:table-cell">Severity</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden lg:table-cell">Started</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead className="hidden md:table-cell">Technician</TableHead>
+                      <TableHead className="hidden md:table-cell">Notes</TableHead>
+                      <TableHead className="hidden lg:table-cell">Closed by</TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading && (
+                      <TableRow>
+                        <TableCell colSpan={10} className="py-10 text-center">
+                          <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {!isLoading && events.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={10}
+                          className="py-10 text-center text-sm text-muted-foreground"
+                        >
+                          No maintenance events match this filter.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {events.map((e) => {
+                      const durationMs =
+                        (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
+                        new Date(e.started_at).getTime();
+                      const firstNote = e.maintenance_notes[0]?.note;
+                      return (
+                        <TableRow
+                          key={e.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => setSelectedEvent(e)}
+                        >
+                          <TableCell>
+                            <p className="text-sm font-medium leading-tight">{e.title}</p>
+                            {e.description && (
+                              <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
+                                {e.description}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                            {e.production_lines?.name ?? "—"}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <Badge variant={typeBadgeVariant(e.type)}>
+                                {TYPE_LABELS[e.type]}
+                              </Badge>
+                              {e.stoppage_id && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  Part of Stoppage
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">
+                            {e.severity_label ? (
+                              <Badge variant={severityBadgeVariant(e.severity_label)}>
+                                {e.severity_label}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={statusBadgeVariant(e.status)}>
+                              {STATUS_LABELS[e.status]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                            {new Date(e.started_at).toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-sm tabular-nums">
+                            {formatDuration(durationMs)}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                            {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                            {firstNote ? truncateNote(firstNote) : "—"}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                            {e.status === "resolved"
+                              ? e.resolved_by_profile?.display_name ||
+                                e.resolved_by_profile?.email ||
+                                "—"
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="stoppages">
+          <StoppagesSection
+            rows={allStoppageRows}
+            canDelete={canDelete}
+            onView={setViewStoppageId}
+            onDelete={handleDeleteStoppage}
+          />
+        </TabsContent>
+      </Tabs>
 
       <ReliabilityAnalyticsSection
         totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
@@ -415,10 +706,16 @@ function MaintenancePage() {
 
       <MetricsTable metrics={metrics} />
 
-      <CreateEventDialog open={createOpen} onOpenChange={setCreateOpen} lines={lines} onCreate={handleCreate} />
+      <CreateEventDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        lines={lines}
+        onCreate={handleCreate}
+      />
       <StoppageDialog
-        open={stoppageDialogOpen}
-        onOpenChange={setStoppageDialogOpen}
+        open={stoppageDialogOpen || viewStoppageId !== null}
+        onOpenChange={(o) => !o && closeStoppageDialog()}
+        initialStoppageId={viewStoppageId}
         lines={lines}
         canEdit={canEdit}
         userId={user?.id ?? null}
@@ -474,7 +771,9 @@ function repeatFailureRateOf(events: MaintenanceEvent[]): number {
     const key = e.title.trim().toLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const repeatCount = events.filter((e) => (counts.get(e.title.trim().toLowerCase()) ?? 0) > 1).length;
+  const repeatCount = events.filter(
+    (e) => (counts.get(e.title.trim().toLowerCase()) ?? 0) > 1,
+  ).length;
   return (repeatCount / events.length) * 100;
 }
 
@@ -500,7 +799,11 @@ function localMtbfHours(events: MaintenanceEvent[]): number | null {
 function localMttrHours(events: MaintenanceEvent[]): number | null {
   const durations = events
     .filter((e) => e.type !== "preventive" && e.resolved_at)
-    .map((e) => (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) / 3_600_000);
+    .map(
+      (e) =>
+        (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) /
+        3_600_000,
+    );
   if (durations.length === 0) return null;
   return durations.reduce((s, v) => s + v, 0) / durations.length;
 }
@@ -594,7 +897,10 @@ interface StoppageSummaryRow {
 // returns one summary row per stoppage — backs the PDF report's Stoppages
 // section. Events with no stoppage_id contribute nothing here (they're
 // already covered by the report's ordinary Events table).
-function stoppagesSummaryOf(events: MaintenanceEvent[], stoppages: MaintenanceStoppage[]): StoppageSummaryRow[] {
+function stoppagesSummaryOf(
+  events: MaintenanceEvent[],
+  stoppages: MaintenanceStoppage[],
+): StoppageSummaryRow[] {
   const stoppageById = new Map(stoppages.map((s) => [s.id, s]));
   const groups = new Map<string, MaintenanceEvent[]>();
   for (const e of events) {
@@ -619,6 +925,45 @@ function stoppagesSummaryOf(events: MaintenanceEvent[], stoppages: MaintenanceSt
     });
   }
   return rows.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+}
+
+interface StoppageRow {
+  id: string;
+  lineName: string;
+  status: MaintenanceStatus;
+  startedAt: string;
+  resolvedAt: string | null;
+  durationMinutes: number;
+  eventCount: number;
+}
+
+// Unlike stoppagesSummaryOf above (which only surfaces stoppages that have
+// at least one member event among the currently-filtered `events`), this
+// walks every stoppage in the plant regardless of filters — an orphaned
+// stoppage has zero member events by definition, so it would never appear
+// via a group-by-events pass. Member counts come from the caller's already-
+// fetched unfiltered event list rather than a second query. Backs the
+// Stoppages tab.
+function allStoppagesOf(
+  stoppages: MaintenanceStoppage[],
+  allEvents: MaintenanceEvent[],
+): StoppageRow[] {
+  const countByStoppage = new Map<string, number>();
+  for (const e of allEvents) {
+    if (!e.stoppage_id) continue;
+    countByStoppage.set(e.stoppage_id, (countByStoppage.get(e.stoppage_id) ?? 0) + 1);
+  }
+  return stoppages
+    .map((s) => ({
+      id: s.id,
+      lineName: s.production_lines?.name ?? "—",
+      status: s.status,
+      startedAt: s.started_at,
+      resolvedAt: s.resolved_at,
+      durationMinutes: stoppageDurationMinutes(s),
+      eventCount: countByStoppage.get(s.id) ?? 0,
+    }))
+    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 }
 
 function EmptyMiniState() {
@@ -666,7 +1011,9 @@ function ReliabilityAnalyticsSection({
     <div className="mt-6 space-y-4">
       <div>
         <h2 className="text-lg font-semibold">Reliability Analytics</h2>
-        <p className="text-sm text-muted-foreground">Computed from the events matching the filters above.</p>
+        <p className="text-sm text-muted-foreground">
+          Computed from the events matching the filters above.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -682,32 +1029,65 @@ function ReliabilityAnalyticsSection({
           value={`${repeatFailureRatePct.toFixed(1)}%`}
           sub="Events whose title recurs ÷ total"
           icon={Repeat}
-          variant={repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success"}
+          variant={
+            repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success"
+          }
         />
         <KpiCard
           label="Equipment Availability"
           value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`}
           sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
           icon={Gauge}
-          variant={availabilityPct === null ? "default" : availabilityPct >= 90 ? "success" : availabilityPct >= 75 ? "warning" : "danger"}
+          variant={
+            availabilityPct === null
+              ? "default"
+              : availabilityPct >= 90
+                ? "success"
+                : availabilityPct >= 75
+                  ? "warning"
+                  : "danger"
+          }
         />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><h3 className="text-sm font-semibold">Top Losses by Downtime</h3></CardHeader>
+          <CardHeader>
+            <h3 className="text-sm font-semibold">Top Losses by Downtime</h3>
+          </CardHeader>
           <CardContent>
             {downtimeChartData.length === 0 ? (
               <EmptyMiniState />
             ) : (
               <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={downtimeChartData} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-                    <YAxis type="category" dataKey="name" width={isMobile ? 70 : 120} tick={{ fontSize: 11, fill: "var(--color-foreground)" }} />
+                  <BarChart
+                    data={downtimeChartData}
+                    layout="vertical"
+                    margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="var(--color-border)"
+                      horizontal={false}
+                    />
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={isMobile ? 70 : 120}
+                      tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
+                    />
                     <Tooltip
-                      contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
                       formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
                       labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
                     />
@@ -720,20 +1100,47 @@ function ReliabilityAnalyticsSection({
         </Card>
 
         <Card>
-          <CardHeader><h3 className="text-sm font-semibold">Top Losses by Frequency</h3></CardHeader>
+          <CardHeader>
+            <h3 className="text-sm font-semibold">Top Losses by Frequency</h3>
+          </CardHeader>
           <CardContent>
             {frequencyChartData.length === 0 ? (
               <EmptyMiniState />
             ) : (
               <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={frequencyChartData} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
-                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-                    <YAxis type="category" dataKey="name" width={isMobile ? 70 : 120} tick={{ fontSize: 11, fill: "var(--color-foreground)" }} />
+                  <BarChart
+                    data={frequencyChartData}
+                    layout="vertical"
+                    margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="var(--color-border)"
+                      horizontal={false}
+                    />
+                    <XAxis
+                      type="number"
+                      allowDecimals={false}
+                      tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={isMobile ? 70 : 120}
+                      tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
+                    />
                     <Tooltip
-                      contentStyle={{ background: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }}
-                      formatter={(value: number) => [`${value} event${value === 1 ? "" : "s"}`, "Frequency"]}
+                      contentStyle={{
+                        background: "var(--color-popover)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      formatter={(value: number) => [
+                        `${value} event${value === 1 ? "" : "s"}`,
+                        "Frequency",
+                      ]}
                       labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
                     />
                     <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="#3b82f6" />
@@ -745,16 +1152,23 @@ function ReliabilityAnalyticsSection({
         </Card>
 
         <Card>
-          <CardHeader><h3 className="text-sm font-semibold">Mean Downtime per Fault</h3></CardHeader>
+          <CardHeader>
+            <h3 className="text-sm font-semibold">Mean Downtime per Fault</h3>
+          </CardHeader>
           <CardContent>
             {meanDowntimePerFault.length === 0 ? (
               <EmptyMiniState />
             ) : (
               <ul className="space-y-2">
                 {meanDowntimePerFault.slice(0, 10).map((t) => (
-                  <li key={t.title} className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0">
+                  <li
+                    key={t.title}
+                    className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
+                  >
                     <span className="truncate">{t.title}</span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -773,11 +1187,16 @@ function ReliabilityAnalyticsSection({
             ) : (
               <ul className="space-y-2">
                 {chronicVsSporadic.slice(0, 10).map((t) => (
-                  <li key={t.title} className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0">
+                  <li
+                    key={t.title}
+                    className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
+                  >
                     <span className="truncate">{t.title}</span>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="tabular-nums text-muted-foreground">{t.count}x</span>
-                      <Badge variant={t.chronic ? "destructive" : "outline"}>{t.chronic ? "Chronic" : "Sporadic"}</Badge>
+                      <Badge variant={t.chronic ? "destructive" : "outline"}>
+                        {t.chronic ? "Chronic" : "Sporadic"}
+                      </Badge>
                     </div>
                   </li>
                 ))}
@@ -790,7 +1209,9 @@ function ReliabilityAnalyticsSection({
       <Card>
         <CardHeader>
           <h3 className="text-sm font-semibold">Reliability by Line</h3>
-          <p className="text-xs text-muted-foreground">Sorted worst availability first, computed from the currently filtered events.</p>
+          <p className="text-xs text-muted-foreground">
+            Sorted worst availability first, computed from the currently filtered events.
+          </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -806,15 +1227,26 @@ function ReliabilityAnalyticsSection({
               </TableHeader>
               <TableBody>
                 {reliabilityByLine.length === 0 && (
-                  <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">No events match this filter.</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell
+                      colSpan={5}
+                      className="py-8 text-center text-sm text-muted-foreground"
+                    >
+                      No events match this filter.
+                    </TableCell>
+                  </TableRow>
                 )}
                 {reliabilityByLine.map((r) => (
                   <TableRow key={r.lineId}>
                     <TableCell className="text-sm">{r.lineName}</TableCell>
                     <TableCell className="tabular-nums">{formatHours(r.mtbfHours)}</TableCell>
                     <TableCell className="tabular-nums">{formatHours(r.mttrHours)}</TableCell>
-                    <TableCell className="tabular-nums">{r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{r.eventCount}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                      {r.eventCount}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -832,7 +1264,10 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
     <Card className="mt-6">
       <CardHeader>
         <h2 className="text-lg font-semibold">MTBF / MTTR by Line & Type</h2>
-        <p className="text-sm text-muted-foreground">Lifetime reliability metrics — not affected by the table filters above. Sorted worst MTBF first.</p>
+        <p className="text-sm text-muted-foreground">
+          Lifetime reliability metrics — not affected by the table filters above. Sorted worst MTBF
+          first.
+        </p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
@@ -849,16 +1284,26 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
             </TableHeader>
             <TableBody>
               {sorted.length === 0 && (
-                <TableRow><TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">No maintenance events recorded yet.</TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                    No maintenance events recorded yet.
+                  </TableCell>
+                </TableRow>
               )}
               {sorted.map((m) => (
                 <TableRow key={`${m.line_id}-${m.type}`}>
                   <TableCell className="text-sm">{m.line_name}</TableCell>
-                  <TableCell><Badge variant={typeBadgeVariant(m.type)}>{TYPE_LABELS[m.type]}</Badge></TableCell>
+                  <TableCell>
+                    <Badge variant={typeBadgeVariant(m.type)}>{TYPE_LABELS[m.type]}</Badge>
+                  </TableCell>
                   <TableCell className="tabular-nums">{formatHours(m.mtbf_hours)}</TableCell>
                   <TableCell className="tabular-nums">{formatHours(m.mttr_hours)}</TableCell>
-                  <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{m.event_count}</TableCell>
-                  <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{m.resolved_count}</TableCell>
+                  <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                    {m.event_count}
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                    {m.resolved_count}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -869,7 +1314,156 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
   );
 }
 
-function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
+// Management view for maintenance_stoppages — every stoppage in the plant
+// (not scoped to the Events tab's filters), with its member-event count and
+// total duration, so Admin/Maintenance can spot and clean up orphaned
+// stoppages (eventCount === 0, left behind once every member event under
+// it has been deleted — see EventDetailDialog's handleDelete /
+// syncStoppageAggregate) that would otherwise sit invisibly in the
+// database. Clicking a row opens it read/add-only in StoppageDialog (same
+// component the "New Stoppage" button uses, just pre-loaded with an
+// existing id); the delete control only ever appears on orphaned rows.
+function StoppagesSection({
+  rows,
+  canDelete,
+  onView,
+  onDelete,
+}: {
+  rows: StoppageRow[];
+  canDelete: boolean;
+  onView: (id: string) => void;
+  onDelete: (id: string) => Promise<boolean>;
+}) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const pendingDelete = rows.find((r) => r.id === pendingDeleteId) ?? null;
+
+  async function confirmDelete() {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    const ok = await onDelete(pendingDeleteId);
+    setDeleting(false);
+    if (ok) setPendingDeleteId(null);
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Stoppages</h2>
+          <p className="text-sm text-muted-foreground">
+            Downtime windows grouping several maintenance events. Rows marked{" "}
+            <span className="font-medium text-foreground">Orphaned</span> have no member events left
+            and can be deleted.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Line</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden sm:table-cell">Started</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Events</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={6}
+                      className="py-10 text-center text-sm text-muted-foreground"
+                    >
+                      No stoppages recorded yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {rows.map((s) => {
+                  const orphaned = s.eventCount === 0;
+                  return (
+                    <TableRow
+                      key={s.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => onView(s.id)}
+                    >
+                      <TableCell className="text-sm font-medium">{s.lineName}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant={statusBadgeVariant(s.status)}>
+                            {STATUS_LABELS[s.status]}
+                          </Badge>
+                          {orphaned && (
+                            <Badge variant="destructive" className="gap-1">
+                              <AlertTriangle className="h-3 w-3" />
+                              Orphaned
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
+                        {new Date(s.startedAt).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-sm tabular-nums">
+                        {formatDuration(s.durationMinutes * 60_000)}
+                      </TableCell>
+                      <TableCell className="text-sm tabular-nums">{s.eventCount}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {orphaned && canDelete && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => setPendingDeleteId(s.id)}
+                            aria-label="Delete orphaned stoppage"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(o) => !o && setPendingDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this stoppage?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? `The empty stoppage for ${pendingDelete.lineName} started ${new Date(pendingDelete.startedAt).toLocaleString()} will be permanently deleted. This cannot be undone.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+function CreateEventDialog({
+  open,
+  onOpenChange,
+  lines,
+  stoppage,
+  onCreate,
+}: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   lines: { id: string; name: string }[];
@@ -878,7 +1472,16 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
   // stoppage's own line (a stoppage's member events all share one line) and
   // every created row carries stoppageId.
   stoppage?: { id: string; lineId: string } | null;
-  onCreate: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) => Promise<void>;
+  onCreate: (data: {
+    lineId: string;
+    type: MaintenanceType;
+    title: string;
+    description: string;
+    startedAt: string;
+    severityLabel: string;
+    technicianIds: string[];
+    stoppageId: string | null;
+  }) => Promise<void>;
 }) {
   const [lineId, setLineId] = useState(stoppage?.lineId ?? "");
   const [type, setType] = useState<MaintenanceType>("mechanical");
@@ -892,7 +1495,13 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
   const activeTechnicians = technicians.filter((t) => t.is_active);
 
   function reset() {
-    setLineId(stoppage?.lineId ?? ""); setType("mechanical"); setTitle(""); setDescription(""); setStartedAt(toDatetimeLocalValue(new Date())); setSeverityLabel(""); setTechnicianIds([]);
+    setLineId(stoppage?.lineId ?? "");
+    setType("mechanical");
+    setTitle("");
+    setDescription("");
+    setStartedAt(toDatetimeLocalValue(new Date()));
+    setSeverityLabel("");
+    setTechnicianIds([]);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -907,7 +1516,16 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
     }
     setSubmitting(true);
     try {
-      await onCreate({ lineId, type, title, description, startedAt: new Date(startedAt).toISOString(), severityLabel, technicianIds, stoppageId: stoppage?.id ?? null });
+      await onCreate({
+        lineId,
+        type,
+        title,
+        description,
+        startedAt: new Date(startedAt).toISOString(),
+        severityLabel,
+        technicianIds,
+        stoppageId: stoppage?.id ?? null,
+      });
       reset();
     } finally {
       setSubmitting(false);
@@ -915,12 +1533,20 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Maintenance Event</DialogTitle>
           <DialogDescription>
-            {stoppage ? "Log an event as part of this stoppage." : "Log a new mechanical, electrical, or preventive maintenance issue."}
+            {stoppage
+              ? "Log an event as part of this stoppage."
+              : "Log a new mechanical, electrical, or preventive maintenance issue."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -928,14 +1554,24 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
             <div>
               <Label>Line</Label>
               <Select value={lineId} onValueChange={setLineId} disabled={!!stoppage}>
-                <SelectTrigger><SelectValue placeholder="Select line" /></SelectTrigger>
-                <SelectContent>{lines.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select line" />
+                </SelectTrigger>
+                <SelectContent>
+                  {lines.map((l) => (
+                    <SelectItem key={l.id} value={l.id}>
+                      {l.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Type</Label>
               <Select value={type} onValueChange={(v) => setType(v as MaintenanceType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="mechanical">Mechanical</SelectItem>
                   <SelectItem value="electrical">Electrical</SelectItem>
@@ -947,25 +1583,60 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Severity (optional)</Label>
-              <Select value={severityLabel || "none"} onValueChange={(v) => setSeverityLabel(v === "none" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Select severity" /></SelectTrigger>
+              <Select
+                value={severityLabel || "none"}
+                onValueChange={(v) => setSeverityLabel(v === "none" ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select severity" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Unclassified</SelectItem>
-                  {SEVERITY_LABEL_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {SEVERITY_LABEL_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Technicians (optional)</Label>
-              <TechnicianMultiSelect technicians={activeTechnicians} selectedIds={technicianIds} onChange={setTechnicianIds} />
+              <TechnicianMultiSelect
+                technicians={activeTechnicians}
+                selectedIds={technicianIds}
+                onChange={setTechnicianIds}
+              />
             </div>
           </div>
-          <div><Label>Title</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} required /></div>
-          <div><Label>Description (optional)</Label><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} /></div>
-          <div><Label>Started At</Label><Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} required /></div>
+          <div>
+            <Label>Title</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} required />
+          </div>
+          <div>
+            <Label>Description (optional)</Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <div>
+            <Label>Started At</Label>
+            <Input
+              type="datetime-local"
+              value={startedAt}
+              onChange={(e) => setStartedAt(e.target.value)}
+              required
+            />
+          </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={submitting}>{submitting ? "Creating…" : "Create Event"}</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Creating…" : "Create Event"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -982,15 +1653,36 @@ function CreateEventDialog({ open, onOpenChange, lines, stoppage, onCreate }: {
 // here — they're derived from member events by syncStoppageAggregate,
 // called after every add (and, from EventDetailDialog, every member
 // status change/delete).
-function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEvent }: {
+function StoppageDialog({
+  open,
+  onOpenChange,
+  lines,
+  canEdit,
+  userId,
+  onCreateEvent,
+  initialStoppageId = null,
+}: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   lines: { id: string; name: string }[];
   canEdit: boolean;
   userId: string | null;
-  onCreateEvent: (data: { lineId: string; type: MaintenanceType; title: string; description: string; startedAt: string; severityLabel: string; technicianIds: string[]; stoppageId: string | null }) => Promise<string | null>;
+  onCreateEvent: (data: {
+    lineId: string;
+    type: MaintenanceType;
+    title: string;
+    description: string;
+    startedAt: string;
+    severityLabel: string;
+    technicianIds: string[];
+    stoppageId: string | null;
+  }) => Promise<string | null>;
+  // Set by the Stoppages tab when opening this dialog to view an already-
+  // existing stoppage (as opposed to the "New Stoppage" button, which opens
+  // it with this null and starts the create form below).
+  initialStoppageId?: string | null;
 }) {
-  const [stoppageId, setStoppageId] = useState<string | null>(null);
+  const [stoppageId, setStoppageId] = useState<string | null>(initialStoppageId);
   const [lineId, setLineId] = useState("");
   const [startedAt, setStartedAt] = useState(() => toDatetimeLocalValue(new Date()));
   const [creating, setCreating] = useState(false);
@@ -1000,10 +1692,21 @@ function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEv
   const { data: members = [] } = useQuery(stoppageEventsQuery(stoppageId));
 
   function reset() {
-    setStoppageId(null);
+    setStoppageId(initialStoppageId);
     setLineId("");
     setStartedAt(toDatetimeLocalValue(new Date()));
   }
+
+  // Re-sync every time the dialog opens — covers both switching which
+  // stoppage is being viewed (one row's "view" click while a different
+  // stoppage was previously open) and going from "view" back to "create"
+  // (New Stoppage button after a view was closed), neither of which a plain
+  // useState initializer would catch since this component instance is
+  // reused for every open rather than remounted.
+  useEffect(() => {
+    if (open) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialStoppageId]);
 
   async function handleCreateStoppage(e: React.FormEvent) {
     e.preventDefault();
@@ -1019,7 +1722,11 @@ function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEv
     try {
       const { data: inserted, error } = await supabase
         .from("maintenance_stoppages")
-        .insert({ line_id: lineId, started_at: new Date(startedAt).toISOString(), created_by: userId })
+        .insert({
+          line_id: lineId,
+          started_at: new Date(startedAt).toISOString(),
+          created_by: userId,
+        })
         .select()
         .single();
       if (error) throw error;
@@ -1035,7 +1742,13 @@ function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEv
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          onOpenChange(o);
+          if (!o) reset();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{stoppageId ? "Stoppage" : "New Stoppage"}</DialogTitle>
@@ -1051,56 +1764,93 @@ function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEv
               <div>
                 <Label>Line</Label>
                 <Select value={lineId} onValueChange={setLineId}>
-                  <SelectTrigger><SelectValue placeholder="Select line" /></SelectTrigger>
-                  <SelectContent>{lines.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select line" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lines.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
               <div>
                 <Label>Started At</Label>
-                <Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} required />
+                <Input
+                  type="datetime-local"
+                  value={startedAt}
+                  onChange={(e) => setStartedAt(e.target.value)}
+                  required
+                />
               </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                <Button type="submit" disabled={creating}>{creating ? "Creating…" : "Create Stoppage"}</Button>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={creating}>
+                  {creating ? "Creating…" : "Create Stoppage"}
+                </Button>
               </DialogFooter>
             </form>
           ) : (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="font-medium">{stoppage?.production_lines?.name ?? "—"}</span>
-                <Badge variant={statusBadgeVariant(stoppage?.status ?? "open")}>{STATUS_LABELS[stoppage?.status ?? "open"]}</Badge>
+                <Badge variant={statusBadgeVariant(stoppage?.status ?? "open")}>
+                  {STATUS_LABELS[stoppage?.status ?? "open"]}
+                </Badge>
               </div>
               <p className="text-xs text-muted-foreground">
                 Started {stoppage ? new Date(stoppage.started_at).toLocaleString() : "—"}
-                {stoppage?.resolved_at && <> → Resolved {new Date(stoppage.resolved_at).toLocaleString()}</>}
+                {stoppage?.resolved_at && (
+                  <> → Resolved {new Date(stoppage.resolved_at).toLocaleString()}</>
+                )}
               </p>
 
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Events in this stoppage</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Events in this stoppage
+                </p>
                 {members.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No events added yet.</p>
                 ) : (
                   <ul className="max-h-64 space-y-2 overflow-y-auto">
                     {members.map((m: StoppageMemberEvent) => (
-                      <li key={m.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+                      <li
+                        key={m.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm"
+                      >
                         <div className="min-w-0">
                           <p className="truncate font-medium">{m.title}</p>
                           <p className="text-xs text-muted-foreground">{TYPE_LABELS[m.type]}</p>
                         </div>
-                        <Badge variant={statusBadgeVariant(m.status)}>{STATUS_LABELS[m.status]}</Badge>
+                        <Badge variant={statusBadgeVariant(m.status)}>
+                          {STATUS_LABELS[m.status]}
+                        </Badge>
                       </li>
                     ))}
                   </ul>
                 )}
                 {canEdit && (
-                  <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setAddEventOpen(true)}>
-                    <Plus className="mr-1.5 h-3.5 w-3.5" />Add Event
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => setAddEventOpen(true)}
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Add Event
                   </Button>
                 )}
               </div>
 
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Done</Button>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                  Done
+                </Button>
               </DialogFooter>
             </div>
           )}
@@ -1122,4 +1872,3 @@ function StoppageDialog({ open, onOpenChange, lines, canEdit, userId, onCreateEv
     </>
   );
 }
-
