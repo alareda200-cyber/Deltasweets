@@ -864,7 +864,11 @@ function EntryPage() {
         </Card>
       </div>
 
-      <div className="sticky bottom-4 mt-6 flex justify-end gap-2">
+      {/* max-md:bottom-[72px]: clears the fixed mobile bottom nav
+          (AppShell.tsx, md:hidden) — bottom-4 on its own would sit under
+          it. No-op at md+, where that nav doesn't render and the original
+          bottom-4 offset applies. */}
+      <div className="sticky bottom-4 max-md:bottom-[72px] mt-6 flex justify-end gap-2">
         {existingEntryId && canDelete && (
           <Button
             size="lg"

@@ -1,12 +1,34 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, PlusSquare, Settings, Factory, LogOut, Users, User, KeyRound, ChevronDown, ScrollText, Bell, AlertTriangle, Wrench } from "lucide-react";
+import {
+  LayoutDashboard,
+  PlusSquare,
+  PlusCircle,
+  Settings,
+  Factory,
+  LogOut,
+  Users,
+  User,
+  KeyRound,
+  ChevronDown,
+  ScrollText,
+  Bell,
+  AlertTriangle,
+  Wrench,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MyProfileDialog } from "@/components/MyProfileDialog";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useNotifications } from "@/lib/notifications";
@@ -16,9 +38,34 @@ import { PushNotificationToggle } from "@/components/PushNotificationToggle";
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
   { to: "/entry", label: "Daily Entry", icon: PlusSquare, permission: "entry.view" as const },
-  { to: "/maintenance", label: "Maintenance", icon: Wrench, permission: "maintenance.view" as const },
+  {
+    to: "/maintenance",
+    label: "Maintenance",
+    icon: Wrench,
+    permission: "maintenance.view" as const,
+  },
   { to: "/users", label: "Users", icon: Users, permission: "users.manage" as const },
   { to: "/audit-log", label: "Audit Log", icon: ScrollText, permission: "users.manage" as const },
+  { to: "/settings", label: "Settings", icon: Settings, permission: "settings.manage" as const },
+];
+
+// Mobile-only bottom tab bar (below md) — a fixed 4-item subset of `nav`
+// above, not a replacement for it: the top navbar stays exactly as-is at
+// every width, this is purely additive for small screens. Own labels/icons
+// per the mobile-nav spec (e.g. "New Entry"/PlusCircle here vs. "Daily
+// Entry"/PlusSquare in the top nav) rather than reusing `nav`'s entries
+// directly. Permission-filtered the same way `nav` is below, so a role
+// without e.g. maintenance.view never gets a tab that dead-ends on
+// RequireAuth's access-denied screen.
+const mobileNav = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
+  { to: "/entry", label: "New Entry", icon: PlusCircle, permission: "entry.view" as const },
+  {
+    to: "/maintenance",
+    label: "Maintenance",
+    icon: Wrench,
+    permission: "maintenance.view" as const,
+  },
   { to: "/settings", label: "Settings", icon: Settings, permission: "settings.manage" as const },
 ];
 
@@ -27,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { role, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const visibleNav = nav.filter((n) => can(role, n.permission));
+  const visibleMobileNav = mobileNav.filter((n) => can(role, n.permission));
   const [profileOpen, setProfileOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const { data: notifications = [] } = useNotifications();
@@ -36,7 +84,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate({ to: "/login" });
   }
 
-  const initials = `${profile?.first_name?.[0] ?? ""}${profile?.last_name?.[0] ?? ""}`.toLocaleUpperCase() || profile?.email?.[0]?.toUpperCase() || "?";
+  const initials =
+    `${profile?.first_name?.[0] ?? ""}${profile?.last_name?.[0] ?? ""}`.toLocaleUpperCase() ||
+    profile?.email?.[0]?.toUpperCase() ||
+    "?";
   const displayName = profile?.display_name || profile?.email || "";
 
   return (
@@ -84,7 +135,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="relative rounded-lg border border-border bg-card p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Notifications">
+                <button
+                  className="relative rounded-lg border border-border bg-card p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Notifications"
+                >
                   <Bell className="h-4 w-4" />
                   {notifications.length > 0 && (
                     <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
@@ -98,11 +152,18 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <DropdownMenuSeparator />
                 <div className="max-h-80 overflow-y-auto">
                   {notifications.length === 0 && (
-                    <p className="px-2 py-4 text-center text-xs text-muted-foreground">No alerts in the last 7 days.</p>
+                    <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                      No alerts in the last 7 days.
+                    </p>
                   )}
                   {notifications.map((n) => (
                     <div key={n.id} className="flex items-start gap-2 px-2 py-2 text-xs">
-                      <AlertTriangle className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", n.severity === "critical" ? "text-destructive" : "text-amber-500")} />
+                      <AlertTriangle
+                        className={cn(
+                          "mt-0.5 h-3.5 w-3.5 shrink-0",
+                          n.severity === "critical" ? "text-destructive" : "text-amber-500",
+                        )}
+                      />
                       <div>
                         <p className="font-medium leading-tight">{n.message}</p>
                         <p className="text-[10px] text-muted-foreground">{n.entryDate}</p>
@@ -115,14 +176,27 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 transition-colors hover:bg-muted">
-                  <Avatar className="h-7 w-7" style={{ backgroundColor: profile?.avatar_color || "#0ea5e9" }}>
-                    <AvatarFallback style={{ backgroundColor: profile?.avatar_color || "#0ea5e9", color: "white" }} className="text-[11px]">
+                  <Avatar
+                    className="h-7 w-7"
+                    style={{ backgroundColor: profile?.avatar_color || "#0ea5e9" }}
+                  >
+                    <AvatarFallback
+                      style={{
+                        backgroundColor: profile?.avatar_color || "#0ea5e9",
+                        color: "white",
+                      }}
+                      className="text-[11px]"
+                    >
                       {initials}
                     </AvatarFallback>
                   </Avatar>
                   <span className="hidden text-left md:block">
-                    <span className="block max-w-[120px] truncate text-xs font-medium leading-tight">{displayName}</span>
-                    <span className="block text-[10px] leading-tight text-muted-foreground">{role ? ROLE_LABELS[role as Role] : ""}</span>
+                    <span className="block max-w-[120px] truncate text-xs font-medium leading-tight">
+                      {displayName}
+                    </span>
+                    <span className="block text-[10px] leading-tight text-muted-foreground">
+                      {role ? ROLE_LABELS[role as Role] : ""}
+                    </span>
                   </span>
                   <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
@@ -130,19 +204,61 @@ export function AppShell({ children }: { children: ReactNode }) {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <p className="truncate text-sm font-medium">{displayName}</p>
-                  <p className="truncate text-xs font-normal text-muted-foreground">{profile?.email}</p>
+                  <p className="truncate text-xs font-normal text-muted-foreground">
+                    {profile?.email}
+                  </p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setProfileOpen(true)}><User className="mr-2 h-4 w-4" />My Profile</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setPasswordOpen(true)}><KeyRound className="mr-2 h-4 w-4" />Change Password</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+                  <User className="mr-2 h-4 w-4" />
+                  My Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPasswordOpen(true)}>
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Change Password
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />Logout</DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleSignOut}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Logout
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[1600px] px-4 py-6 md:px-8 md:py-8">{children}</main>
+      {/* pb-[72px] (mobile only) keeps trailing page content clear of the
+          fixed bottom nav below — md:py-8 resets both top and bottom back
+          to the original symmetric padding at md+, where the bottom nav
+          doesn't render at all. */}
+      <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-[72px] md:px-8 md:py-8">{children}</main>
+
+      {/* Mobile-only bottom tab bar — md:hidden, sits alongside (not
+          instead of) the top navbar above, which is untouched. */}
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden"
+        style={{ background: "var(--card)", borderTop: "0.5px solid var(--border)" }}
+      >
+        {visibleMobileNav.map((n) => {
+          const active = n.to === "/" ? pathname === "/" : pathname.startsWith(n.to);
+          return (
+            <Link
+              key={n.to}
+              to={n.to}
+              className={cn(
+                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1",
+                active ? "text-accent" : "text-muted-foreground",
+              )}
+            >
+              <n.icon className="h-[22px] w-[22px]" />
+              <span className="text-[10px] leading-none">{n.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
 
       <MyProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
       <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
