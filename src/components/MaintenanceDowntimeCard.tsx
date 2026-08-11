@@ -157,7 +157,18 @@ export function MaintenanceDowntimeCard({
   }
 
   const totalMinutes = scoped.reduce((s, d) => s + Number(d.minutes), 0);
-  const eventCount = scoped.length;
+  // "Events" is a failure-count/reliability stat (same framing as the
+  // Dashboard's MaintenanceEventsCard and /maintenance page's MTBF/MTTR,
+  // both of which already exclude preventive — see maintenanceMetricsQuery
+  // and localMtbfHours/localMttrHours in src/routes/maintenance.tsx), so a
+  // scheduled preventive visit shouldn't inflate it the way it legitimately
+  // does inflate totalMinutes/criticalMinutes/the chart below (preventive
+  // still stops the line, so it still counts as real downtime — see
+  // maintenanceEventsAsDowntimes). pareto_reason_name is only set on
+  // source: "maintenance" rows and is exactly "Preventive Maintenance" for
+  // preventive-type events (see typeMeta), so this can't accidentally
+  // exclude a real entry_downtimes row.
+  const eventCount = scoped.filter((d) => d.pareto_reason_name !== "Preventive Maintenance").length;
   const criticalMinutes = scoped
     .filter(
       (d) => severityLevels.find((s) => s.id === d.severity_id)?.name.toLowerCase() === "critical",
