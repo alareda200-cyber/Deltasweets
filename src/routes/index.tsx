@@ -265,17 +265,15 @@ function HeroHeader({
   return (
     <>
       {/* Mobile-only compact replacement for the full hero below — line name
-          + date range in a single row. Not part of data-pdf-section="hero"
-          (no data-pdf-section attribute of its own), so it never appears in
-          PDF exports regardless of screen size. */}
-      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-card md:hidden">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: line?.color }} />
-          <span className="truncate text-base font-bold tracking-tight">{line?.name ?? "—"}</span>
-        </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
+          + date range stacked in a plain two-line block, per the approved
+          mobile mockup. Not part of data-pdf-section="hero" (no
+          data-pdf-section attribute of its own), so it never appears in PDF
+          exports regardless of screen size. */}
+      <div className="md:hidden px-4 py-3 border-b border-border">
+        <div className="text-base font-medium">{line?.name ?? "—"} Production Line</div>
+        <div className="text-xs text-muted-foreground">
           {from} → {to}
-        </span>
+        </div>
       </div>
 
       {/* hidden md:block: the big gradient hero is replaced on mobile by the

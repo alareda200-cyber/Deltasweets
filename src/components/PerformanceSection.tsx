@@ -117,7 +117,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
       {/* Chart */}
       <div>
         <p className="mb-3 text-sm font-semibold">Daily Plan vs Actual (kg)</p>
-        <div className="h-[180px] w-full md:h-72">
+        <div className="h-[200px] w-full md:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />

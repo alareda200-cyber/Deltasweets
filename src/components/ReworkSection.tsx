@@ -58,16 +58,23 @@ export function ReworkSection({ entries }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
           Month to Date
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
-          <KpiCard label="Cooking (kg)" value={fmt(cooking)} variant="primary" />
-          <KpiCard label="Making (kg)" value={fmt(making)} variant="primary" />
-          <KpiCard label="Packing (kg)" value={fmt(packing)} variant="primary" />
-          <KpiCard label="Total (kg)" value={fmt(total)} icon={RotateCcw} variant="primary" />
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-5">
+          <KpiCard label="Cooking (kg)" value={fmt(cooking)} variant="primary" className="p-3 md:p-5" />
+          <KpiCard label="Making (kg)" value={fmt(making)} variant="primary" className="p-3 md:p-5" />
+          <KpiCard label="Packing (kg)" value={fmt(packing)} variant="primary" className="p-3 md:p-5" />
+          <KpiCard
+            label="Total (kg)"
+            value={fmt(total)}
+            icon={RotateCcw}
+            variant="primary"
+            className="p-3 md:p-5"
+          />
           <KpiCard
             label="% of Output"
             value={`${reworkPct.toFixed(1)}%`}
             icon={Percent}
             variant={reworkPct < 5 ? "success" : reworkPct < 15 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
       </div>
@@ -77,20 +84,21 @@ export function ReworkSection({ entries }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           {last ? `Last Day · ${last.entry_date}` : "Last Day · (no entries)"}
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
-          <KpiCard label="Cooking (kg)" value={fmt(dCooking)} />
-          <KpiCard label="Making (kg)" value={fmt(dMaking)} />
-          <KpiCard label="Packing (kg)" value={fmt(dPacking)} />
-          <KpiCard label="Total (kg)" value={fmt(dTotal)} />
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-5">
+          <KpiCard label="Cooking (kg)" value={fmt(dCooking)} className="p-3 md:p-5" />
+          <KpiCard label="Making (kg)" value={fmt(dMaking)} className="p-3 md:p-5" />
+          <KpiCard label="Packing (kg)" value={fmt(dPacking)} className="p-3 md:p-5" />
+          <KpiCard label="Total (kg)" value={fmt(dTotal)} className="p-3 md:p-5" />
           <KpiCard
             label="% of Output"
             value={`${dPct.toFixed(1)}%`}
             variant={dPct < 5 ? "success" : dPct < 15 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
       </div>
 
-      <div className="h-[180px] w-full md:h-72">
+      <div className="h-[200px] w-full md:h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 24, right: 8, bottom: 0, left: -8 }}>
             <defs>

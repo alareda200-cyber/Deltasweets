@@ -68,34 +68,38 @@ export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwner
         </div>
       ) : (
         <>
-          <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
             <KpiCard
               label="Best Area Owner"
               value={best.owner?.name ?? "Unassigned"}
               icon={User}
               variant="primary"
+              className="p-3 md:p-5"
             />
             <KpiCard
               label="Production Area"
               value={best.area.name}
               icon={Award}
               variant="primary"
+              className="p-3 md:p-5"
             />
             <KpiCard
               label="Average Performance %"
               value={`${best.avg.toFixed(2)}%`}
               icon={Percent}
               variant={best.avg >= 95 ? "success" : best.avg >= 85 ? "warning" : "danger"}
+              className="p-3 md:p-5"
             />
             <KpiCard
               label="Number of Entries"
               value={String(best.count)}
               icon={Hash}
               variant="default"
+              className="p-3 md:p-5"
             />
           </div>
 
-          <div className="h-[180px] w-full md:h-64">
+          <div className="h-[200px] w-full md:h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={chartData}

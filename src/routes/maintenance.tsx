@@ -437,12 +437,13 @@ function MaintenancePage() {
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3">
         <KpiCard
           label="Open Mechanical"
           value={String(openMechanical)}
           icon={Wrench}
           variant={openMechanical > 0 ? "warning" : "success"}
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="MTBF (Mechanical)"
@@ -450,6 +451,7 @@ function MaintenancePage() {
           sub="Avg. time between failures"
           icon={Activity}
           variant="primary"
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="MTTR (Mechanical)"
@@ -457,12 +459,14 @@ function MaintenancePage() {
           sub="Avg. time to repair"
           icon={Timer}
           variant="primary"
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="Open Electrical"
           value={String(openElectrical)}
           icon={Zap}
           variant={openElectrical > 0 ? "warning" : "success"}
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="MTBF (Electrical)"
@@ -470,6 +474,7 @@ function MaintenancePage() {
           sub="Avg. time between failures"
           icon={Activity}
           variant="primary"
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="MTTR (Electrical)"
@@ -477,6 +482,7 @@ function MaintenancePage() {
           sub="Avg. time to repair"
           icon={Timer}
           variant="primary"
+          className="p-3 md:p-5"
         />
         <KpiCard
           label="Open Preventive"
@@ -484,6 +490,7 @@ function MaintenancePage() {
           sub="Scheduled maintenance, not counted in MTBF"
           icon={CalendarCheck}
           variant={openPreventive > 0 ? "warning" : "success"}
+          className="p-3 md:p-5"
         />
       </div>
 

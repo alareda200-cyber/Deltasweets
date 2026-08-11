@@ -226,25 +226,28 @@ export function MaintenanceDowntimeCard({
         </div>
       ) : (
         <>
-          <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
             <KpiCard
               label="Maintenance downtime (all sources)"
               value={fmt(totalMinutes)}
               sub="maintenance events + daily entry"
               icon={Wrench}
               variant="primary"
+              className="p-3 md:p-5"
             />
             <KpiCard
               label="Events"
               value={String(eventCount)}
               icon={AlertOctagon}
               variant="default"
+              className="p-3 md:p-5"
             />
             <KpiCard
               label="Critical Minutes"
               value={fmt(criticalMinutes)}
               icon={Activity}
               variant={criticalMinutes > 0 ? "danger" : "success"}
+              className="p-3 md:p-5"
             />
           </div>
 
@@ -252,13 +255,18 @@ export function MaintenanceDowntimeCard({
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
               {lastEntryDate ? `Last Day · ${lastEntryDate}` : "Last Day · (no entries)"}
             </p>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3">
               <KpiCard
                 label="Maintenance Downtime (min)"
                 value={fmt(Math.round(lastDayMaintenanceMinutes))}
                 variant={lastDayMaintenanceMinutes > 0 ? "warning" : "default"}
+                className="p-3 md:p-5"
               />
-              <KpiCard label="Maintenance Events" value={String(lastDayMaintenanceEvents.length)} />
+              <KpiCard
+                label="Maintenance Events"
+                value={String(lastDayMaintenanceEvents.length)}
+                className="p-3 md:p-5"
+              />
             </div>
             {lastDayMaintenanceEvents.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -290,7 +298,7 @@ export function MaintenanceDowntimeCard({
                   downtime.
                 </p>
               )}
-              <div className="h-[180px] w-full md:h-80">
+              <div className="h-[200px] w-full md:h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 60 }}>
                     <defs>

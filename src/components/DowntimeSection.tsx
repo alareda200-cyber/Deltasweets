@@ -106,24 +106,27 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
           Month to Date
         </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
           <KpiCard
             label="Total Available Time (min)"
             value={fmt(totalAvail)}
             icon={Clock}
             variant="primary"
+            className="p-3 md:p-5"
           />
           <KpiCard
             label="Total Downtime (min)"
             value={fmt(totalDown)}
             icon={AlertOctagon}
             variant="warning"
+            className="p-3 md:p-5"
           />
           <KpiCard
             label="Loss %"
             value={`${lossPct.toFixed(1)}%`}
             icon={Activity}
             variant={lossPct < 10 ? "success" : lossPct < 25 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
       </div>
@@ -133,17 +136,19 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           {last ? `Last Day · ${last.entry_date}` : "Last Day · (no entries)"}
         </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <KpiCard label="Available (min)" value={fmt(dayAvail)} />
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
+          <KpiCard label="Available (min)" value={fmt(dayAvail)} className="p-3 md:p-5" />
           <KpiCard
             label="Downtime (min)"
             value={fmt(dayDown)}
             variant={dayDown > 0 ? "warning" : "default"}
+            className="p-3 md:p-5"
           />
           <KpiCard
             label="Loss %"
             value={`${dayLossPct.toFixed(1)}%`}
             variant={dayLossPct < 10 ? "success" : dayLossPct < 25 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
         {dayDowntimes.length > 0 && (
