@@ -1,4 +1,14 @@
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  LabelList,
+} from "recharts";
 import type { EntryDowntime, DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt } from "@/lib/date-utils";
@@ -25,8 +35,14 @@ export function DowntimeSection({ entries, downtimes }: Props) {
 
   // Last day
   const last = entries[entries.length - 1];
-  const lastIds = new Set(entries.filter((e) => e.entry_date === last?.entry_date).map((e) => e.id));
-  const dayAvail = last ? entries.filter((e) => e.entry_date === last.entry_date).reduce((s, e) => s + Number(e.available_min), 0) : 0;
+  const lastIds = new Set(
+    entries.filter((e) => e.entry_date === last?.entry_date).map((e) => e.id),
+  );
+  const dayAvail = last
+    ? entries
+        .filter((e) => e.entry_date === last.entry_date)
+        .reduce((s, e) => s + Number(e.available_min), 0)
+    : 0;
   // Maintenance-derived rows (source: "maintenance") don't have a real
   // daily_entries id in entry_id — it's the maintenance_events row's own id
   // (see maintenanceEventsAsDowntimes) — so lastIds.has(d.entry_id) never
@@ -74,7 +90,9 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   return (
     <section className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8">
       <header className="mb-6">
-        <h2 className="text-xl font-bold tracking-tight md:text-2xl">3. Downtime, Stoppages & Loss %</h2>
+        <h2 className="text-xl font-bold tracking-tight md:text-2xl">
+          3. Downtime, Stoppages & Loss %
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">Pareto breakdown by cause and area</p>
         {allReasons.length > 12 && (
           <p className="mt-1 text-xs text-muted-foreground">
@@ -85,12 +103,28 @@ export function DowntimeSection({ entries, downtimes }: Props) {
 
       {/* MTD */}
       <div className="mb-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">Month to Date</p>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
+          Month to Date
+        </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <KpiCard label="Total Available Time (min)" value={fmt(totalAvail)} icon={Clock} variant="primary" />
-          <KpiCard label="Total Downtime (min)" value={fmt(totalDown)} icon={AlertOctagon} variant="warning" />
-          <KpiCard label="Loss %" value={`${lossPct.toFixed(1)}%`} icon={Activity}
-            variant={lossPct < 10 ? "success" : lossPct < 25 ? "warning" : "danger"} />
+          <KpiCard
+            label="Total Available Time (min)"
+            value={fmt(totalAvail)}
+            icon={Clock}
+            variant="primary"
+          />
+          <KpiCard
+            label="Total Downtime (min)"
+            value={fmt(totalDown)}
+            icon={AlertOctagon}
+            variant="warning"
+          />
+          <KpiCard
+            label="Loss %"
+            value={`${lossPct.toFixed(1)}%`}
+            icon={Activity}
+            variant={lossPct < 10 ? "success" : lossPct < 25 ? "warning" : "danger"}
+          />
         </div>
       </div>
 
@@ -101,14 +135,24 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <KpiCard label="Available (min)" value={fmt(dayAvail)} />
-          <KpiCard label="Downtime (min)" value={fmt(dayDown)} variant={dayDown > 0 ? "warning" : "default"} />
-          <KpiCard label="Loss %" value={`${dayLossPct.toFixed(1)}%`}
-            variant={dayLossPct < 10 ? "success" : dayLossPct < 25 ? "warning" : "danger"} />
+          <KpiCard
+            label="Downtime (min)"
+            value={fmt(dayDown)}
+            variant={dayDown > 0 ? "warning" : "default"}
+          />
+          <KpiCard
+            label="Loss %"
+            value={`${dayLossPct.toFixed(1)}%`}
+            variant={dayLossPct < 10 ? "success" : dayLossPct < 25 ? "warning" : "danger"}
+          />
         </div>
         {dayDowntimes.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {dayDowntimes.map((d) => (
-              <span key={d.id} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
+              <span
+                key={d.id}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs"
+              >
                 <span className="font-medium">{d.reason_name}</span>
                 <span className="text-muted-foreground">· {d.area}</span>
                 <span className="font-semibold tabular-nums">{fmt(Number(d.minutes))}m</span>
@@ -118,14 +162,22 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         )}
       </div>
 
+      {/* Chart is 220px on mobile, not the 180px used by every other chart in
+          this redesign — this one's rotated (-45°) X-axis labels reserve
+          80px at the bottom (see the isMobile-driven margin/height below),
+          so 180px left almost nothing for the bars themselves. Confirmed
+          with the user before deploying. */}
       {chartData.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
           No downtime reasons logged in this period.
         </div>
       ) : (
-        <div className="h-96 w-full">
+        <div className="h-[220px] w-full md:h-96">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 24, right: 20, left: isMobile ? 12 : 0, bottom: isMobile ? 80 : 70 }}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 24, right: 20, left: isMobile ? 12 : 0, bottom: isMobile ? 80 : 70 }}
+            >
               <defs>
                 {chartData.map((_, i) => {
                   const hue = 260 - i * 8;
@@ -161,12 +213,21 @@ export function DowntimeSection({ entries, downtimes }: Props) {
                 ]}
                 labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
               />
-              <Bar dataKey="minutes" radius={[6, 6, 0, 0]} stroke="rgba(0,0,0,0.15)" strokeWidth={1}>
+              <Bar
+                dataKey="minutes"
+                radius={[6, 6, 0, 0]}
+                stroke="rgba(0,0,0,0.15)"
+                strokeWidth={1}
+              >
                 {chartData.map((_, i) => (
                   <Cell key={i} fill={`url(#dt3d-${i})`} />
                 ))}
-                <LabelList dataKey="pct" position="top" formatter={(v: number) => `${v}%`}
-                  style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }} />
+                <LabelList
+                  dataKey="pct"
+                  position="top"
+                  formatter={(v: number) => `${v}%`}
+                  style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
+                />
               </Bar>
             </BarChart>
           </ResponsiveContainer>

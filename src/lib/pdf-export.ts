@@ -150,6 +150,20 @@ export async function exportDashboardToPdf({
   container.style.width = `${DESKTOP_CAPTURE_WIDTH}px`;
   container.style.maxWidth = "none";
 
+  // Forcing the container's own width above does nothing for `md:` *viewport*
+  // media queries (e.g. the mobile-only hero replacement in src/routes/index.tsx
+  // is `hidden md:block`) — those keep evaluating against the real window,
+  // which can still be a narrow phone even though this container is now
+  // styled at DESKTOP_CAPTURE_WIDTH. Without this, a section that's
+  // legitimately display:none on the exporting device's real viewport would
+  // capture as a blank/zero-height image instead of being skipped or shown.
+  // Force any such section visible for the duration of the capture, then put
+  // back whatever inline display value (if any) it had.
+  const originalDisplays = sectionEls.map((el) => el.style.display);
+  for (const el of sectionEls) {
+    if (getComputedStyle(el).display === "none") el.style.display = "block";
+  }
+
   try {
     const backgroundColor = getComputedStyle(document.body).backgroundColor || "#ffffff";
     const captured: HTMLImageElement[] = [];
@@ -224,5 +238,8 @@ export async function exportDashboardToPdf({
   } finally {
     container.style.width = originalWidth;
     container.style.maxWidth = originalMaxWidth;
+    sectionEls.forEach((el, i) => {
+      el.style.display = originalDisplays[i];
+    });
   }
 }

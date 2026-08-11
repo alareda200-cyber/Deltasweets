@@ -107,7 +107,9 @@ function Dashboard() {
   // Dashboard at all (RequireAuth below already requires "dashboard.view"),
   // unlike the standalone /maintenance page which stays gated behind
   // "maintenance.view".
-  const { data: maintenanceEvents = [] } = useQuery(maintenanceEventsQuery(lineId, null, null, null, null));
+  const { data: maintenanceEvents = [] } = useQuery(
+    maintenanceEventsQuery(lineId, null, null, null, null),
+  );
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
 
@@ -170,53 +172,67 @@ function Dashboard() {
               </TabsList>
             </Tabs>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:flex md:flex-wrap md:items-end">
-              <div>
-                <Label className="text-xs">From</Label>
-                <Input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="h-9 w-full sm:w-[150px]"
-                />
+              {/* From/To as their own compact row on mobile — md:contents
+                  unwraps this div entirely at md+, so it has zero effect on
+                  the md:flex md:flex-wrap layout below: From/To become two
+                  independent flex items there again, exactly as before. */}
+              <div className="grid grid-cols-2 gap-2 sm:col-span-2 md:contents">
+                <div>
+                  <Label className="text-xs">From</Label>
+                  <Input
+                    type="date"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    className="h-9 w-full sm:w-[150px]"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">To</Label>
+                  <Input
+                    type="date"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    className="h-9 w-full sm:w-[150px]"
+                  />
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">To</Label>
-                <Input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="h-9 w-full sm:w-[150px]"
-                />
+              {/* This Month + Export PDF as their own compact row on mobile —
+                  same md:contents unwrap as above. */}
+              <div className="grid grid-cols-2 gap-2 sm:col-span-2 md:contents">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full md:w-auto"
+                  onClick={() => {
+                    const m = monthRange();
+                    setFrom(m.from);
+                    setTo(m.to);
+                  }}
+                >
+                  This Month
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full md:w-auto"
+                  onClick={handleExportPdf}
+                  disabled={exporting}
+                >
+                  {exporting ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="mr-1.5 h-4 w-4" />
+                  )}
+                  {exporting ? exportProgress || "Preparing PDF…" : "Export PDF"}
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full md:w-auto"
-                onClick={() => {
-                  const m = monthRange();
-                  setFrom(m.from);
-                  setTo(m.to);
-                }}
-              >
-                This Month
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full md:w-auto"
-                onClick={handleExportPdf}
-                disabled={exporting}
-              >
-                {exporting ? (
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                ) : (
-                  <FileDown className="mr-1.5 h-4 w-4" />
-                )}
-                {exporting ? exportProgress || "Preparing PDF…" : "Export PDF"}
-              </Button>
+              {/* New Entry: prominent full-width button below the two rows
+                  above on mobile (h-11); md:h-8 restores the exact original
+                  size="sm" height (32px) at md+, where it just flows inline
+                  again like every other control here. */}
               <Button
                 size="sm"
-                className="w-full md:w-auto"
+                className="h-11 w-full sm:col-span-2 md:h-8 md:w-auto"
                 onClick={() => navigate({ to: "/entry" })}
               >
                 <PlusSquare className="mr-1.5 h-4 w-4" /> New Entry
@@ -247,21 +263,41 @@ function HeroHeader({
   to: string;
 }) {
   return (
-    <div
-      data-pdf-section="hero"
-      className="overflow-hidden rounded-3xl gradient-hero p-8 text-white shadow-elevated md:p-10"
-    >
-      <p className="text-xs font-semibold uppercase tracking-[0.3em] opacity-80">
-        Daily Production Scorecard
-      </p>
-      <h1 className="mt-2 text-3xl font-bold tracking-tight md:text-5xl">
-        {line?.name ?? "—"} <span className="opacity-70">Production Line</span>
-      </h1>
-      <p className="mt-2 text-sm opacity-90">Making → Packing · Plant Performance Overview</p>
-      <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur">
-        Reporting period · {from} → {to}
-      </p>
-    </div>
+    <>
+      {/* Mobile-only compact replacement for the full hero below — line name
+          + date range in a single row. Not part of data-pdf-section="hero"
+          (no data-pdf-section attribute of its own), so it never appears in
+          PDF exports regardless of screen size. */}
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-card md:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: line?.color }} />
+          <span className="truncate text-base font-bold tracking-tight">{line?.name ?? "—"}</span>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {from} → {to}
+        </span>
+      </div>
+
+      {/* hidden md:block: the big gradient hero is replaced on mobile by the
+          compact header above. Still always captured by PDF export — see
+          pdf-export.ts's forced-visible handling of any display:none
+          data-pdf-section element. */}
+      <div
+        data-pdf-section="hero"
+        className="hidden overflow-hidden rounded-3xl gradient-hero p-8 text-white shadow-elevated md:block md:p-10"
+      >
+        <p className="text-xs font-semibold uppercase tracking-[0.3em] opacity-80">
+          Daily Production Scorecard
+        </p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight md:text-5xl">
+          {line?.name ?? "—"} <span className="opacity-70">Production Line</span>
+        </h1>
+        <p className="mt-2 text-sm opacity-90">Making → Packing · Plant Performance Overview</p>
+        <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur">
+          Reporting period · {from} → {to}
+        </p>
+      </div>
+    </>
   );
 }
 
@@ -291,7 +327,9 @@ function DashboardBody({
   // referenced by an in-window event still needs its own started_at/
   // resolved_at looked up regardless of whether those fall inside [from,
   // to], see maintenanceEventsAsDowntimes.
-  const { data: lineMaintenanceStoppages = [] } = useSuspenseQuery(maintenanceStoppagesQuery(lineId));
+  const { data: lineMaintenanceStoppages = [] } = useSuspenseQuery(
+    maintenanceStoppagesQuery(lineId),
+  );
   const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersForEntriesQuery(entryIds));
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
@@ -303,7 +341,12 @@ function DashboardBody({
     () =>
       [
         ...entryDowntimes,
-        ...maintenanceEventsAsDowntimes(lineMaintenanceEvents, lineMaintenanceStoppages, departments, downtimeTypes),
+        ...maintenanceEventsAsDowntimes(
+          lineMaintenanceEvents,
+          lineMaintenanceStoppages,
+          departments,
+          downtimeTypes,
+        ),
       ].filter(
         // Historical entry_downtimes rows can point at a downtime_reasons
         // row that's since been deactivated in Settings (e.g. a retired

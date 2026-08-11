@@ -110,7 +110,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               never kicks in because the row just grows to fit every item
               (this is what caused the 549px-wide header on a 390px mobile
               viewport once the Maintenance icon pushed nav past 5 items). */}
-          <nav className="ml-2 flex min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide">
+          {/* hidden md:flex: the top navbar's own links are replaced by the
+              fixed bottom tab bar below md — that one stays put unmodified.
+              Everything else in the header (logo, notifications, avatar
+              menu) is intentionally untouched and still visible on mobile. */}
+          <nav className="ml-2 hidden min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide md:flex">
             {visibleNav.map((n) => {
               const active = n.to === "/" ? pathname === "/" : pathname.startsWith(n.to);
               return (

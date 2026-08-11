@@ -1,4 +1,14 @@
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  LabelList,
+} from "recharts";
 import type { DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt } from "@/lib/date-utils";
@@ -35,20 +45,30 @@ export function ReworkSection({ entries }: Props) {
   return (
     <section className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8">
       <header className="mb-6">
-        <h2 className="text-xl font-bold tracking-tight md:text-2xl">4. Rework Quantities by Area</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Material returned to process for reprocessing</p>
+        <h2 className="text-xl font-bold tracking-tight md:text-2xl">
+          4. Rework Quantities by Area
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Material returned to process for reprocessing
+        </p>
       </header>
 
       {/* MTD */}
       <div className="mb-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">Month to Date</p>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
+          Month to Date
+        </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
           <KpiCard label="Cooking (kg)" value={fmt(cooking)} variant="primary" />
           <KpiCard label="Making (kg)" value={fmt(making)} variant="primary" />
           <KpiCard label="Packing (kg)" value={fmt(packing)} variant="primary" />
           <KpiCard label="Total (kg)" value={fmt(total)} icon={RotateCcw} variant="primary" />
-          <KpiCard label="% of Output" value={`${reworkPct.toFixed(1)}%`} icon={Percent}
-            variant={reworkPct < 5 ? "success" : reworkPct < 15 ? "warning" : "danger"} />
+          <KpiCard
+            label="% of Output"
+            value={`${reworkPct.toFixed(1)}%`}
+            icon={Percent}
+            variant={reworkPct < 5 ? "success" : reworkPct < 15 ? "warning" : "danger"}
+          />
         </div>
       </div>
 
@@ -62,12 +82,15 @@ export function ReworkSection({ entries }: Props) {
           <KpiCard label="Making (kg)" value={fmt(dMaking)} />
           <KpiCard label="Packing (kg)" value={fmt(dPacking)} />
           <KpiCard label="Total (kg)" value={fmt(dTotal)} />
-          <KpiCard label="% of Output" value={`${dPct.toFixed(1)}%`}
-            variant={dPct < 5 ? "success" : dPct < 15 ? "warning" : "danger"} />
+          <KpiCard
+            label="% of Output"
+            value={`${dPct.toFixed(1)}%`}
+            variant={dPct < 5 ? "success" : dPct < 15 ? "warning" : "danger"}
+          />
         </div>
       </div>
 
-      <div className="h-[200px] w-full md:h-72">
+      <div className="h-[180px] w-full md:h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 24, right: 8, bottom: 0, left: -8 }}>
             <defs>
@@ -92,9 +115,15 @@ export function ReworkSection({ entries }: Props) {
               formatter={(v: number) => [`${fmt(v)} kg`, "Rework"]}
             />
             <Bar dataKey="kg" radius={[8, 8, 0, 0]} stroke="rgba(0,0,0,0.15)" strokeWidth={1}>
-              {data.map((_, i) => (<Cell key={i} fill={`url(#rw3d-${i})`} />))}
-              <LabelList dataKey="kg" position="top" formatter={(v: number) => fmt(v)}
-                style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }} />
+              {data.map((_, i) => (
+                <Cell key={i} fill={`url(#rw3d-${i})`} />
+              ))}
+              <LabelList
+                dataKey="kg"
+                position="top"
+                formatter={(v: number) => fmt(v)}
+                style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
+              />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

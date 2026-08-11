@@ -1,8 +1,19 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
 import type { DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt, pct } from "@/lib/date-utils";
 import { TrendingUp, TrendingDown, Target, Percent } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Props {
   title: string;
@@ -13,6 +24,7 @@ interface Props {
 }
 
 export function PerformanceSection({ title, subtitle, entries, field, accentColor }: Props) {
+  const isMobile = useIsMobile();
   const planKey = field === "making" ? "making_plan" : "packing_plan";
   const actualKey = field === "making" ? "making_actual" : "packing_actual";
 
@@ -47,20 +59,34 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
           Month to Date
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-          <KpiCard label="Plan (kg)" value={fmt(monthPlan)} icon={Target} variant="primary" />
-          <KpiCard label="Actual (kg)" value={fmt(monthActual)} icon={TrendingUp} variant="primary" />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiCard
+            label="Plan (kg)"
+            value={fmt(monthPlan)}
+            icon={Target}
+            variant="primary"
+            className="p-3 md:p-5"
+          />
+          <KpiCard
+            label="Actual (kg)"
+            value={fmt(monthActual)}
+            icon={TrendingUp}
+            variant="primary"
+            className="p-3 md:p-5"
+          />
           <KpiCard
             label="Variance"
             value={fmt(monthVar)}
             icon={monthVar >= 0 ? TrendingUp : TrendingDown}
             variant={monthVar >= 0 ? "success" : "danger"}
+            className="p-3 md:p-5"
           />
           <KpiCard
             label="Adherence"
             value={pct(monthAdh)}
             icon={Percent}
             variant={monthAdh >= 0.9 ? "success" : monthAdh >= 0.7 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
       </div>
@@ -70,18 +96,20 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
           {last ? `Last Day · ${last.entry_date}` : "Last Day · (no entries)"}
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-          <KpiCard label="Plan (kg)" value={fmt(dayPlan)} />
-          <KpiCard label="Actual (kg)" value={fmt(dayActual)} />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiCard label="Plan (kg)" value={fmt(dayPlan)} className="p-3 md:p-5" />
+          <KpiCard label="Actual (kg)" value={fmt(dayActual)} className="p-3 md:p-5" />
           <KpiCard
             label="Variance"
             value={fmt(dayVar)}
             variant={dayVar >= 0 ? "success" : "danger"}
+            className="p-3 md:p-5"
           />
           <KpiCard
             label="Adherence"
             value={pct(dayAdh)}
             variant={dayAdh >= 0.9 ? "success" : dayAdh >= 0.7 ? "warning" : "danger"}
+            className="p-3 md:p-5"
           />
         </div>
       </div>
@@ -89,11 +117,14 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
       {/* Chart */}
       <div>
         <p className="mb-3 text-sm font-semibold">Daily Plan vs Actual (kg)</p>
-        <div className="h-[200px] w-full md:h-72">
+        <div className="h-[180px] w-full md:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+              />
               <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
               <Tooltip
                 contentStyle={{
@@ -103,10 +134,35 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                   fontSize: 12,
                 }}
               />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <ReferenceLine y={monthPlan / Math.max(entries.length, 1)} stroke="var(--color-muted-foreground)" strokeDasharray="4 4" />
-              <Line type="monotone" dataKey="Plan" stroke="var(--color-muted-foreground)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Actual" stroke={accentColor} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              {/* Hidden on mobile to save vertical space — Plan/Actual are
+                  still distinguishable via the tooltip and the section's own
+                  labeling. Unlike the CSS-only tweaks elsewhere in this
+                  redesign, this is a JS conditional (not just display:none),
+                  so a PDF export triggered from an actual mobile device won't
+                  have this legend in the captured image (pdf-export.ts's
+                  forced desktop-width capture can restore a CSS-hidden
+                  element, but can't resurrect one React never rendered). */}
+              {!isMobile && <Legend wrapperStyle={{ fontSize: 12 }} />}
+              <ReferenceLine
+                y={monthPlan / Math.max(entries.length, 1)}
+                stroke="var(--color-muted-foreground)"
+                strokeDasharray="4 4"
+              />
+              <Line
+                type="monotone"
+                dataKey="Plan"
+                stroke="var(--color-muted-foreground)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="Actual"
+                stroke={accentColor}
+                strokeWidth={2.5}
+                dot={{ r: 3 }}
+                activeDot={{ r: 5 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
