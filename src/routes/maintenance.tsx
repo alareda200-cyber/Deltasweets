@@ -232,17 +232,26 @@ function MaintenancePage() {
   // definition (see reliability-management brief this was built against).
   // When MTTR itself is unknown (no resolved events yet), nothing can be
   // judged "above average" honestly, so nothing is marked chronic.
+  //
+  // Recomputed from preventive-excluded events rather than reusing
+  // meanDowntimePerFault (which deliberately stays downtime-inclusive, same
+  // as totalMinutes elsewhere) — chronic/sporadic is a failure-recurrence
+  // classification, and a preventive visit recurring on schedule isn't a
+  // failure, same reasoning as repeatFailureRateOf/localMtbfHours/
+  // localMttrHours above.
   const chronicVsSporadic = useMemo(() => {
     const mttrThresholdMinutes =
       reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
-    return meanDowntimePerFault
+    const failureAggregates = aggregateByTitle(events.filter((e) => e.type !== "preventive"));
+    return failureAggregates
+      .map((t) => ({ ...t, meanMinutes: t.totalMinutes / t.count }))
       .map((t) => ({
         ...t,
         chronic:
           t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [meanDowntimePerFault, reliabilitySummary.mttrHours]);
+  }, [events, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
   // Stoppages referenced by the currently-filtered `events` — same
   // "exported (currently filtered) events" semantics reliabilityByLine
