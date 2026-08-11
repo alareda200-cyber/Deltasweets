@@ -768,7 +768,14 @@ export function maintenanceEventsAsDowntimes(
       id: `stoppage-${stoppageId}`,
       entry_id: stoppageId,
       reason_id: null,
-      reason_name: members.length === 1 ? members[0].title : `Stoppage (${members.length} events)`,
+      // Grouped under the majority type's label (e.g. "Mechanical
+      // Maintenance"), not a generic "Stoppage (N events)" string — this is
+      // what MaintenanceDowntimeCard's Top Reasons chart/list groups by
+      // (plain reason_name, unlike DowntimeSection's Pareto chart which
+      // already uses pareto_reason_name below), so a multi-event stoppage
+      // needs to collapse into the same bucket a standalone event of that
+      // type would, not stand out as its own one-off reason.
+      reason_name: meta.paretoReasonName,
       pareto_reason_name: meta.paretoReasonName,
       area: stoppage.production_lines?.name ?? members[0].production_lines?.name ?? "—",
       minutes: stoppageDurationMinutes(stoppage),
