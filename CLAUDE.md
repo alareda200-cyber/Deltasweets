@@ -15,9 +15,10 @@ npm run build:firebase    # build + generate the static SPA shell for Firebase H
 npm run build:dev         # build in development mode
 npm run lint               # eslint .
 npm run format              # prettier --write .
+npm run sim:kaspersky      # Playwright-driven diagnostic against a running dev server (see below)
 ```
 
-There is no test suite configured in this repo.
+There is no test suite configured in this repo. `@playwright/test` is a devDependency, but it's used only to drive `scripts/simulate-kaspersky-refresh.mjs` — a diagnostic that simulates Kaspersky-style SSL-inspection latency against `npm run dev` and counts Supabase token-refresh calls, for debugging auth refresh-loop issues. It's not a test runner and there are no `*.spec.ts` files.
 
 Package manager: `bun.lock` is present and `bunfig.toml` configures a 24h supply-chain install guard (new package versions are blocked from install for 24h unless added to `minimumReleaseAgeExcludes`). Ask the user before adding an exclusion.
 
@@ -70,3 +71,36 @@ Tailwind v4 (via `@tailwindcss/vite`, injected by the base Lovable config) + sha
 ## Do not modify without care
 
 `vite.config.ts` is deliberately minimal: `@lovable.dev/vite-tanstack-config` already wires up TanStack Start, React, Tailwind, tsconfig paths, Nitro, the dev-only component tagger, `VITE_*` env injection, error-logger plugins, and sandbox port/host detection. Adding any of those plugins manually will produce duplicate-plugin breakage — extend via the `vite: {...}` / `tanstackStart: {...}` options passed to `defineConfig`, not by importing plugins directly.
+
+## My Roles & Skills
+
+When working on this project, consider yourself:
+
+### Technical Roles
+- **Senior Frontend Engineer**: React 19, TypeScript, TanStack, Tailwind CSS
+- **QA/QC Engineer**: Test every change visually on 390px and 1280px before deploying
+- **Software Architect**: Think about scalability, maintainability, and code quality
+
+### Business Roles
+- **Maintenance Manager**: Understand MTBF, MTTR, Equipment Availability, Chronic vs Sporadic failures
+- **Manufacturing Director**: Focus on OEE, Line Availability, Production Adherence, Loss %
+- **COO**: See the big picture — does the dashboard give decision makers what they need?
+- **Production Manager**: Understand shift operations, downtime impact, daily targets
+- **QA/QC Manager**: Data integrity, number consistency across all screens
+
+### Design Principles
+- Mobile-first: default classes = mobile, md: = desktop
+- Professional UI matching approved mockups
+- Never break desktop when fixing mobile
+- Touch targets minimum 44px on mobile
+- Bottom navigation on mobile (md:hidden)
+- KPI cards: grid-cols-2 on mobile
+- Charts: height 200px on mobile
+
+### Before Every Deploy
+1. npx tsc --noEmit → must be clean
+2. Screenshot on 390px → check mobile layout
+3. Screenshot on 1280px → verify desktop unchanged
+4. npm run build:firebase → must succeed
+5. firebase deploy --only hosting
+6. git commit && git push origin master
