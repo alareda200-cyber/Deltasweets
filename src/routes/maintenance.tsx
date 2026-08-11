@@ -209,14 +209,27 @@ function MaintenancePage() {
   }, [events]);
 
   const titleAggregates = useMemo(() => aggregateByTitle(events), [events]);
+  // Preventive-excluded counterpart of titleAggregates — feeds every
+  // "how often does this recur" failure-analysis view below (Top Losses by
+  // Frequency, Chronic vs Sporadic), same reasoning as
+  // repeatFailureRateOf/localMtbfHours/localMttrHours: a preventive visit
+  // recurring on schedule isn't a failure, and letting it in would let
+  // scheduled PM titles out-rank genuine recurring failures by raw count.
+  // titleAggregates itself stays preventive-inclusive for the downtime-total
+  // views (Top Losses by Downtime, Mean Downtime per Fault) — preventive
+  // still stops the line, so it's still real downtime there.
+  const failureTitleAggregates = useMemo(
+    () => aggregateByTitle(events.filter((e) => e.type !== "preventive")),
+    [events],
+  );
 
   const topLossesByDowntime = useMemo(
     () => [...titleAggregates].sort((a, b) => b.totalMinutes - a.totalMinutes).slice(0, 8),
     [titleAggregates],
   );
   const topLossesByFrequency = useMemo(
-    () => [...titleAggregates].sort((a, b) => b.count - a.count).slice(0, 8),
-    [titleAggregates],
+    () => [...failureTitleAggregates].sort((a, b) => b.count - a.count).slice(0, 8),
+    [failureTitleAggregates],
   );
   const meanDowntimePerFault = useMemo(
     () =>
@@ -232,18 +245,10 @@ function MaintenancePage() {
   // definition (see reliability-management brief this was built against).
   // When MTTR itself is unknown (no resolved events yet), nothing can be
   // judged "above average" honestly, so nothing is marked chronic.
-  //
-  // Recomputed from preventive-excluded events rather than reusing
-  // meanDowntimePerFault (which deliberately stays downtime-inclusive, same
-  // as totalMinutes elsewhere) — chronic/sporadic is a failure-recurrence
-  // classification, and a preventive visit recurring on schedule isn't a
-  // failure, same reasoning as repeatFailureRateOf/localMtbfHours/
-  // localMttrHours above.
   const chronicVsSporadic = useMemo(() => {
     const mttrThresholdMinutes =
       reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
-    const failureAggregates = aggregateByTitle(events.filter((e) => e.type !== "preventive"));
-    return failureAggregates
+    return failureTitleAggregates
       .map((t) => ({ ...t, meanMinutes: t.totalMinutes / t.count }))
       .map((t) => ({
         ...t,
@@ -251,7 +256,7 @@ function MaintenancePage() {
           t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [events, reliabilitySummary.mttrHours]);
+  }, [failureTitleAggregates, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
   // Stoppages referenced by the currently-filtered `events` — same
   // "exported (currently filtered) events" semantics reliabilityByLine
