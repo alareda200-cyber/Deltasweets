@@ -770,18 +770,24 @@ function totalDowntimeMinutesOf(events: MaintenanceEvent[]): number {
 }
 
 // Repeat = any event whose title (trimmed, case-insensitive) occurs more
-// than once in the current filtered set. 0 events -> 0%, not NaN.
+// than once in the current filtered set. 0 events -> 0%, not NaN. Preventive
+// events are excluded first — this measures unplanned failure recurrence,
+// same reasoning as localMtbfHours/localMttrHours below: a monthly
+// preventive visit recurring by schedule isn't a "repeat failure", and
+// counting it would both inflate the rate and dilute the denominator with
+// non-failure events.
 function repeatFailureRateOf(events: MaintenanceEvent[]): number {
-  if (events.length === 0) return 0;
+  const failureEvents = events.filter((e) => e.type !== "preventive");
+  if (failureEvents.length === 0) return 0;
   const counts = new Map<string, number>();
-  for (const e of events) {
+  for (const e of failureEvents) {
     const key = e.title.trim().toLowerCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const repeatCount = events.filter(
+  const repeatCount = failureEvents.filter(
     (e) => (counts.get(e.title.trim().toLowerCase()) ?? 0) > 1,
   ).length;
-  return (repeatCount / events.length) * 100;
+  return (repeatCount / failureEvents.length) * 100;
 }
 
 // Local (filter-scoped) MTBF: average gap in hours between started_at of
