@@ -710,6 +710,12 @@ export function maintenanceEventsAsDowntimes(
   // the no-stoppage path below and the defensive fallback for a stoppage_id
   // whose parent row wasn't found in `stoppages` (stale cache; the FK
   // guarantees it exists in the DB).
+  function eventDurationMinutes(e: MaintenanceEvent): number {
+    const startedMs = new Date(e.started_at).getTime();
+    const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+    return Math.max(0, (endMs - startedMs) / 60_000);
+  }
+
   function rowFromEvent(e: MaintenanceEvent): EntryDowntime {
     const startedMs = new Date(e.started_at).getTime();
     const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
@@ -764,18 +770,19 @@ export function maintenanceEventsAsDowntimes(
     }
     const majorityType = majorityMaintenanceType(members);
     const meta = typeMeta(majorityType);
+    // Longest-duration member event "represents" the stoppage for display
+    // purposes — its title is more informative than the generic type label
+    // (e.g. "Conveyor belt jam" beats "Mechanical Maintenance"). Ties keep
+    // the first member encountered (reduce's `>` doesn't replace on equal
+    // duration). This is what MaintenanceDowntimeCard's Top Reasons
+    // chart/list groups by (plain reason_name); the overall Pareto chart
+    // (DowntimeSection) still groups by pareto_reason_name below, unaffected.
+    const longestMember = members.reduce((longest, e) => (eventDurationMinutes(e) > eventDurationMinutes(longest) ? e : longest), members[0]);
     stoppageRows.push({
       id: `stoppage-${stoppageId}`,
       entry_id: stoppageId,
       reason_id: null,
-      // Grouped under the majority type's label (e.g. "Mechanical
-      // Maintenance"), not a generic "Stoppage (N events)" string — this is
-      // what MaintenanceDowntimeCard's Top Reasons chart/list groups by
-      // (plain reason_name, unlike DowntimeSection's Pareto chart which
-      // already uses pareto_reason_name below), so a multi-event stoppage
-      // needs to collapse into the same bucket a standalone event of that
-      // type would, not stand out as its own one-off reason.
-      reason_name: meta.paretoReasonName,
+      reason_name: longestMember.title,
       pareto_reason_name: meta.paretoReasonName,
       area: stoppage.production_lines?.name ?? members[0].production_lines?.name ?? "—",
       minutes: stoppageDurationMinutes(stoppage),
