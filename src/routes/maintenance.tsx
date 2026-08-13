@@ -63,6 +63,10 @@ import {
   Trash2,
   Clock,
   ChevronRight,
+  List,
+  TrendingDown,
+  ChartScatter,
+  type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -240,6 +244,366 @@ function MiniKpiCard({
   );
 }
 
+interface MaintenanceSidebarItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  count?: number;
+}
+
+interface MaintenanceSidebarGroup {
+  label: string;
+  items: MaintenanceSidebarItem[];
+}
+
+// Desktop-only (md:) sidebar nav — same "one section active at a time"
+// pattern as SettingsSidebar in settings.tsx (kept local/unexported here
+// rather than shared, since the two pages' item shapes and icon sizes
+// differ). Purely navigational — doesn't gate or duplicate any query.
+function MaintenanceSidebar({
+  groups,
+  active,
+  onSelect,
+}: {
+  groups: MaintenanceSidebarGroup[];
+  active: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <nav className="sticky top-20 self-start">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <div className="mb-2 mt-4 text-xs uppercase tracking-wide text-muted-foreground">
+            {group.label}
+          </div>
+          <div className="space-y-0.5">
+            {group.items.map((item) => {
+              const isActive = active === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item.id)}
+                  className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm ${
+                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                  }`}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.count !== undefined && (
+                    <span className="shrink-0 text-xs tabular-nums opacity-70">{item.count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+// The 7 headline KPI cards — extracted so both the mobile (always-visible,
+// current position) and desktop (inside the sidebar's Events section)
+// instances call the same JSX instead of duplicating it. `className`
+// controls the grid itself (columns/gap/visibility), everything else is
+// identical between the two call sites.
+function MaintenanceKpiGrid({
+  openMechanical,
+  mtbfMechanicalHours,
+  mttrMechanicalHours,
+  openElectrical,
+  mtbfElectricalHours,
+  mttrElectricalHours,
+  openPreventive,
+  className,
+}: {
+  openMechanical: number;
+  mtbfMechanicalHours: number | null;
+  mttrMechanicalHours: number | null;
+  openElectrical: number;
+  mtbfElectricalHours: number | null;
+  mttrElectricalHours: number | null;
+  openPreventive: number;
+  className: string;
+}) {
+  return (
+    <div className={className}>
+      <KpiCard
+        label="Open Mechanical"
+        value={String(openMechanical)}
+        icon={Wrench}
+        variant={openMechanical > 0 ? "warning" : "success"}
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="MTBF (Mechanical)"
+        value={formatHours(mtbfMechanicalHours)}
+        sub="Avg. time between failures"
+        icon={Activity}
+        variant="primary"
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="MTTR (Mechanical)"
+        value={formatHours(mttrMechanicalHours)}
+        sub="Avg. time to repair"
+        icon={Timer}
+        variant="primary"
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="Open Electrical"
+        value={String(openElectrical)}
+        icon={Zap}
+        variant={openElectrical > 0 ? "warning" : "success"}
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="MTBF (Electrical)"
+        value={formatHours(mtbfElectricalHours)}
+        sub="Avg. time between failures"
+        icon={Activity}
+        variant="primary"
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="MTTR (Electrical)"
+        value={formatHours(mttrElectricalHours)}
+        sub="Avg. time to repair"
+        icon={Timer}
+        variant="primary"
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="Open Preventive"
+        value={String(openPreventive)}
+        sub="Scheduled maintenance, not counted in MTBF"
+        icon={CalendarCheck}
+        variant={openPreventive > 0 ? "warning" : "success"}
+        className="p-3 md:p-5"
+      />
+    </div>
+  );
+}
+
+// Filters + events list — extracted so the mobile Tabs instance and the
+// desktop sidebar's Events section call the exact same component instead of
+// duplicating this Card. The internal mobile-card-list / desktop-table
+// split (unchanged from before) is redundant at each call site now (mobile
+// callers only ever render at <768px, desktop callers only at ≥768px), but
+// left in place rather than simplified — it's still correct, and touching
+// it risks the actual table/card rendering logic, not just layout.
+function EventsListCard({
+  lines,
+  lineId,
+  setLineId,
+  type,
+  setType,
+  status,
+  setStatus,
+  from,
+  setFrom,
+  to,
+  setTo,
+  isLoading,
+  events,
+  onSelectEvent,
+}: {
+  lines: { id: string; name: string }[];
+  lineId: string;
+  setLineId: (v: string) => void;
+  type: MaintenanceType | "";
+  setType: (v: MaintenanceType | "") => void;
+  status: MaintenanceStatus | "";
+  setStatus: (v: MaintenanceStatus | "") => void;
+  from: string;
+  setFrom: (v: string) => void;
+  to: string;
+  setTo: (v: string) => void;
+  isLoading: boolean;
+  events: MaintenanceEvent[];
+  onSelectEvent: (e: MaintenanceEvent) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <Select value={lineId || "all"} onValueChange={(v) => setLineId(v === "all" ? "" : v)}>
+            <SelectTrigger>
+              <SelectValue placeholder="All Lines" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Lines</SelectItem>
+              {lines.map((l) => (
+                <SelectItem key={l.id} value={l.id}>
+                  {l.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={type || "all"}
+            onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="mechanical">Mechanical</SelectItem>
+              <SelectItem value="electrical">Electrical</SelectItem>
+              <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={status || "all"}
+            onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="resolved">Resolved</SelectItem>
+            </SelectContent>
+          </Select>
+          <div>
+            <Label className="text-xs">From</Label>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9" />
+          </div>
+          <div>
+            <Label className="text-xs">To</Label>
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* Mobile: one card per event instead of the table below (which is
+            desktop-only, hidden md:block, fully unchanged) — same
+            events/isLoading data and the same durationMs/firstNote
+            derivations as the table rows use. */}
+        <div className="space-y-2 md:hidden">
+          {isLoading && (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {!isLoading && events.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              No maintenance events match this filter.
+            </p>
+          )}
+          {events.map((e) => (
+            <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
+          ))}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Event</TableHead>
+                <TableHead className="hidden md:table-cell">Line</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="hidden sm:table-cell">Severity</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="hidden lg:table-cell">Started</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead className="hidden md:table-cell">Technician</TableHead>
+                <TableHead className="hidden md:table-cell">Notes</TableHead>
+                <TableHead className="hidden lg:table-cell">Closed by</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow>
+                  <TableCell colSpan={10} className="py-10 text-center">
+                    <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isLoading && events.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                    No maintenance events match this filter.
+                  </TableCell>
+                </TableRow>
+              )}
+              {events.map((e) => {
+                const durationMs =
+                  (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
+                  new Date(e.started_at).getTime();
+                const firstNote = e.maintenance_notes[0]?.note;
+                return (
+                  <TableRow
+                    key={e.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => onSelectEvent(e)}
+                  >
+                    <TableCell>
+                      <p className="text-sm font-medium leading-tight">{e.title}</p>
+                      {e.description && (
+                        <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
+                          {e.description}
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                      {e.production_lines?.name ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                        {e.stoppage_id && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Part of Stoppage
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {e.severity_label ? (
+                        <Badge variant={severityBadgeVariant(e.severity_label)}>
+                          {e.severity_label}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                      {new Date(e.started_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm tabular-nums">
+                      {formatDuration(durationMs)}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                      {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                      {firstNote ? truncateNote(firstNote) : "—"}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                      {e.status === "resolved"
+                        ? e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—"
+                        : "—"}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function MaintenancePage() {
   const { data: lines } = useSuspenseQuery(linesQuery);
   const { role, user, profile } = useAuth();
@@ -248,6 +612,7 @@ function MaintenancePage() {
   const qc = useQueryClient();
 
   const [lineId, setLineId] = useState("");
+  const [activeSection, setActiveSection] = useState("events");
   const [type, setType] = useState<MaintenanceType | "">("");
   const [status, setStatus] = useState<MaintenanceStatus | "">("");
   const [from, setFrom] = useState("");
@@ -683,62 +1048,19 @@ function MaintenancePage() {
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3">
-        <KpiCard
-          label="Open Mechanical"
-          value={String(openMechanical)}
-          icon={Wrench}
-          variant={openMechanical > 0 ? "warning" : "success"}
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="MTBF (Mechanical)"
-          value={formatHours(mtbfMechanicalHours)}
-          sub="Avg. time between failures"
-          icon={Activity}
-          variant="primary"
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="MTTR (Mechanical)"
-          value={formatHours(mttrMechanicalHours)}
-          sub="Avg. time to repair"
-          icon={Timer}
-          variant="primary"
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="Open Electrical"
-          value={String(openElectrical)}
-          icon={Zap}
-          variant={openElectrical > 0 ? "warning" : "success"}
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="MTBF (Electrical)"
-          value={formatHours(mtbfElectricalHours)}
-          sub="Avg. time between failures"
-          icon={Activity}
-          variant="primary"
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="MTTR (Electrical)"
-          value={formatHours(mttrElectricalHours)}
-          sub="Avg. time to repair"
-          icon={Timer}
-          variant="primary"
-          className="p-3 md:p-5"
-        />
-        <KpiCard
-          label="Open Preventive"
-          value={String(openPreventive)}
-          sub="Scheduled maintenance, not counted in MTBF"
-          icon={CalendarCheck}
-          variant={openPreventive > 0 ? "warning" : "success"}
-          className="p-3 md:p-5"
-        />
-      </div>
+      {/* Mobile: stays in this always-visible position exactly as before.
+          Desktop: this exact grid (same MaintenanceKpiGrid) moves inside the
+          sidebar's Events section instead — see renderActiveSection below. */}
+      <MaintenanceKpiGrid
+        openMechanical={openMechanical}
+        mtbfMechanicalHours={mtbfMechanicalHours}
+        mttrMechanicalHours={mttrMechanicalHours}
+        openElectrical={openElectrical}
+        mtbfElectricalHours={mtbfElectricalHours}
+        mttrElectricalHours={mttrElectricalHours}
+        openPreventive={openPreventive}
+        className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 md:hidden"
+      />
 
       {/* Mobile-only, always visible — never collapses, even while the
           section below is closed, so open faults stay in view. */}
@@ -753,6 +1075,10 @@ function MaintenancePage() {
         </div>
       )}
 
+      {/* Mobile only below this point through MetricsTable — desktop (md:)
+          uses the sidebar layout instead (renderActiveSection below), which
+          covers the exact same content via the same extracted components. */}
+      <div className="md:hidden">
       <MobileCollapsibleSection title="Maintenance events" count={events.length}>
       <Tabs defaultValue="events">
         <TabsList>
@@ -771,203 +1097,22 @@ function MaintenancePage() {
         </TabsList>
 
         <TabsContent value="events">
-          <Card>
-            <CardHeader>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                <Select
-                  value={lineId || "all"}
-                  onValueChange={(v) => setLineId(v === "all" ? "" : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Lines" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Lines</SelectItem>
-                    {lines.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>
-                        {l.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={type || "all"}
-                  onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="mechanical">Mechanical</SelectItem>
-                    <SelectItem value="electrical">Electrical</SelectItem>
-                    <SelectItem value="preventive">Preventive Maintenance</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={status || "all"}
-                  onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Statuses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="resolved">Resolved</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div>
-                  <Label className="text-xs">From</Label>
-                  <Input
-                    type="date"
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">To</Label>
-                  <Input
-                    type="date"
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {/* Mobile: one card per event instead of the table below (which
-                  is desktop-only, hidden md:block, fully unchanged) — same
-                  events/isLoading data and the same durationMs/firstNote
-                  derivations as the table rows use. */}
-              <div className="space-y-2 md:hidden">
-                {isLoading && (
-                  <div className="flex justify-center py-10">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                  </div>
-                )}
-                {!isLoading && events.length === 0 && (
-                  <p className="py-10 text-center text-sm text-muted-foreground">
-                    No maintenance events match this filter.
-                  </p>
-                )}
-                {events.map((e) => (
-                  <MobileEventCard key={e.id} event={e} onClick={() => setSelectedEvent(e)} />
-                ))}
-              </div>
-
-              <div className="hidden md:block overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Event</TableHead>
-                      <TableHead className="hidden md:table-cell">Line</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="hidden sm:table-cell">Severity</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="hidden lg:table-cell">Started</TableHead>
-                      <TableHead>Duration</TableHead>
-                      <TableHead className="hidden md:table-cell">Technician</TableHead>
-                      <TableHead className="hidden md:table-cell">Notes</TableHead>
-                      <TableHead className="hidden lg:table-cell">Closed by</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {isLoading && (
-                      <TableRow>
-                        <TableCell colSpan={10} className="py-10 text-center">
-                          <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {!isLoading && events.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={10}
-                          className="py-10 text-center text-sm text-muted-foreground"
-                        >
-                          No maintenance events match this filter.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {events.map((e) => {
-                      const durationMs =
-                        (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
-                        new Date(e.started_at).getTime();
-                      const firstNote = e.maintenance_notes[0]?.note;
-                      return (
-                        <TableRow
-                          key={e.id}
-                          className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => setSelectedEvent(e)}
-                        >
-                          <TableCell>
-                            <p className="text-sm font-medium leading-tight">{e.title}</p>
-                            {e.description && (
-                              <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
-                                {e.description}
-                              </p>
-                            )}
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                            {e.production_lines?.name ?? "—"}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap items-center gap-1">
-                              <Badge variant={typeBadgeVariant(e.type)}>
-                                {TYPE_LABELS[e.type]}
-                              </Badge>
-                              {e.stoppage_id && (
-                                <Badge variant="outline" className="text-[10px]">
-                                  Part of Stoppage
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell">
-                            {e.severity_label ? (
-                              <Badge variant={severityBadgeVariant(e.severity_label)}>
-                                {e.severity_label}
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={statusBadgeVariant(e.status)}>
-                              {STATUS_LABELS[e.status]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                            {new Date(e.started_at).toLocaleString()}
-                          </TableCell>
-                          <TableCell className="text-sm tabular-nums">
-                            {formatDuration(durationMs)}
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                            {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                            {firstNote ? truncateNote(firstNote) : "—"}
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                            {e.status === "resolved"
-                              ? e.resolved_by_profile?.display_name ||
-                                e.resolved_by_profile?.email ||
-                                "—"
-                              : "—"}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
+          <EventsListCard
+            lines={lines}
+            lineId={lineId}
+            setLineId={setLineId}
+            type={type}
+            setType={setType}
+            status={status}
+            setStatus={setStatus}
+            from={from}
+            setFrom={setFrom}
+            to={to}
+            setTo={setTo}
+            isLoading={isLoading}
+            events={events}
+            onSelectEvent={setSelectedEvent}
+          />
         </TabsContent>
 
         <TabsContent value="stoppages">
@@ -997,6 +1142,96 @@ function MaintenancePage() {
       </div>
 
       <MetricsTable metrics={metrics} />
+      </div>
+
+      {/* Desktop (md: and up): sidebar layout — Overview (Events, Stoppages)
+          and Analytics (Reliability, Top losses, MTBF / MTTR) groups, one
+          section active at a time via the same extracted
+          components/data/props the mobile view above uses. */}
+      <div className="mt-6 hidden gap-6 md:grid md:grid-cols-[200px_1fr]">
+        <MaintenanceSidebar
+          groups={[
+            {
+              label: "Overview",
+              items: [
+                { id: "events", label: "Events", icon: List, count: events.length },
+                { id: "stoppages", label: "Stoppages", icon: Layers, count: allStoppageRows.length },
+              ],
+            },
+            {
+              label: "Analytics",
+              items: [
+                { id: "reliability", label: "Reliability", icon: ChartScatter },
+                { id: "topLosses", label: "Top losses", icon: TrendingDown },
+                { id: "mtbf", label: "MTBF / MTTR", icon: Activity },
+              ],
+            },
+          ]}
+          active={activeSection}
+          onSelect={setActiveSection}
+        />
+        <div>
+          {activeSection === "events" && (
+            <div className="space-y-6">
+              <MaintenanceKpiGrid
+                openMechanical={openMechanical}
+                mtbfMechanicalHours={mtbfMechanicalHours}
+                mttrMechanicalHours={mttrMechanicalHours}
+                openElectrical={openElectrical}
+                mtbfElectricalHours={mtbfElectricalHours}
+                mttrElectricalHours={mttrElectricalHours}
+                openPreventive={openPreventive}
+                className="grid grid-cols-3 gap-4"
+              />
+              <EventsListCard
+                lines={lines}
+                lineId={lineId}
+                setLineId={setLineId}
+                type={type}
+                setType={setType}
+                status={status}
+                setStatus={setStatus}
+                from={from}
+                setFrom={setFrom}
+                to={to}
+                setTo={setTo}
+                isLoading={isLoading}
+                events={events}
+                onSelectEvent={setSelectedEvent}
+              />
+            </div>
+          )}
+          {activeSection === "stoppages" && (
+            <StoppagesSection
+              rows={allStoppageRows}
+              canDelete={canDelete}
+              onView={setViewStoppageId}
+              onDelete={handleDeleteStoppage}
+            />
+          )}
+          {activeSection === "reliability" && (
+            <ReliabilityHeadlineCards
+              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+              availabilityPct={reliabilitySummary.availabilityPct}
+            />
+          )}
+          {activeSection === "topLosses" && (
+            <TopLossesGrid
+              topLossesByDowntime={topLossesByDowntime}
+              topLossesByFrequency={topLossesByFrequency}
+              meanDowntimePerFault={meanDowntimePerFault}
+              chronicVsSporadic={chronicVsSporadic}
+            />
+          )}
+          {activeSection === "mtbf" && (
+            <div className="space-y-6">
+              <MetricsTable metrics={metrics} />
+              <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
+            </div>
+          )}
+        </div>
+      </div>
 
       <CreateEventDialog
         open={createOpen}
@@ -1273,39 +1508,18 @@ function EmptyMiniState() {
   );
 }
 
-function ReliabilityAnalyticsSection({
+// The 3 headline KPI cards — split out of the old monolithic
+// ReliabilityAnalyticsSection so the desktop sidebar's "Reliability" section
+// can render just these, independent of Top Losses / Reliability by Line.
+function ReliabilityHeadlineCards({
   totalDowntimeMinutes,
   repeatFailureRatePct,
   availabilityPct,
-  topLossesByDowntime,
-  topLossesByFrequency,
-  meanDowntimePerFault,
-  chronicVsSporadic,
-  reliabilityByLine,
 }: {
   totalDowntimeMinutes: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
-  topLossesByDowntime: TitleAggregate[];
-  topLossesByFrequency: TitleAggregate[];
-  meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
-  reliabilityByLine: LineReliability[];
 }) {
-  const isMobile = useIsMobile();
-  const nameMaxLen = isMobile ? 10 : 20;
-
-  const downtimeChartData = topLossesByDowntime.map((t) => ({
-    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
-    fullName: t.title,
-    minutes: Math.round(t.totalMinutes),
-  }));
-  const frequencyChartData = topLossesByFrequency.map((t) => ({
-    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
-    fullName: t.title,
-    count: t.count,
-  }));
-
   // Shared between the mobile MiniKpiCard row and the desktop KpiCard row
   // below, so both always agree on color/threshold.
   const repeatVariant =
@@ -1321,14 +1535,7 @@ function ReliabilityAnalyticsSection({
   const availabilityValue = availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`;
 
   return (
-    <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
-      <div>
-        <h2 className="text-lg font-semibold">Reliability Analytics</h2>
-        <p className="text-sm text-muted-foreground">
-          Computed from the events matching the filters above.
-        </p>
-      </div>
-
+    <>
       {/* Mobile: compact 3-across cards — no icon (no room), and the
           downtime value is decimal hours ("39.4h") instead of
           formatDuration's "39h 21m", which was clipping/wrapping at this
@@ -1378,7 +1585,42 @@ function ReliabilityAnalyticsSection({
           variant={availabilityVariant}
         />
       </div>
+    </>
+  );
+}
 
+// The 2x2 loss-analysis grid — split out so the desktop sidebar's "Top
+// losses" section can render just this, independent of the headline cards
+// and the Reliability by Line table. Mean Downtime per Fault / Chronic vs
+// Sporadic aren't named in the sidebar spec's 5 destinations, so they stay
+// here alongside the 2 charts rather than being split further — this whole
+// 2x2 grid was already one visual unit.
+function TopLossesGrid({
+  topLossesByDowntime,
+  topLossesByFrequency,
+  meanDowntimePerFault,
+  chronicVsSporadic,
+}: {
+  topLossesByDowntime: TitleAggregate[];
+  topLossesByFrequency: TitleAggregate[];
+  meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
+  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
+}) {
+  const isMobile = useIsMobile();
+  const nameMaxLen = isMobile ? 10 : 20;
+
+  const downtimeChartData = topLossesByDowntime.map((t) => ({
+    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
+    fullName: t.title,
+    minutes: Math.round(t.totalMinutes),
+  }));
+  const frequencyChartData = topLossesByFrequency.map((t) => ({
+    name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
+    fullName: t.title,
+    count: t.count,
+  }));
+
+  return (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -1534,7 +1776,13 @@ function ReliabilityAnalyticsSection({
           </CardContent>
         </Card>
       </div>
+  );
+}
 
+// Split out so the desktop sidebar's "MTBF / MTTR" section can render this
+// alongside MetricsTable, independent of the headline cards / Top Losses.
+function ReliabilityByLineTable({ reliabilityByLine }: { reliabilityByLine: LineReliability[] }) {
+  return (
       <Card>
         <CardHeader>
           <h3 className="text-sm font-semibold">Reliability by Line</h3>
@@ -1583,6 +1831,52 @@ function ReliabilityAnalyticsSection({
           </div>
         </CardContent>
       </Card>
+  );
+}
+
+// Thin composer used only by the mobile collapsible section — same 8 props
+// as the old monolithic component, so that call site needed zero changes.
+// Desktop calls the 3 pieces above individually instead, one per sidebar
+// section.
+function ReliabilityAnalyticsSection({
+  totalDowntimeMinutes,
+  repeatFailureRatePct,
+  availabilityPct,
+  topLossesByDowntime,
+  topLossesByFrequency,
+  meanDowntimePerFault,
+  chronicVsSporadic,
+  reliabilityByLine,
+}: {
+  totalDowntimeMinutes: number;
+  repeatFailureRatePct: number;
+  availabilityPct: number | null;
+  topLossesByDowntime: TitleAggregate[];
+  topLossesByFrequency: TitleAggregate[];
+  meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
+  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
+  reliabilityByLine: LineReliability[];
+}) {
+  return (
+    <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
+      <div>
+        <h2 className="text-lg font-semibold">Reliability Analytics</h2>
+        <p className="text-sm text-muted-foreground">
+          Computed from the events matching the filters above.
+        </p>
+      </div>
+      <ReliabilityHeadlineCards
+        totalDowntimeMinutes={totalDowntimeMinutes}
+        repeatFailureRatePct={repeatFailureRatePct}
+        availabilityPct={availabilityPct}
+      />
+      <TopLossesGrid
+        topLossesByDowntime={topLossesByDowntime}
+        topLossesByFrequency={topLossesByFrequency}
+        meanDowntimePerFault={meanDowntimePerFault}
+        chronicVsSporadic={chronicVsSporadic}
+      />
+      <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
     </div>
   );
 }
