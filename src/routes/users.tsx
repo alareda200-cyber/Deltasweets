@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { TableSkeletonRows } from "@/components/TableSkeletonRows";
@@ -22,7 +21,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreVertical, Plus, Eye, Pencil, KeyRound, Ban, CheckCircle2, Trash2, Inbox, ServerCrash } from "lucide-react";
+import { MoreVertical, Plus, Eye, Pencil, KeyRound, Ban, CheckCircle2, Trash2, Inbox, Info } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
@@ -75,6 +74,14 @@ function initials(row: UserRow) {
 }
 function fullName(row: UserRow) {
   return `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.display_name || "—";
+}
+function roleColorClass(role: string) {
+  switch (role) {
+    case "admin": return "text-accent";
+    case "maintenance": return "text-warning";
+    case "production": return "text-success";
+    default: return "text-muted-foreground"; // viewer, quality
+  }
 }
 
 function UsersPage() {
@@ -148,7 +155,7 @@ function UsersPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Users</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Admin only. Create, edit, and manage access for every user.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{users.length} user{users.length === 1 ? "" : "s"} · admin only</p>
         </div>
         <Button onClick={() => setCreateOpen(true)} disabled={!SERVER_ACTIONS_AVAILABLE}>
           <Plus className="mr-1.5 h-4 w-4" />Create User
@@ -156,16 +163,9 @@ function UsersPage() {
       </div>
 
       {!SERVER_ACTIONS_AVAILABLE && (
-        <div className="mb-6 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <ServerCrash className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-medium">Create, Reset Password, Deactivate/Activate, and Delete are unavailable</p>
-            <p className="mt-0.5 text-amber-800">
-              This deployment is Firebase Hosting only (a static site, no server). These actions need a real backend
-              to run safely. Manage them directly from the Supabase Dashboard (Authentication tab) instead. Editing a
-              user's name, phone, department, or role below still works normally.
-            </p>
-          </div>
+        <div className="mb-6 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          <span>Create / reset / delete need a backend — manage in Supabase Dashboard. Editing below works.</span>
         </div>
       )}
 
@@ -218,19 +218,17 @@ function UsersPage() {
               <TableHeader className="sticky top-16 z-10 bg-card">
                 <TableRow>
                   <TableHead className="max-md:min-w-[160px]">User</TableHead>
-                  <TableHead className="hidden md:table-cell">Username</TableHead>
                   <TableHead className="hidden md:table-cell">Department</TableHead>
                   <TableHead className="max-md:min-w-[110px]">Role</TableHead>
-                  <TableHead className="max-md:min-w-[90px]">Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Last Login</TableHead>
+                  <TableHead className="max-md:min-w-[130px]">Status</TableHead>
                   <TableHead className="hidden xl:table-cell">Created</TableHead>
                   <TableHead className="max-md:min-w-[60px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && <TableSkeletonRows columns={8} />}
+                {isLoading && <TableSkeletonRows columns={6} />}
                 {!isLoading && pageRows.length === 0 && (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground"><Inbox className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2">No users match this filter.</p></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground"><Inbox className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2">No users match this filter.</p></TableCell></TableRow>
                 )}
                 {pageRows.map((u) => (
                   <TableRow key={u.id} className="hover:bg-muted/50">
@@ -243,13 +241,19 @@ function UsersPage() {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{u.username || "—"}</TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{u.departments?.name || "—"}</TableCell>
-                    <TableCell><Badge variant="secondary" className="whitespace-nowrap">{ROLE_LABELS[u.role as Role] ?? u.role}</Badge></TableCell>
                     <TableCell>
-                      <Badge variant={u.status === "active" ? "default" : "destructive"}>{u.status === "active" ? "Active" : "Inactive"}</Badge>
+                      <span className={`text-sm font-medium ${roleColorClass(u.role)}`}>{ROLE_LABELS[u.role as Role] ?? u.role}</span>
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{u.last_login ? new Date(u.last_login).toLocaleString() : "Never"}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${u.status === "active" ? "bg-success" : "bg-muted-foreground"}`} />
+                        <span className="text-sm">{u.status === "active" ? "Active" : "Inactive"}</span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {u.last_login ? `Last seen ${new Date(u.last_login).toLocaleDateString()}` : "Never signed in"}
+                      </p>
+                    </TableCell>
                     <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
