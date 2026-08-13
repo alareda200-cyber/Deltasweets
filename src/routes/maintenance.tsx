@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
+import { TableSkeletonRows } from "@/components/TableSkeletonRows";
 import {
   Wrench,
   Zap,
@@ -66,6 +67,7 @@ import {
   List,
   TrendingDown,
   ChartScatter,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -334,13 +336,13 @@ function MaintenanceKpiGrid({
         label="Open Mechanical"
         value={String(openMechanical)}
         icon={Wrench}
-        variant={openMechanical > 0 ? "warning" : "success"}
+        variant={openMechanical > 0 ? "danger" : "success"}
         className="p-3 md:p-5"
       />
       <KpiCard
         label="MTBF (Mechanical)"
         value={formatHours(mtbfMechanicalHours)}
-        sub="Avg. time between failures"
+        sub="Lifetime avg. time between failures"
         icon={Activity}
         variant="primary"
         className="p-3 md:p-5"
@@ -348,7 +350,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTTR (Mechanical)"
         value={formatHours(mttrMechanicalHours)}
-        sub="Avg. time to repair"
+        sub="Lifetime avg. time to repair"
         icon={Timer}
         variant="primary"
         className="p-3 md:p-5"
@@ -357,13 +359,13 @@ function MaintenanceKpiGrid({
         label="Open Electrical"
         value={String(openElectrical)}
         icon={Zap}
-        variant={openElectrical > 0 ? "warning" : "success"}
+        variant={openElectrical > 0 ? "danger" : "success"}
         className="p-3 md:p-5"
       />
       <KpiCard
         label="MTBF (Electrical)"
         value={formatHours(mtbfElectricalHours)}
-        sub="Avg. time between failures"
+        sub="Lifetime avg. time between failures"
         icon={Activity}
         variant="primary"
         className="p-3 md:p-5"
@@ -371,7 +373,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTTR (Electrical)"
         value={formatHours(mttrElectricalHours)}
-        sub="Avg. time to repair"
+        sub="Lifetime avg. time to repair"
         icon={Timer}
         variant="primary"
         className="p-3 md:p-5"
@@ -381,7 +383,7 @@ function MaintenanceKpiGrid({
         value={String(openPreventive)}
         sub="Scheduled maintenance, not counted in MTBF"
         icon={CalendarCheck}
-        variant={openPreventive > 0 ? "warning" : "success"}
+        variant={openPreventive > 0 ? "danger" : "success"}
         className="p-3 md:p-5"
       />
     </div>
@@ -426,6 +428,19 @@ function EventsListCard({
   events: MaintenanceEvent[];
   onSelectEvent: (e: MaintenanceEvent) => void;
 }) {
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  // Reset to page 1 whenever the actual filters change — not whenever
+  // `events` itself changes, which would also fire on every background
+  // refetch of the *same* filtered list (e.g. after editing an event
+  // elsewhere) and needlessly kick the user back to page 1.
+  const filterKey = `${lineId}|${type}|${status}|${from}|${to}`;
+  useEffect(() => {
+    setPage(1);
+  }, [filterKey]);
+  const totalPages = Math.max(1, Math.ceil(events.length / PAGE_SIZE));
+  const pageRows = events.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <Card>
       <CardHeader>
@@ -493,18 +508,21 @@ function EventsListCard({
             </div>
           )}
           {!isLoading && events.length === 0 && (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              No maintenance events match this filter.
-            </p>
+            <div className="py-10 text-center">
+              <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                No maintenance events match this filter.
+              </p>
+            </div>
           )}
-          {events.map((e) => (
+          {pageRows.map((e) => (
             <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
           ))}
         </div>
 
         <div className="hidden md:block overflow-x-auto">
           <Table>
-            <TableHeader>
+            <TableHeader className="sticky top-16 z-10 bg-card">
               <TableRow>
                 <TableHead>Event</TableHead>
                 <TableHead className="hidden md:table-cell">Line</TableHead>
@@ -519,21 +537,16 @@ function EventsListCard({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading && (
-                <TableRow>
-                  <TableCell colSpan={10} className="py-10 text-center">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
-                  </TableCell>
-                </TableRow>
-              )}
+              {isLoading && <TableSkeletonRows columns={10} />}
               {!isLoading && events.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
-                    No maintenance events match this filter.
+                    <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                    <p className="mt-2">No maintenance events match this filter.</p>
                   </TableCell>
                 </TableRow>
               )}
-              {events.map((e) => {
+              {pageRows.map((e) => {
                 const durationMs =
                   (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
                   new Date(e.started_at).getTime();
@@ -600,6 +613,30 @@ function EventsListCard({
             </TableBody>
           </Table>
         </div>
+
+        {events.length > 0 && (
+          <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
+            <span>
+              {events.length} event{events.length === 1 ? "" : "s"} · Page {page} of {totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1577,7 +1614,7 @@ function ReliabilityHeadlineCards({
         <MiniKpiCard
           label="Maintenance events downtime"
           value={`${(totalDowntimeMinutes / 60).toFixed(1)}h`}
-          sub="from /maintenance records only"
+          sub="from /maintenance records only, filtered by page filters"
           variant="warning"
         />
         <MiniKpiCard
@@ -1598,7 +1635,7 @@ function ReliabilityHeadlineCards({
         <KpiCard
           label="Maintenance events downtime"
           value={formatDuration(totalDowntimeMinutes * 60_000)}
-          sub="from /maintenance records only"
+          sub="from /maintenance records only, filtered by page filters"
           icon={Timer}
           variant="warning"
         />
@@ -1993,6 +2030,17 @@ function StoppagesSection({
   const [deleting, setDeleting] = useState(false);
   const pendingDelete = rows.find((r) => r.id === pendingDeleteId) ?? null;
 
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  // Reset to page 1 whenever the row set actually shrinks/grows past the
+  // current page (e.g. an orphaned stoppage on this page gets deleted) —
+  // not on every render, so paging forward/back itself doesn't get undone.
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   async function confirmDelete() {
     if (!pendingDeleteId) return;
     setDeleting(true);
@@ -2015,7 +2063,7 @@ function StoppagesSection({
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-16 z-10 bg-card">
                 <TableRow>
                   <TableHead>Line</TableHead>
                   <TableHead>Status</TableHead>
@@ -2032,11 +2080,12 @@ function StoppagesSection({
                       colSpan={6}
                       className="py-10 text-center text-sm text-muted-foreground"
                     >
-                      No stoppages recorded yet.
+                      <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                      <p className="mt-2">No stoppages recorded yet.</p>
                     </TableCell>
                   </TableRow>
                 )}
-                {rows.map((s) => {
+                {pageRows.map((s) => {
                   const orphaned = s.eventCount === 0;
                   return (
                     <TableRow
@@ -2084,6 +2133,30 @@ function StoppagesSection({
               </TableBody>
             </Table>
           </div>
+
+          {rows.length > 0 && (
+            <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
+              <span>
+                {rows.length} stoppage{rows.length === 1 ? "" : "s"} · Page {page} of {totalPages}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -29,7 +29,7 @@ import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
-import { PlusSquare, FileDown, Loader2, Factory, Bell } from "lucide-react";
+import { PlusSquare, FileDown, Loader2, Factory, Bell, Inbox } from "lucide-react";
 
 // recharts (the bulk of these components' weight) is code-split into its own
 // chunk; loading these lazily keeps it out of the main route bundle and lets
@@ -380,7 +380,8 @@ function DashboardBody({
   if (entries.length === 0) {
     return (
       <div className="mt-6 rounded-2xl border border-dashed border-border bg-card p-12 text-center">
-        <p className="text-base font-semibold text-foreground">No entries in this period</p>
+        <Inbox className="mx-auto h-8 w-8 text-muted-foreground" />
+        <p className="mt-3 text-base font-semibold text-foreground">No entries in this period</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Add a daily entry to populate the dashboard.
         </p>
@@ -484,7 +485,8 @@ function DashboardBody({
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="rounded-2xl border border-dashed border-border bg-card p-16 text-center">
-      <h2 className="text-xl font-bold">No production lines yet</h2>
+      <Inbox className="mx-auto h-8 w-8 text-muted-foreground" />
+      <h2 className="mt-3 text-xl font-bold">No production lines yet</h2>
       <p className="mt-2 text-sm text-muted-foreground">
         Create your first production line in Settings.
       </p>

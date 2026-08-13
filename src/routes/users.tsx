@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
+import { TableSkeletonRows } from "@/components/TableSkeletonRows";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -21,7 +22,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreVertical, Plus, Eye, Pencil, KeyRound, Ban, CheckCircle2, Trash2, Loader2, ServerCrash } from "lucide-react";
+import { MoreVertical, Plus, Eye, Pencil, KeyRound, Ban, CheckCircle2, Trash2, Inbox, ServerCrash } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
@@ -214,7 +215,7 @@ function UsersPage() {
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-16 z-10 bg-card">
                 <TableRow>
                   <TableHead className="max-md:min-w-[160px]">User</TableHead>
                   <TableHead className="hidden md:table-cell">Username</TableHead>
@@ -227,11 +228,9 @@ function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
-                )}
+                {isLoading && <TableSkeletonRows columns={8} />}
                 {!isLoading && pageRows.length === 0 && (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">No users match this filter.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground"><Inbox className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2">No users match this filter.</p></TableCell></TableRow>
                 )}
                 {pageRows.map((u) => (
                   <TableRow key={u.id} className="hover:bg-muted/50">

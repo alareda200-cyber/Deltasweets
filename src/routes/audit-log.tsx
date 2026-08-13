@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
+import { TableSkeletonRows } from "@/components/TableSkeletonRows";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ServerCrash } from "lucide-react";
+import { Inbox, ServerCrash } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
 
@@ -146,7 +147,7 @@ function AuditLogPage() {
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-16 z-10 bg-card">
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Role</TableHead>
@@ -160,11 +161,9 @@ function AuditLogPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && (
-                  <TableRow><TableCell colSpan={9} className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></TableCell></TableRow>
-                )}
+                {isLoading && <TableSkeletonRows columns={9} />}
                 {!isLoading && pageRows.length === 0 && (
-                  <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No activity matches this filter.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground"><Inbox className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2">No activity matches this filter.</p></TableCell></TableRow>
                 )}
                 {pageRows.map((l) => {
                   const dt = new Date(l.created_at);

@@ -1690,8 +1690,15 @@ function DepartmentCategoriesCard({
             onChange={(e) => setCode(e.target.value)}
             className="w-24"
           />
-          <Button size="icon" onClick={save}>
-            {editingId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          <Button onClick={save}>
+            {editingId ? (
+              "Update"
+            ) : (
+              <>
+                <Plus className="mr-1 h-4 w-4" />
+                Add
+              </>
+            )}
           </Button>
           {editingId && (
             <Button size="sm" variant="ghost" onClick={cancelEdit}>
@@ -1836,8 +1843,15 @@ function DepartmentsCard({
             onChange={(e) => setCode(e.target.value)}
             className="w-24"
           />
-          <Button size="icon" onClick={save}>
-            {editingId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          <Button onClick={save}>
+            {editingId ? (
+              "Update"
+            ) : (
+              <>
+                <Plus className="mr-1 h-4 w-4" />
+                Add
+              </>
+            )}
           </Button>
           {editingId && (
             <Button size="sm" variant="ghost" onClick={cancelEdit}>
@@ -1976,8 +1990,15 @@ function DowntimeTypesCard({
             onChange={(e) => setCode(e.target.value)}
             className="w-24"
           />
-          <Button size="icon" onClick={save}>
-            {editingId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          <Button onClick={save}>
+            {editingId ? (
+              "Update"
+            ) : (
+              <>
+                <Plus className="mr-1 h-4 w-4" />
+                Add
+              </>
+            )}
           </Button>
           {editingId && (
             <Button size="sm" variant="ghost" onClick={cancelEdit}>
@@ -2096,8 +2117,15 @@ function SeverityLevelsCard({
             onChange={(e) => setCode(e.target.value)}
             className="w-24"
           />
-          <Button size="icon" onClick={save}>
-            {editingId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          <Button onClick={save}>
+            {editingId ? (
+              "Update"
+            ) : (
+              <>
+                <Plus className="mr-1 h-4 w-4" />
+                Add
+              </>
+            )}
           </Button>
           {editingId && (
             <Button size="sm" variant="ghost" onClick={cancelEdit}>

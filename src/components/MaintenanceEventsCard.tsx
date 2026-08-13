@@ -83,13 +83,13 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
           label="Open Mechanical"
           value={String(openMechanical.length)}
           icon={Wrench}
-          variant={openMechanical.length > 0 ? "warning" : "success"}
+          variant={openMechanical.length > 0 ? "danger" : "success"}
         />
         <KpiCard
           label="Open Electrical"
           value={String(openElectrical.length)}
           icon={Zap}
-          variant={openElectrical.length > 0 ? "warning" : "success"}
+          variant={openElectrical.length > 0 ? "danger" : "success"}
         />
       </div>
 
@@ -102,14 +102,14 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
           format={(v) => String(v)}
         />
         <TrendStat
-          label="MTBF"
+          label="MTBF (this month)"
           current={thisMonth.mtbfHours}
           prior={lastMonth.mtbfHours}
           higherIsBetter
           format={formatHours}
         />
         <TrendStat
-          label="MTTR"
+          label="MTTR (this month)"
           current={thisMonth.mttrHours}
           prior={lastMonth.mttrHours}
           higherIsBetter={false}
