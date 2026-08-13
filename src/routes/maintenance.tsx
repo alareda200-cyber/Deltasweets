@@ -97,6 +97,7 @@ import {
   syncStoppageAggregate,
   majorityMaintenanceType,
   stoppageDurationMinutes,
+  collapseStoppageEvents,
   techniciansQuery,
   type MaintenanceEvent,
   type MaintenanceType,
@@ -706,20 +707,30 @@ function MaintenancePage() {
     [metrics],
   );
 
+  // /maintenance's own "one downtime answer per stoppage" view of `events`
+  // — collapses events sharing a stoppage_id into a single representative
+  // event using the stoppage's own window (see collapseStoppageEvents in
+  // queries.ts), so a multi-event stoppage counts once instead of once per
+  // member below, in Total Downtime / Top Losses / the PDF report. MTBF/
+  // MTTR/repeat-failure-rate below intentionally keep reading the raw
+  // `events` array — they're a different question (event start/resolve
+  // timing), not a sum, so member-level granularity there is correct as-is.
+  const collapsedEvents = useMemo(() => collapseStoppageEvents(events, stoppages), [events, stoppages]);
+
   // Reliability Analytics section — every number below is derived from the
   // already-fetched `events` (same line/type/date filters as the table
   // above), never a new query, per the maintenance-manager brief this was
   // built against.
   const reliabilitySummary = useMemo(() => {
-    const totalDowntimeMinutes = totalDowntimeMinutesOf(events);
+    const totalDowntimeMinutes = totalDowntimeMinutesOf(collapsedEvents);
     const repeatFailureRatePct = repeatFailureRateOf(events);
     const mtbfHours = localMtbfHours(events);
     const mttrHours = localMttrHours(events);
     const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
     return { totalDowntimeMinutes, repeatFailureRatePct, mtbfHours, mttrHours, availabilityPct };
-  }, [events]);
+  }, [events, collapsedEvents]);
 
-  const titleAggregates = useMemo(() => aggregateByTitle(events), [events]);
+  const titleAggregates = useMemo(() => aggregateByTitle(collapsedEvents), [collapsedEvents]);
   // Preventive-excluded counterpart of titleAggregates — feeds every
   // "how often does this recur" failure-analysis view below (Top Losses by
   // Frequency, Chronic vs Sporadic), same reasoning as
@@ -730,8 +741,8 @@ function MaintenancePage() {
   // views (Top Losses by Downtime, Mean Downtime per Fault) — preventive
   // still stops the line, so it's still real downtime there.
   const failureTitleAggregates = useMemo(
-    () => aggregateByTitle(events.filter((e) => e.type !== "preventive")),
-    [events],
+    () => aggregateByTitle(collapsedEvents.filter((e) => e.type !== "preventive")),
+    [collapsedEvents],
   );
 
   const topLossesByDowntime = useMemo(
@@ -1311,20 +1322,41 @@ function repeatFailureRateOf(events: MaintenanceEvent[]): number {
   return (repeatCount / failureEvents.length) * 100;
 }
 
-// Local (filter-scoped) MTBF: average gap in hours between started_at of
-// consecutive events, pooled across whatever the current line/type/date
-// filters resolve to — deliberately not the lifetime per-line+type
-// `metrics` query above. Null with fewer than 2 events (no gap exists).
-// Preventive events are excluded — scheduled maintenance isn't a "failure",
-// so it shouldn't dilute time-between-failures math (same reasoning as
-// maintenanceMetricsQuery in src/lib/queries.ts).
+// Local (filter-scoped) MTBF: gaps between started_at of consecutive events
+// are only meaningful within the same line + type — pooling two different
+// lines' (or two different failure types') timestamps together before
+// taking gaps would produce a "time between failures" spanning unrelated
+// equipment, same reasoning as maintenanceMetricsQuery in src/lib/queries.ts.
+// So this groups by line_id + type first, then combines every group's gaps
+// into one weighted average (equivalent to weightedAverage() above, weighted
+// by each group's gap count) — deliberately not the lifetime per-line+type
+// `metrics` query above, but still grouped the same way it is. Null when no
+// group has 2+ events (no gap exists anywhere). Preventive events are
+// excluded — scheduled maintenance isn't a "failure", so it shouldn't dilute
+// time-between-failures math.
 function localMtbfHours(events: MaintenanceEvent[]): number | null {
   const failureEvents = events.filter((e) => e.type !== "preventive");
-  if (failureEvents.length < 2) return null;
-  const starts = failureEvents.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
+  const groups = new Map<string, MaintenanceEvent[]>();
+  for (const e of failureEvents) {
+    const key = `${e.line_id ?? "unassigned"}::${e.type}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(e);
+    else groups.set(key, [e]);
+  }
+  // Summing each group's total gap hours and dividing by the summed gap
+  // count is mathematically the same as averaging the per-group MTBFs
+  // weighted by their gap count (group_avg * group_weight === group_total),
+  // just without computing each group's average as an intermediate step.
   let totalGapHours = 0;
-  for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
-  return totalGapHours / (starts.length - 1);
+  let totalGapCount = 0;
+  for (const groupEvents of groups.values()) {
+    if (groupEvents.length < 2) continue;
+    const starts = groupEvents.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
+    for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
+    totalGapCount += starts.length - 1;
+  }
+  if (totalGapCount === 0) return null;
+  return totalGapHours / totalGapCount;
 }
 
 // Local (filter-scoped) MTTR: average resolved_at - started_at in hours

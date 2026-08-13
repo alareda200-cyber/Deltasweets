@@ -33,9 +33,17 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
   const monthVar = monthActual - monthPlan;
   const monthAdh = monthPlan > 0 ? monthActual / monthPlan : 0;
 
+  // "Last day" — every row sharing the most recent entry_date (a line can
+  // have more than one shift entered for the same day), not just the single
+  // last array element after the ascending sort. Same aggregation
+  // DowntimeSection/ReworkSection already use for their own "Last Day"
+  // blocks, so all three sections on this dashboard agree on what one
+  // calendar day's numbers actually add up to instead of Performance
+  // silently showing just one shift's worth.
   const last = entries[entries.length - 1];
-  const dayPlan = last ? Number(last[planKey]) : 0;
-  const dayActual = last ? Number(last[actualKey]) : 0;
+  const dayEntries = last ? entries.filter((e) => e.entry_date === last.entry_date) : [];
+  const dayPlan = dayEntries.reduce((s, e) => s + Number(e[planKey]), 0);
+  const dayActual = dayEntries.reduce((s, e) => s + Number(e[actualKey]), 0);
   const dayVar = dayActual - dayPlan;
   const dayAdh = dayPlan > 0 ? dayActual / dayPlan : 0;
 

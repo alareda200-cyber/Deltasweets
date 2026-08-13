@@ -654,6 +654,102 @@ export function stoppageDurationMinutes(stoppage: MaintenanceStoppage): number {
   return Math.max(0, (endMs - startedMs) / 60_000);
 }
 
+// Per-event duration in minutes — resolved events run until resolved_at,
+// still-open/in-progress events run the clock to now. Private to this
+// module; callers elsewhere (src/routes/maintenance.tsx,
+// MaintenanceDowntimeCard.tsx) keep their own copy for their own display
+// needs — this one only backs the stoppage-grouping helpers below.
+function eventDurationMinutes(e: MaintenanceEvent): number {
+  const startedMs = new Date(e.started_at).getTime();
+  const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+  return Math.max(0, (endMs - startedMs) / 60_000);
+}
+
+export interface StoppageGroup {
+  stoppageId: string;
+  stoppage: MaintenanceStoppage;
+  members: MaintenanceEvent[];
+  majorityType: MaintenanceType;
+  longestMember: MaintenanceEvent;
+}
+
+// Groups events sharing a stoppage_id against their parent stoppage row,
+// with the majority type and longest-duration member already resolved for
+// each group — the shared prep step for anywhere that needs "one answer per
+// real-world outage" instead of "one answer per member event" (this file's
+// own maintenanceEventsAsDowntimes, and /maintenance's Total Downtime / Top
+// Losses / PDF report aggregates via collapseStoppageEvents below). Members
+// whose stoppage_id has no matching row in `stoppages` (stale cache) come
+// back separately in `ungroupedMembers` instead of being silently dropped —
+// callers should treat those as standalone events.
+export function groupEventsByStoppage(
+  events: MaintenanceEvent[],
+  stoppages: MaintenanceStoppage[],
+): { groups: StoppageGroup[]; ungroupedMembers: MaintenanceEvent[] } {
+  const stoppageGroups = new Map<string, MaintenanceEvent[]>();
+  for (const e of events) {
+    if (!e.stoppage_id) continue;
+    const arr = stoppageGroups.get(e.stoppage_id);
+    if (arr) arr.push(e);
+    else stoppageGroups.set(e.stoppage_id, [e]);
+  }
+  const stoppageById = new Map(stoppages.map((s) => [s.id, s]));
+
+  const groups: StoppageGroup[] = [];
+  const ungroupedMembers: MaintenanceEvent[] = [];
+  for (const [stoppageId, members] of stoppageGroups) {
+    const stoppage = stoppageById.get(stoppageId);
+    if (!stoppage) {
+      ungroupedMembers.push(...members);
+      continue;
+    }
+    // Longest-duration member "represents" the group for display purposes
+    // (e.g. "Conveyor belt jam" beats a generic type label) — ties keep the
+    // first member encountered.
+    const longestMember = members.reduce(
+      (longest, e) => (eventDurationMinutes(e) > eventDurationMinutes(longest) ? e : longest),
+      members[0],
+    );
+    groups.push({
+      stoppageId,
+      stoppage,
+      members,
+      majorityType: majorityMaintenanceType(members),
+      longestMember,
+    });
+  }
+  return { groups, ungroupedMembers };
+}
+
+// Collapses maintenance_events sharing a stoppage_id into one representative
+// event per stoppage, using the stoppage's own window (started_at/
+// resolved_at/status — see stoppageDurationMinutes) instead of each member's
+// own — so a multi-event stoppage counts once, not once per member, in any
+// sum/count built from the result. Standalone (non-stoppage) events pass
+// through unchanged. Used by /maintenance's Total Downtime, Top Losses, and
+// PDF report aggregates (src/routes/maintenance.tsx) — those previously
+// summed every member event's own duration, double- (or triple-, ...)
+// counting the same physical outage. Not used by maintenanceEventsAsDowntimes
+// below, which needs different per-field rules for its EntryDowntime shape
+// (e.g. no single severity_label for a multi-event stoppage) — it calls
+// groupEventsByStoppage directly instead and builds its own row shape
+// around the group.
+export function collapseStoppageEvents(
+  events: MaintenanceEvent[],
+  stoppages: MaintenanceStoppage[],
+): MaintenanceEvent[] {
+  const standalone = events.filter((e) => !e.stoppage_id);
+  const { groups, ungroupedMembers } = groupEventsByStoppage(events, stoppages);
+  const collapsed = groups.map(({ stoppage, majorityType, longestMember }) => ({
+    ...longestMember,
+    type: majorityType,
+    started_at: stoppage.started_at,
+    resolved_at: stoppage.resolved_at,
+    status: stoppage.status,
+  }));
+  return [...standalone, ...collapsed, ...ungroupedMembers];
+}
+
 // Converts maintenance_events rows already fetched via maintenanceEventsQuery
 // into EntryDowntime-shaped rows, so the Dashboard's downtime Pareto chart
 // and the Maintenance card's Top Reasons list can merge them in with real
@@ -676,10 +772,13 @@ export function stoppageDurationMinutes(stoppage: MaintenanceStoppage): number {
 // physical downtime window, not several — grouped into a single row here
 // using the stoppage's own started_at/resolved_at (stoppageDurationMinutes),
 // classified by majorityMaintenanceType, so the Pareto chart/downtime totals
-// don't double-count the same outage once per member event. This only
-// affects this Dashboard-facing conversion; the /maintenance page's own
-// per-event MTBF/MTTR and Reliability Analytics numbers are deliberately
-// unaffected (see localMtbfHours/localMttrHours in src/routes/maintenance.tsx).
+// don't double-count the same outage once per member event. /maintenance's
+// own Total Downtime / Top Losses aggregates get the same treatment via
+// collapseStoppageEvents above; only its per-event MTBF/MTTR and
+// repeat-failure-rate stay deliberately unaffected (see
+// localMtbfHours/localMttrHours/repeatFailureRateOf in
+// src/routes/maintenance.tsx) — those are about event start/resolve timing,
+// not a sum, so member-level granularity there is correct as-is.
 export function maintenanceEventsAsDowntimes(
   events: MaintenanceEvent[],
   stoppages: MaintenanceStoppage[],
@@ -710,12 +809,6 @@ export function maintenanceEventsAsDowntimes(
   // the no-stoppage path below and the defensive fallback for a stoppage_id
   // whose parent row wasn't found in `stoppages` (stale cache; the FK
   // guarantees it exists in the DB).
-  function eventDurationMinutes(e: MaintenanceEvent): number {
-    const startedMs = new Date(e.started_at).getTime();
-    const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
-    return Math.max(0, (endMs - startedMs) / 60_000);
-  }
-
   function rowFromEvent(e: MaintenanceEvent): EntryDowntime {
     const startedMs = new Date(e.started_at).getTime();
     const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
@@ -750,34 +843,17 @@ export function maintenanceEventsAsDowntimes(
 
   const standaloneRows = events.filter((e) => !e.stoppage_id).map(rowFromEvent);
 
-  const stoppageGroups = new Map<string, MaintenanceEvent[]>();
-  for (const e of events) {
-    if (!e.stoppage_id) continue;
-    const group = stoppageGroups.get(e.stoppage_id);
-    if (group) group.push(e);
-    else stoppageGroups.set(e.stoppage_id, [e]);
-  }
-  const stoppageById = new Map(stoppages.map((s) => [s.id, s]));
-
-  const stoppageRows: EntryDowntime[] = [];
-  for (const [stoppageId, members] of stoppageGroups) {
-    const stoppage = stoppageById.get(stoppageId);
-    if (!stoppage) {
-      // Parent row not in the list passed in — degrade to one row per
-      // member rather than silently dropping the downtime.
-      stoppageRows.push(...members.map(rowFromEvent));
-      continue;
-    }
-    const majorityType = majorityMaintenanceType(members);
+  // Grouping-by-stoppage (majority type, longest member) is shared with
+  // collapseStoppageEvents above via groupEventsByStoppage — this still
+  // builds its own EntryDowntime fields around each group instead of
+  // reusing collapseStoppageEvents's generic collapsed-event shape, because
+  // this row shape has its own rules that don't generalize (no single
+  // severity_label for a multi-event stoppage; a "stoppage-" id prefix
+  // distinct from a standalone event's "maintenance-" prefix).
+  const { groups, ungroupedMembers } = groupEventsByStoppage(events, stoppages);
+  const stoppageRows: EntryDowntime[] = ungroupedMembers.map(rowFromEvent);
+  for (const { stoppageId, stoppage, members, majorityType, longestMember } of groups) {
     const meta = typeMeta(majorityType);
-    // Longest-duration member event "represents" the stoppage for display
-    // purposes — its title is more informative than the generic type label
-    // (e.g. "Conveyor belt jam" beats "Mechanical Maintenance"). Ties keep
-    // the first member encountered (reduce's `>` doesn't replace on equal
-    // duration). This is what MaintenanceDowntimeCard's Top Reasons
-    // chart/list groups by (plain reason_name); the overall Pareto chart
-    // (DowntimeSection) still groups by pareto_reason_name below, unaffected.
-    const longestMember = members.reduce((longest, e) => (eventDurationMinutes(e) > eventDurationMinutes(longest) ? e : longest), members[0]);
     stoppageRows.push({
       id: `stoppage-${stoppageId}`,
       entry_id: stoppageId,
