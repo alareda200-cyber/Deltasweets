@@ -31,6 +31,7 @@ import {
   Timer,
   AlertTriangle,
   Database,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -85,6 +86,51 @@ function CardIconBox({ icon: Icon, className }: { icon: LucideIcon; className?: 
     <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${className ?? ""}`}>
       <Icon className="h-3.5 w-3.5" />
     </div>
+  );
+}
+
+// Wraps every settings Card below on mobile: closed by default, tap the
+// summary row (icon + title + item count + chevron) to reveal the card's
+// real CardHeader (full description, and any header action like "Add
+// Technician") + CardContent (the actual table/form) together underneath.
+// At md+ this is inert — the summary row is md:hidden and the real
+// header/content are always shown (md:block unconditionally), so desktop
+// keeps behaving exactly as before. Plain useState rather than shadcn's
+// Collapsible: nothing here needs the mount/animation machinery, and a
+// bare CSS class is trivially safe to force back open at md+.
+function MobileCollapsibleCard({
+  icon,
+  iconClassName,
+  title,
+  count,
+  children,
+}: {
+  icon: LucideIcon;
+  iconClassName: string;
+  title: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Card>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 p-4 text-left md:hidden"
+      >
+        <CardIconBox icon={icon} className={iconClassName} />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
+        {count !== undefined && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span>
+        )}
+        <ChevronRight
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      <div className={`${open ? "block" : "hidden"} md:block`}>{children}</div>
+    </Card>
   );
 }
 
@@ -243,7 +289,12 @@ function UsersCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={UsersIcon}
+      iconClassName="bg-accent text-accent-foreground"
+      title="Users"
+      count={users.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={UsersIcon} className="bg-accent text-accent-foreground" />
@@ -290,7 +341,7 @@ function UsersCard({
           )}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -330,7 +381,12 @@ function TechniciansCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={Wrench}
+      iconClassName="bg-success text-success-foreground"
+      title="Technicians"
+      count={technicians.length}
+    >
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-start gap-3">
@@ -385,7 +441,7 @@ function TechniciansCard({
         </div>
       </CardContent>
       <TechnicianDialog open={dialogOpen} onOpenChange={setDialogOpen} technician={editing} qc={qc} />
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -614,7 +670,7 @@ function BackupCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard icon={Database} iconClassName="bg-muted text-muted-foreground" title="Backup & Restore">
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={Database} className="bg-muted text-muted-foreground" />
@@ -644,7 +700,7 @@ function BackupCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {importing ? "Importing…" : "Import Settings"}
         </label>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -713,7 +769,12 @@ function LinesCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={Factory}
+      iconClassName="bg-accent text-accent-foreground"
+      title="Production Lines"
+      count={lines.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={Factory} className="bg-accent text-accent-foreground" />
@@ -796,7 +857,7 @@ function LinesCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -907,7 +968,12 @@ function ReasonsCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={List}
+      iconClassName="bg-warning text-warning-foreground"
+      title="Downtime Reasons"
+      count={reasons.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={List} className="bg-warning text-warning-foreground" />
@@ -1036,7 +1102,7 @@ function ReasonsCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1106,7 +1172,12 @@ function ProductionAreasCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={MapPin}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Production Areas"
+      count={areas.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={MapPin} className="bg-muted text-muted-foreground" />
@@ -1176,7 +1247,7 @@ function ProductionAreasCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1263,7 +1334,12 @@ function AreaOwnersCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={Contact}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Area Owners"
+      count={owners.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={Contact} className="bg-muted text-muted-foreground" />
@@ -1350,7 +1426,7 @@ function AreaOwnersCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1410,7 +1486,12 @@ function DepartmentCategoriesCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={FolderTree}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Department Categories"
+      count={categories.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={FolderTree} className="bg-muted text-muted-foreground" />
@@ -1469,7 +1550,7 @@ function DepartmentCategoriesCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1555,7 +1636,12 @@ function DepartmentsCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={Building2}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Departments"
+      count={departments.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={Building2} className="bg-muted text-muted-foreground" />
@@ -1631,7 +1717,7 @@ function DepartmentsCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1691,7 +1777,12 @@ function DowntimeTypesCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={Timer}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Downtime Types"
+      count={downtimeTypes.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={Timer} className="bg-muted text-muted-foreground" />
@@ -1745,7 +1836,7 @@ function DowntimeTypesCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1805,7 +1896,12 @@ function SeverityLevelsCard({
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={AlertTriangle}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Severity Levels"
+      count={severityLevels.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={AlertTriangle} className="bg-muted text-muted-foreground" />
@@ -1860,7 +1956,7 @@ function SeverityLevelsCard({
           ))}
         </div>
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }
 
@@ -1897,7 +1993,12 @@ function FieldsCard({ lineId, qc }: { lineId: string; qc: ReturnType<typeof useQ
   }
 
   return (
-    <Card>
+    <MobileCollapsibleCard
+      icon={SlidersHorizontal}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Custom Fields for Selected Line"
+      count={fields.length}
+    >
       <CardHeader>
         <div className="flex items-start gap-3">
           <CardIconBox icon={SlidersHorizontal} className="bg-muted text-muted-foreground" />
@@ -1967,6 +2068,6 @@ function FieldsCard({ lineId, qc }: { lineId: string; qc: ReturnType<typeof useQ
           </div>
         )}
       </CardContent>
-    </Card>
+    </MobileCollapsibleCard>
   );
 }

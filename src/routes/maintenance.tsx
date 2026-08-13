@@ -62,6 +62,7 @@ import {
   AlertTriangle,
   Trash2,
   Clock,
+  ChevronRight,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -114,6 +115,87 @@ export const Route = createFileRoute("/maintenance")({
 
 function truncateNote(text: string, max = 50): string {
   return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+// Mobile-only event summary card — 3px colored left border (red mechanical,
+// amber electrical), title/line/technician, type+status badges, duration +
+// severity. Shared by the always-visible "Open events" list and the
+// (collapsible) full events list below, so both render identically.
+function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onClick: () => void }) {
+  const durationMs =
+    (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
+    new Date(e.started_at).getTime();
+  const borderColor =
+    e.type === "mechanical"
+      ? "border-l-destructive"
+      : e.type === "electrical"
+        ? "border-l-warning"
+        : "border-l-border";
+  return (
+    <div
+      onClick={onClick}
+      className={`flex cursor-pointer items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3`}
+    >
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium leading-tight">{e.title}</p>
+        <p className="truncate text-xs leading-tight text-muted-foreground">
+          {[e.production_lines?.name, e.technician_names.join(", ") || null]
+            .filter(Boolean)
+            .join(" · ") || "—"}
+        </p>
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          <span>{formatDuration(durationMs)}</span>
+          {e.severity_label && <span>· {e.severity_label}</span>}
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+        <Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+      </div>
+    </div>
+  );
+}
+
+// Wraps a whole section (Events/Stoppages tabs, Reliability Analytics) on
+// mobile: closed by default, tap the summary row (title + optional count +
+// chevron) to reveal it. At md+ the toggle row is md:hidden and the content
+// is always shown (md:block unconditionally) — desktop is untouched. Plain
+// useState, not shadcn's Collapsible — see the same reasoning on
+// MobileCollapsibleCard in settings.tsx: nothing here needs Radix's
+// mount/animation machinery, and a bare CSS class is trivially safe to force
+// back open at md+ regardless of interaction state.
+function MobileCollapsibleSection({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="mb-2 flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-card p-3 md:hidden"
+      >
+        <span className="text-sm font-semibold">{title}</span>
+        <span className="flex items-center gap-2">
+          {count !== undefined && (
+            <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+          )}
+          <ChevronRight
+            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        </span>
+      </button>
+      <div className={`${open ? "block" : "hidden"} md:block`}>{children}</div>
+    </>
+  );
 }
 
 function MaintenancePage() {
@@ -178,6 +260,16 @@ function MaintenancePage() {
   const openPreventive = allEvents.filter(
     (e) => e.type === "preventive" && e.status !== "resolved",
   ).length;
+  // Mobile-only "stays visible, never collapses" list — same open predicate
+  // and plant-wide (allEvents, not the filtered `events`) scope as the
+  // Open Mechanical/Electrical/Preventive KPI cards above, most-recent first.
+  const openEvents = useMemo(
+    () =>
+      allEvents
+        .filter((e) => e.status !== "resolved")
+        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
+    [allEvents],
+  );
 
   const mtbfMechanicalHours = useMemo(
     () => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"),
@@ -606,6 +698,20 @@ function MaintenancePage() {
         />
       </div>
 
+      {/* Mobile-only, always visible — never collapses, even while the
+          section below is closed, so open faults stay in view. */}
+      {openEvents.length > 0 && (
+        <div className="mb-4 space-y-2 md:hidden">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Open events ({openEvents.length})
+          </p>
+          {openEvents.map((e) => (
+            <MobileEventCard key={e.id} event={e} onClick={() => setSelectedEvent(e)} />
+          ))}
+        </div>
+      )}
+
+      <MobileCollapsibleSection title="Maintenance events" count={events.length}>
       <Tabs defaultValue="events">
         <TabsList>
           <TabsTrigger value="events">Events</TabsTrigger>
@@ -706,44 +812,9 @@ function MaintenancePage() {
                     No maintenance events match this filter.
                   </p>
                 )}
-                {events.map((e) => {
-                  const durationMs =
-                    (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
-                    new Date(e.started_at).getTime();
-                  const borderColor =
-                    e.type === "mechanical"
-                      ? "border-l-destructive"
-                      : e.type === "electrical"
-                        ? "border-l-warning"
-                        : "border-l-border";
-                  return (
-                    <div
-                      key={e.id}
-                      onClick={() => setSelectedEvent(e)}
-                      className={`flex cursor-pointer items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3`}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium leading-tight">{e.title}</p>
-                        <p className="truncate text-xs leading-tight text-muted-foreground">
-                          {[e.production_lines?.name, e.technician_names.join(", ") || null]
-                            .filter(Boolean)
-                            .join(" · ") || "—"}
-                        </p>
-                        <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          <span>{formatDuration(durationMs)}</span>
-                          {e.severity_label && <span>· {e.severity_label}</span>}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
-                        <Badge variant={statusBadgeVariant(e.status)}>
-                          {STATUS_LABELS[e.status]}
-                        </Badge>
-                      </div>
-                    </div>
-                  );
-                })}
+                {events.map((e) => (
+                  <MobileEventCard key={e.id} event={e} onClick={() => setSelectedEvent(e)} />
+                ))}
               </div>
 
               <div className="hidden md:block overflow-x-auto">
@@ -866,7 +937,10 @@ function MaintenancePage() {
           />
         </TabsContent>
       </Tabs>
+      </MobileCollapsibleSection>
 
+      <div className="mt-6 md:mt-0">
+      <MobileCollapsibleSection title="Reliability Analytics">
       <ReliabilityAnalyticsSection
         totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
         repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
@@ -877,6 +951,8 @@ function MaintenancePage() {
         chronicVsSporadic={chronicVsSporadic}
         reliabilityByLine={reliabilityByLine}
       />
+      </MobileCollapsibleSection>
+      </div>
 
       <MetricsTable metrics={metrics} />
 
