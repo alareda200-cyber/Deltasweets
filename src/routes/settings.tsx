@@ -134,6 +134,65 @@ function MobileCollapsibleCard({
   );
 }
 
+interface SidebarItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  count?: number;
+}
+
+interface SidebarGroup {
+  label: string;
+  items: SidebarItem[];
+}
+
+// Desktop-only (md:) macOS-System-Preferences-style nav: one section active
+// at a time, picked from here, rendered full-width in the content pane next
+// to it. Purely a navigation aid over the same data/props every Card below
+// already takes — doesn't gate or duplicate any query.
+function SettingsSidebar({
+  groups,
+  active,
+  onSelect,
+}: {
+  groups: SidebarGroup[];
+  active: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <nav className="sticky top-20 self-start">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <div className="mb-2 mt-4 text-xs uppercase tracking-wide text-muted-foreground">
+            {group.label}
+          </div>
+          <div className="space-y-0.5">
+            {group.items.map((item) => {
+              const isActive = active === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item.id)}
+                  className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm ${
+                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                  }`}
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.count !== undefined && (
+                    <span className="shrink-0 text-xs tabular-nums opacity-70">{item.count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings · Production Scorecard" }] }),
   beforeLoad: requireSession,
@@ -176,6 +235,7 @@ function SettingsPage() {
   });
   const qc = useQueryClient();
   const [selectedLine, setSelectedLine] = useState(lines[0]?.id ?? "");
+  const [activeSection, setActiveSection] = useState("users");
   const { profile, role } = useAuth();
 
   const initials =
@@ -183,6 +243,110 @@ function SettingsPage() {
     profile?.email?.[0]?.toUpperCase() ||
     "?";
   const displayName = profile?.display_name || profile?.email || "";
+
+  // Desktop sidebar nav — People / Production setup / System (no
+  // "Preferences" group: Theme/Push notifications live in the header, not as
+  // a Settings Card here, so there's nothing to list under it).
+  const sidebarGroups: SidebarGroup[] = [
+    {
+      label: "People",
+      items: [
+        { id: "users", label: "Users", icon: UsersIcon, count: users.length },
+        { id: "technicians", label: "Technicians", icon: Wrench, count: technicians.length },
+        { id: "areaOwners", label: "Area Owners", icon: Contact, count: areaOwners.length },
+      ],
+    },
+    {
+      label: "Production setup",
+      items: [
+        { id: "lines", label: "Production Lines", icon: Factory, count: lines.length },
+        {
+          id: "productionAreas",
+          label: "Production Areas",
+          icon: MapPin,
+          count: productionAreas.length,
+        },
+        { id: "reasons", label: "Downtime Reasons", icon: List, count: reasons.length },
+        { id: "fields", label: "Line Fields", icon: SlidersHorizontal },
+        { id: "departments", label: "Departments", icon: Building2, count: departments.length },
+        {
+          id: "departmentCategories",
+          label: "Department Categories",
+          icon: FolderTree,
+          count: departmentCategories.length,
+        },
+        {
+          id: "downtimeTypes",
+          label: "Downtime Types",
+          icon: Timer,
+          count: downtimeTypes.length,
+        },
+        {
+          id: "severityLevels",
+          label: "Severity Levels",
+          icon: AlertTriangle,
+          count: severityLevels.length,
+        },
+      ],
+    },
+    {
+      label: "System",
+      items: [{ id: "backup", label: "Backup & Restore", icon: Database }],
+    },
+  ];
+
+  // Renders the one active section's Card, full-width, in the desktop
+  // sidebar layout's content pane — same components/props as the mobile
+  // list below, just one at a time instead of all stacked.
+  function renderActiveSection() {
+    switch (activeSection) {
+      case "users":
+        return <UsersCard users={users} qc={qc} />;
+      case "technicians":
+        return <TechniciansCard technicians={technicians} qc={qc} />;
+      case "areaOwners":
+        return <AreaOwnersCard owners={areaOwners} departments={departments} qc={qc} />;
+      case "lines":
+        return (
+          <LinesCard lines={lines} qc={qc} onSelect={setSelectedLine} selected={selectedLine} />
+        );
+      case "productionAreas":
+        return <ProductionAreasCard areas={productionAreas} qc={qc} />;
+      case "reasons":
+        return (
+          <ReasonsCard
+            reasons={reasons}
+            productionAreas={productionAreas}
+            departments={departments}
+            downtimeTypes={downtimeTypes}
+            severityLevels={severityLevels}
+            qc={qc}
+          />
+        );
+      case "fields":
+        return selectedLine ? (
+          <FieldsCard lineId={selectedLine} qc={qc} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No production line yet — add one under Production Lines first.
+          </p>
+        );
+      case "departments":
+        return (
+          <DepartmentsCard departments={departments} categories={departmentCategories} qc={qc} />
+        );
+      case "departmentCategories":
+        return <DepartmentCategoriesCard categories={departmentCategories} qc={qc} />;
+      case "downtimeTypes":
+        return <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />;
+      case "severityLevels":
+        return <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />;
+      case "backup":
+        return <BackupCard qc={qc} />;
+      default:
+        return null;
+    }
+  }
 
   return (
     <AppShell>
@@ -215,7 +379,9 @@ function SettingsPage() {
         </p>
       </div>
 
-      <div className="space-y-8">
+      {/* Mobile (default, below md): the full stacked/collapsible list,
+          unchanged from before this section was added. */}
+      <div className="space-y-8 md:hidden">
         {/* Who can access the system and who's assignable/accountable on entries. */}
         <section>
           <GroupHeading>People</GroupHeading>
@@ -267,6 +433,13 @@ function SettingsPage() {
           <GroupHeading>System</GroupHeading>
           <BackupCard qc={qc} />
         </section>
+      </div>
+
+      {/* Desktop (md: and up): macOS-System-Preferences-style sidebar — one
+          section active at a time instead of everything stacked. */}
+      <div className="hidden gap-6 md:grid md:grid-cols-[240px_1fr]">
+        <SettingsSidebar groups={sidebarGroups} active={activeSection} onSelect={setActiveSection} />
+        <div>{renderActiveSection()}</div>
       </div>
     </AppShell>
   );
