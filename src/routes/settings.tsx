@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus, Pencil } from "lucide-react";
+import {
+  Trash2,
+  Plus,
+  Pencil,
+  Users as UsersIcon,
+  Wrench,
+  Factory,
+  List,
+  Contact,
+  MapPin,
+  SlidersHorizontal,
+  Building2,
+  FolderTree,
+  Timer,
+  AlertTriangle,
+  Database,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ALL_ROLES, ROLE_LABELS, type Role } from "@/lib/permissions";
@@ -50,6 +68,24 @@ function validateMasterDataInput(name: string, code: string): string | null {
   if (!name.trim()) return "Name is required";
   if (!code.trim()) return "Code is required";
   return null;
+}
+
+// Small uppercase label above each group of Cards below (People, Production
+// setup, System) — purely organizational, doesn't gate any data.
+function GroupHeading({ children }: { children: React.ReactNode }) {
+  return <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">{children}</div>;
+}
+
+// 24x24 rounded icon swatch shown next to a Card's title, to help scan the
+// now-longer Settings page at a glance. Background/foreground are passed as
+// a matched theme-token pair (e.g. bg-accent + text-accent-foreground) so
+// contrast holds in both light and dark.
+function CardIconBox({ icon: Icon, className }: { icon: LucideIcon; className?: string }) {
+  return (
+    <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${className ?? ""}`}>
+      <Icon className="h-3.5 w-3.5" />
+    </div>
+  );
 }
 
 export const Route = createFileRoute("/settings")({
@@ -94,9 +130,37 @@ function SettingsPage() {
   });
   const qc = useQueryClient();
   const [selectedLine, setSelectedLine] = useState(lines[0]?.id ?? "");
+  const { profile, role } = useAuth();
+
+  const initials =
+    `${profile?.first_name?.[0] ?? ""}${profile?.last_name?.[0] ?? ""}`.toLocaleUpperCase() ||
+    profile?.email?.[0]?.toUpperCase() ||
+    "?";
+  const displayName = profile?.display_name || profile?.email || "";
 
   return (
     <AppShell>
+      {/* Mobile-only profile summary — the equivalent info lives in the header's
+          avatar dropdown on desktop (md:flex there), so this is md:hidden to
+          avoid showing it twice. */}
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card p-3 md:hidden">
+        <Avatar className="h-[34px] w-[34px]" style={{ backgroundColor: profile?.avatar_color || "#0ea5e9" }}>
+          <AvatarFallback
+            style={{ backgroundColor: profile?.avatar_color || "#0ea5e9", color: "white" }}
+            className="text-xs"
+          >
+            {initials}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{displayName}</p>
+          <p className="truncate text-xs text-muted-foreground">{profile?.email}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          {role ? ROLE_LABELS[role] : ""}
+        </span>
+      </div>
+
       <div className="mb-6">
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -105,46 +169,58 @@ function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <LinesCard lines={lines} qc={qc} onSelect={setSelectedLine} selected={selectedLine} />
-        <ReasonsCard
-          reasons={reasons}
-          productionAreas={productionAreas}
-          departments={departments}
-          downtimeTypes={downtimeTypes}
-          severityLevels={severityLevels}
-          qc={qc}
-        />
-      </div>
+      <div className="space-y-8">
+        {/* Who can access the system and who's assignable/accountable on entries. */}
+        <section>
+          <GroupHeading>People</GroupHeading>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <UsersCard users={users} qc={qc} />
+            <TechniciansCard technicians={technicians} qc={qc} />
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <AreaOwnersCard owners={areaOwners} departments={departments} qc={qc} />
+          </div>
+        </section>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <ProductionAreasCard areas={productionAreas} qc={qc} />
-        <AreaOwnersCard owners={areaOwners} departments={departments} qc={qc} />
-      </div>
+        {/* The physical plant plus the classification taxonomy used to tag and
+            filter downtime — lines, areas, custom fields, reasons, department
+            structure, planned/unplanned type, and severity. */}
+        <section>
+          <GroupHeading>Production setup</GroupHeading>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <LinesCard lines={lines} qc={qc} onSelect={setSelectedLine} selected={selectedLine} />
+            <ProductionAreasCard areas={productionAreas} qc={qc} />
+          </div>
+          {selectedLine && (
+            <div className="mt-6">
+              <FieldsCard lineId={selectedLine} qc={qc} />
+            </div>
+          )}
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ReasonsCard
+              reasons={reasons}
+              productionAreas={productionAreas}
+              departments={departments}
+              downtimeTypes={downtimeTypes}
+              severityLevels={severityLevels}
+              qc={qc}
+            />
+            <DepartmentCategoriesCard categories={departmentCategories} qc={qc} />
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <DepartmentsCard departments={departments} categories={departmentCategories} qc={qc} />
+            <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />
+          </div>
+        </section>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <DepartmentCategoriesCard categories={departmentCategories} qc={qc} />
-        <DepartmentsCard departments={departments} categories={departmentCategories} qc={qc} />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />
-        <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <UsersCard users={users} qc={qc} />
-        <TechniciansCard technicians={technicians} qc={qc} />
-      </div>
-
-      {selectedLine && (
-        <div className="mt-6">
-          <FieldsCard lineId={selectedLine} qc={qc} />
-        </div>
-      )}
-
-      <div className="mt-6">
-        <BackupCard qc={qc} />
+        {/* Data portability, not domain configuration. */}
+        <section>
+          <GroupHeading>System</GroupHeading>
+          <BackupCard qc={qc} />
+        </section>
       </div>
     </AppShell>
   );
@@ -169,11 +245,16 @@ function UsersCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Users</CardTitle>
-        <CardDescription>
-          Manage who can access the system and what they can do. New sign-ups start as Viewer until
-          promoted here.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={UsersIcon} className="bg-accent text-accent-foreground" />
+          <div>
+            <CardTitle>Users</CardTitle>
+            <CardDescription>
+              Manage who can access the system and what they can do. New sign-ups start as Viewer
+              until promoted here.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-1.5">
@@ -252,12 +333,15 @@ function TechniciansCard({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
-          <div>
-            <CardTitle>Technicians</CardTitle>
-            <CardDescription>
-              Maintenance staff assignable to events on the Maintenance page. Only active
-              technicians can be newly assigned.
-            </CardDescription>
+          <div className="flex items-start gap-3">
+            <CardIconBox icon={Wrench} className="bg-success text-success-foreground" />
+            <div>
+              <CardTitle>Technicians</CardTitle>
+              <CardDescription>
+                Maintenance staff assignable to events on the Maintenance page. Only active
+                technicians can be newly assigned.
+              </CardDescription>
+            </div>
           </div>
           <Button size="sm" onClick={openAdd}>
             <Plus className="mr-1 h-4 w-4" />
@@ -532,11 +616,16 @@ function BackupCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Backup &amp; Restore</CardTitle>
-        <CardDescription>
-          Export all master data (Lines, Areas, Owners, Reasons, Departments, Types, Severity
-          Levels, Custom Fields) to a file, or restore it on a new device.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Database} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Backup &amp; Restore</CardTitle>
+            <CardDescription>
+              Export all master data (Lines, Areas, Owners, Reasons, Departments, Types, Severity
+              Levels, Custom Fields) to a file, or restore it on a new device.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-3">
         <Button variant="outline" onClick={handleExport} disabled={exporting}>
@@ -626,10 +715,15 @@ function LinesCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Production Lines</CardTitle>
-        <CardDescription>
-          Add unlimited lines. Click a line to manage its custom fields.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Factory} className="bg-accent text-accent-foreground" />
+          <div>
+            <CardTitle>Production Lines</CardTitle>
+            <CardDescription>
+              Add unlimited lines. Click a line to manage its custom fields.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex gap-2">
@@ -815,8 +909,13 @@ function ReasonsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Downtime Reasons</CardTitle>
-        <CardDescription>Shared library across all production lines.</CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={List} className="bg-warning text-warning-foreground" />
+          <div>
+            <CardTitle>Downtime Reasons</CardTitle>
+            <CardDescription>Shared library across all production lines.</CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -1009,11 +1108,16 @@ function ProductionAreasCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Production Areas</CardTitle>
-        <CardDescription>
-          Add unlimited areas (e.g. Cooking, Making, Packing, Coating). Each active area gets its
-          own Area Owner selector on the Entry screen.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={MapPin} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Production Areas</CardTitle>
+            <CardDescription>
+              Add unlimited areas (e.g. Cooking, Making, Packing, Coating). Each active area gets
+              its own Area Owner selector on the Entry screen.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex gap-2">
@@ -1161,10 +1265,16 @@ function AreaOwnersCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Area Owners</CardTitle>
-        <CardDescription>
-          Master list of people who can be assigned as the owner of a production area on an entry.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Contact} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Area Owners</CardTitle>
+            <CardDescription>
+              Master list of people who can be assigned as the owner of a production area on an
+              entry.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -1302,11 +1412,16 @@ function DepartmentCategoriesCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Department Categories</CardTitle>
-        <CardDescription>
-          Dashboards filter by category (e.g. Maintenance), never by individual department name —
-          new departments join a category and appear automatically.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={FolderTree} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Department Categories</CardTitle>
+            <CardDescription>
+              Dashboards filter by category (e.g. Maintenance), never by individual department
+              name — new departments join a category and appear automatically.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex gap-2">
@@ -1442,11 +1557,16 @@ function DepartmentsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Departments</CardTitle>
-        <CardDescription>
-          Responsible department for downtime reasons and area owners (e.g. Mechanical Maintenance).
-          Each belongs to a Department Category.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Building2} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Departments</CardTitle>
+            <CardDescription>
+              Responsible department for downtime reasons and area owners (e.g. Mechanical
+              Maintenance). Each belongs to a Department Category.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-2 flex gap-2">
@@ -1573,8 +1693,15 @@ function DowntimeTypesCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Downtime Types</CardTitle>
-        <CardDescription>Planned vs Unplanned classification for downtime reasons.</CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Timer} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Downtime Types</CardTitle>
+            <CardDescription>
+              Planned vs Unplanned classification for downtime reasons.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex gap-2">
@@ -1680,11 +1807,16 @@ function SeverityLevelsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Severity Levels</CardTitle>
-        <CardDescription>
-          Used for Pareto prioritization and future risk/executive dashboards. Colors are a UI
-          concern, not stored here.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={AlertTriangle} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Severity Levels</CardTitle>
+            <CardDescription>
+              Used for Pareto prioritization and future risk/executive dashboards. Colors are a UI
+              concern, not stored here.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 flex gap-2">
@@ -1767,11 +1899,16 @@ function FieldsCard({ lineId, qc }: { lineId: string; qc: ReturnType<typeof useQ
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Custom Fields for Selected Line</CardTitle>
-        <CardDescription>
-          Add fields beyond the standard schema (e.g. Cooking Brix, Mogul speed). They'll appear in
-          the entry form.
-        </CardDescription>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={SlidersHorizontal} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Custom Fields for Selected Line</CardTitle>
+            <CardDescription>
+              Add fields beyond the standard schema (e.g. Cooking Brix, Mogul speed). They'll
+              appear in the entry form.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-5">

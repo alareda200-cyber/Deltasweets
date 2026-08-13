@@ -76,9 +76,10 @@
       "Read(//c/Users/hp/Downloads/**)",
       "Bash(git config *)",
       "WebFetch(domain:delta-sweets-kandi.web.app)",
-      "Bash(npx prettier *)"
-    ],
-    "ask": [
+      "Bash(npx prettier *)",
+      "Read(//c/Project/shanawanygroup-main-updated \\\\\\(11\\\\\\)/**)",
+      "Bash(PowerShell -c \"Get-Item 'src/lib/queries.ts',' .output/public/index.html' | Select Name,LastWriteTime\")",
+      "Skill(update-config)",
       "Bash(firebase deploy *)",
       "Bash(npx firebase deploy *)",
       "PowerShell(firebase deploy *)",
@@ -87,7 +88,9 @@
       "PowerShell(git commit *)",
       "Bash(git push *)",
       "Bash(git push)",
-      "PowerShell(git push *)",
+      "PowerShell(git push *)"
+    ],
+    "ask": [
       "Bash(rm *)",
       "Bash(rm)",
       "PowerShell(Remove-Item *)"

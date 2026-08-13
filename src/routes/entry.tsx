@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus, Save } from "lucide-react";
+import { Trash2, Plus, Save, History } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, ResponsiveContainer, Legend } from "recharts";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -511,9 +511,59 @@ function EntryPage() {
     }
   }
 
+  const activeLineName = lines.find((l) => l.id === lineId)?.name ?? "—";
+  const saveDisabled = saving || deleting || readOnly || (!existingEntryId && !canCreate);
+  // Purely decorative — no gating, nothing else reads these. "Basics" is
+  // always considered done since Line/Date/Shift always have a default
+  // value; the other two light up once their section has something entered.
+  const step2Done = makingActual !== "" || packingActual !== "";
+  const step3Done = downtimes.length > 0;
+
   return (
     <AppShell>
-      <div className="mb-6 flex items-start justify-between gap-4">
+      {/* Mobile-only compact header — title + line/date + a single accent
+          Save action in one row. Full desktop header (with Entry History)
+          below is unchanged, just gated to md+. */}
+      <div className="mb-3 flex items-center justify-between gap-3 md:hidden">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight">Daily entry</h1>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {activeLineName} · {date}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Not in the approved mobile mockup for this header, but kept
+              accessible (icon-only, same toggle as the desktop button below)
+              rather than dropping History access entirely on mobile. */}
+          {canViewHistory && (
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label={showHistory ? "Hide Entry History" : "Entry History"}
+              onClick={() => setShowHistory((s) => !s)}
+            >
+              <History className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            size="sm"
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={handleSave}
+            disabled={saveDisabled}
+          >
+            <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Mobile-only step indicator — 3 segments: Basics / Production / Downtime. */}
+      <div className="mb-4 flex gap-1 md:hidden">
+        <div className="h-[3px] flex-1 rounded-full bg-accent" />
+        <div className={`h-[3px] flex-1 rounded-full ${step2Done ? "bg-accent" : "bg-muted"}`} />
+        <div className={`h-[3px] flex-1 rounded-full ${step3Done ? "bg-accent" : "bg-muted"}`} />
+      </div>
+
+      <div className="mb-6 hidden md:flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Daily Production Entry</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -580,6 +630,109 @@ function EntryPage() {
             <CardDescription>Plan & actual figures in kilograms.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {/* Mobile-only: the same 10 fields below, paired up 2-per-row
+                (Plan next to Actual, Available next to the first Rework
+                field) instead of the desktop 3-column grid. Same state,
+                same onChange/disabled — just a different arrangement. */}
+            <div className="grid grid-cols-2 gap-2 md:hidden">
+              <Field label="Date">
+                <Input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Shift">
+                <Select value={shift} onValueChange={setShift}>
+                  <SelectTrigger className="rounded-md border bg-muted">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="A">Shift A</SelectItem>
+                    <SelectItem value="B">Shift B</SelectItem>
+                    <SelectItem value="C">Shift C</SelectItem>
+                    <SelectItem value="DAY">Full Day</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Making Plan (kg)">
+                <Input
+                  type="number"
+                  value={makingPlan}
+                  onChange={(e) => setMakingPlan(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Making Actual (kg)">
+                <Input
+                  type="number"
+                  value={makingActual}
+                  onChange={(e) => setMakingActual(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Packing Plan (kg)">
+                <Input
+                  type="number"
+                  value={packingPlan}
+                  onChange={(e) => setPackingPlan(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Packing Actual (kg)">
+                <Input
+                  type="number"
+                  value={packingActual}
+                  onChange={(e) => setPackingActual(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Available Time (min)">
+                <Input
+                  type="number"
+                  value={availableMin}
+                  onChange={(e) => setAvailableMin(e.target.value)}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Rework Cooking (kg)">
+                <Input
+                  type="number"
+                  value={reworkCooking}
+                  onChange={(e) => setReworkCooking(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Rework Making (kg)">
+                <Input
+                  type="number"
+                  value={reworkMaking}
+                  onChange={(e) => setReworkMaking(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+              <Field label="Rework Packing (kg)">
+                <Input
+                  type="number"
+                  value={reworkPacking}
+                  onChange={(e) => setReworkPacking(e.target.value)}
+                  disabled={!canEditProduction}
+                  className="rounded-md border bg-muted"
+                />
+              </Field>
+            </div>
+
+            {/* Desktop-only (md:contents unwraps into the grid above at
+                md+, exactly as before) — same fields, original 3-column
+                layout, completely unchanged. */}
+            <div className="hidden md:contents">
             <Field label="Date">
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
@@ -664,6 +817,7 @@ function EntryPage() {
                 disabled={!canEditProduction}
               />
             </Field>
+            </div>
 
             {productionAreas.length > 0 && (
               <div className="col-span-1 md:col-span-3">
@@ -783,6 +937,22 @@ function EntryPage() {
             )}
             {downtimes.map((d, i) => (
               <div key={i} className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                {/* Mobile-only quick-scan summary — the editable Select/
+                    Input/Remove controls below are unchanged and still do
+                    the actual editing, on every screen size. */}
+                <div className="flex items-center justify-between gap-2 rounded-r-md border-l-[3px] border-l-accent bg-card px-2 py-1.5 md:hidden">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium leading-tight">
+                      {d.reason_name || "Pick reason"}
+                    </p>
+                    <p className="truncate text-xs leading-tight text-muted-foreground">
+                      {d.area || "—"}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums">
+                    {d.minutes || 0} min
+                  </span>
+                </div>
                 <Select
                   value={d.reason_id}
                   onValueChange={(v) => {

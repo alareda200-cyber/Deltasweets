@@ -61,6 +61,7 @@ import {
   Layers,
   AlertTriangle,
   Trash2,
+  Clock,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -192,6 +193,17 @@ function MaintenancePage() {
   );
   const mttrElectricalHours = useMemo(
     () => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"),
+    [metrics],
+  );
+  // Mechanical + electrical pooled — same weighted-average formula as
+  // weightedAverage() above, just spanning both types at once instead of
+  // one, for the mobile-only combined MTBF/MTTR mini KPIs.
+  const mtbfCombinedHours = useMemo(
+    () => weightedAverage(metrics, ["mechanical", "electrical"], "mtbf_hours", "mtbf_gap_count"),
+    [metrics],
+  );
+  const mttrCombinedHours = useMemo(
+    () => weightedAverage(metrics, ["mechanical", "electrical"], "mttr_hours", "mttr_sample_count"),
     [metrics],
   );
 
@@ -420,7 +432,93 @@ function MaintenancePage() {
 
   return (
     <AppShell>
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+      {/* Mobile-only compact header — title + description + a single accent
+          "+ Event" action in one row. The full desktop header (Export
+          Report / New Stoppage / New event) below is unchanged, just gated
+          to md+ so it doesn't also render here. */}
+      <div className="mb-4 flex items-center justify-between gap-3 md:hidden">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight">Maintenance</h1>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            Events &amp; reliability metrics
+          </p>
+        </div>
+        {canEdit && (
+          <Button size="sm" className="shrink-0 bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" />
+            Event
+          </Button>
+        )}
+      </div>
+
+      {/* Mobile-only quick actions — 2x2 grid, icon over label. */}
+      <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
+        {canEdit && (
+          <button
+            onClick={() => setCreateOpen(true)}
+            className="flex flex-col items-center gap-1 rounded-lg bg-accent p-3 text-accent-foreground"
+          >
+            <Plus className="h-[18px] w-[18px]" />
+            <span className="text-xs font-medium">New event</span>
+          </button>
+        )}
+        {canEdit && (
+          <button
+            onClick={() => setStoppageDialogOpen(true)}
+            className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
+          >
+            <Layers className="h-[18px] w-[18px]" />
+            <span className="text-xs font-medium">New stoppage</span>
+          </button>
+        )}
+        <button
+          onClick={handleExportReport}
+          disabled={exportingReport}
+          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground disabled:opacity-50"
+        >
+          {exportingReport ? (
+            <Loader2 className="h-[18px] w-[18px] animate-spin" />
+          ) : (
+            <FileDown className="h-[18px] w-[18px]" />
+          )}
+          <span className="text-xs font-medium">Export report</span>
+        </button>
+        <button
+          onClick={() =>
+            document
+              .getElementById("reliability-analytics")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }
+          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
+        >
+          <Gauge className="h-[18px] w-[18px]" />
+          <span className="text-xs font-medium">Analytics</span>
+        </button>
+      </div>
+
+      {/* Mobile-only mini KPI row — MTBF/MTTR combined across mechanical +
+          electrical (same weighted-average formula as the Mechanical/
+          Electrical KPI cards below, just pooled across both types instead
+          of filtered to one) and Open = open mechanical + open electrical,
+          same definition the PDF report's openCount already uses. */}
+      <div className="mb-4 grid grid-cols-3 gap-1 md:hidden">
+        <div className="rounded-lg bg-muted p-2 text-center">
+          <p className="text-[10px] text-muted-foreground">MTBF</p>
+          <p className="text-sm font-semibold">{formatHours(mtbfCombinedHours)}</p>
+        </div>
+        <div className="rounded-lg bg-muted p-2 text-center">
+          <p className="text-[10px] text-muted-foreground">MTTR</p>
+          <p className="text-sm font-semibold">{formatHours(mttrCombinedHours)}</p>
+        </div>
+        <div className="rounded-lg bg-destructive p-2 text-center">
+          <p className="text-[10px] text-destructive-foreground/80">Open</p>
+          <p className="text-sm font-semibold text-destructive-foreground">
+            {openMechanical + openElectrical}
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-6 hidden md:flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Maintenance</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -593,7 +691,62 @@ function MaintenancePage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              {/* Mobile: one card per event instead of the table below (which
+                  is desktop-only, hidden md:block, fully unchanged) — same
+                  events/isLoading data and the same durationMs/firstNote
+                  derivations as the table rows use. */}
+              <div className="space-y-2 md:hidden">
+                {isLoading && (
+                  <div className="flex justify-center py-10">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                {!isLoading && events.length === 0 && (
+                  <p className="py-10 text-center text-sm text-muted-foreground">
+                    No maintenance events match this filter.
+                  </p>
+                )}
+                {events.map((e) => {
+                  const durationMs =
+                    (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
+                    new Date(e.started_at).getTime();
+                  const borderColor =
+                    e.type === "mechanical"
+                      ? "border-l-destructive"
+                      : e.type === "electrical"
+                        ? "border-l-warning"
+                        : "border-l-border";
+                  return (
+                    <div
+                      key={e.id}
+                      onClick={() => setSelectedEvent(e)}
+                      className={`flex cursor-pointer items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3`}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium leading-tight">{e.title}</p>
+                        <p className="truncate text-xs leading-tight text-muted-foreground">
+                          {[e.production_lines?.name, e.technician_names.join(", ") || null]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}
+                        </p>
+                        <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          <span>{formatDuration(durationMs)}</span>
+                          {e.severity_label && <span>· {e.severity_label}</span>}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                        <Badge variant={statusBadgeVariant(e.status)}>
+                          {STATUS_LABELS[e.status]}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -759,11 +912,12 @@ function MaintenancePage() {
 // few, giving a misleading plant-wide number.
 function weightedAverage(
   metrics: MaintenanceMetric[],
-  type: MaintenanceType,
+  type: MaintenanceType | MaintenanceType[],
   field: "mtbf_hours" | "mttr_hours",
   weightField: "mtbf_gap_count" | "mttr_sample_count",
 ): number | null {
-  const rows = metrics.filter((m) => m.type === type);
+  const types = Array.isArray(type) ? type : [type];
+  const rows = metrics.filter((m) => types.includes(m.type));
   const totalWeight = rows.reduce((s, m) => s + m[weightField], 0);
   if (totalWeight === 0) return null;
   const totalValue = rows.reduce((s, m) => s + (m[field] ?? 0) * m[weightField], 0);
@@ -1035,7 +1189,7 @@ function ReliabilityAnalyticsSection({
   }));
 
   return (
-    <div className="mt-6 space-y-4">
+    <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
       <div>
         <h2 className="text-lg font-semibold">Reliability Analytics</h2>
         <p className="text-sm text-muted-foreground">
@@ -1043,7 +1197,7 @@ function ReliabilityAnalyticsSection({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-4">
         <KpiCard
           label="Maintenance events downtime"
           value={formatDuration(totalDowntimeMinutes * 60_000)}

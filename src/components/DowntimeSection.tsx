@@ -167,17 +167,41 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         )}
       </div>
 
-      {/* Chart is 220px on mobile, not the 180px used by every other chart in
-          this redesign — this one's rotated (-45°) X-axis labels reserve
-          80px at the bottom (see the isMobile-driven margin/height below),
-          so 180px left almost nothing for the bars themselves. Confirmed
-          with the user before deploying. */}
+      {/* Mobile height reduced to 160px per user request (2026-08-12) — was
+          220px, deliberately taller than the 180px used elsewhere because the
+          rotated (-45°) X-axis labels reserve 80px at the bottom (see the
+          isMobile-driven margin/height below). Desktop (md:h-96) is untouched. */}
       {chartData.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
           No downtime reasons logged in this period.
         </div>
       ) : (
-        <div className="h-[220px] w-full md:h-96">
+        <>
+          {/* Mobile: compact top-5 mini bars — same ranked chartData as the
+              full chart below, just the biggest causes at a glance instead of
+              the angled 12-label Pareto (which stays desktop-only). */}
+          <div className="flex items-end gap-2 md:hidden" style={{ height: 40 }}>
+            {chartData.slice(0, 5).map((d, i, top5) => {
+              const maxMinutes = Math.max(...top5.map((x) => x.minutes), 1);
+              const barHeight = Math.max(4, Math.round((d.minutes / maxMinutes) * 40));
+              return (
+                <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+                  <div className="flex h-10 w-full items-end justify-center">
+                    <div
+                      className="w-full max-w-[22px] rounded-t bg-primary"
+                      style={{ height: barHeight }}
+                    />
+                  </div>
+                  <span className="w-full truncate text-center text-[8px] text-muted-foreground">
+                    {d.name}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden md:block">
+        <div className={isMobile ? "h-[160px] w-full" : "h-96 w-full"}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={chartData}
@@ -237,6 +261,8 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             </BarChart>
           </ResponsiveContainer>
         </div>
+          </div>
+        </>
       )}
     </section>
   );

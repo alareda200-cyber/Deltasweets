@@ -24,12 +24,12 @@ import {
   maintenanceEventsQuery,
   maintenanceStoppagesQuery,
 } from "@/lib/queries";
-import { monthRange } from "@/lib/date-utils";
+import { monthRange, pct } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
-import { PlusSquare, FileDown, Loader2 } from "lucide-react";
+import { PlusSquare, FileDown, Loader2, Factory, Bell } from "lucide-react";
 
 // recharts (the bulk of these components' weight) is code-split into its own
 // chunk; loading these lazily keeps it out of the main route bundle and lets
@@ -112,6 +112,10 @@ function Dashboard() {
   );
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
+  // Same "open" predicate MaintenanceEventsCard uses for its OPEN MECHANICAL/
+  // OPEN ELECTRICAL KPIs — reused here only to light the mobile header's bell
+  // dot, not a new source of truth.
+  const hasOpenFaults = maintenanceEvents.some((e) => e.status !== "resolved");
 
   async function handleExportPdf() {
     if (!activeLine || !exportRef.current) return;
@@ -148,7 +152,7 @@ function Dashboard() {
         <EmptyState onCreate={() => navigate({ to: "/settings" })} />
       ) : (
         <div ref={exportRef}>
-          <HeroHeader line={activeLine} from={from} to={to} />
+          <HeroHeader line={activeLine} from={from} to={to} hasOpenFaults={hasOpenFaults} />
 
           <div
             data-pdf-exclude="true"
@@ -257,22 +261,37 @@ function HeroHeader({
   line,
   from,
   to,
+  hasOpenFaults,
 }: {
   line: { name: string; color: string } | undefined;
   from: string;
   to: string;
+  hasOpenFaults: boolean;
 }) {
   return (
     <>
-      {/* Mobile-only compact replacement for the full hero below — line name
-          + date range stacked in a plain two-line block, per the approved
-          mobile mockup. Not part of data-pdf-section="hero" (no
+      {/* Mobile-only compact replacement for the full hero below — brand mark
+          + line name on the left, a faults bell on the right, per the
+          approved mobile mockup. Not part of data-pdf-section="hero" (no
           data-pdf-section attribute of its own), so it never appears in PDF
           exports regardless of screen size. */}
-      <div className="md:hidden px-4 py-3 border-b border-border">
-        <div className="text-base font-medium">{line?.name ?? "—"} Production Line</div>
-        <div className="text-xs text-muted-foreground">
-          {from} → {to}
+      <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-lg bg-accent">
+            <Factory className="h-3.5 w-3.5 text-accent-foreground" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-bold leading-tight">Scorecard OS</div>
+            <div className="truncate text-xs leading-tight text-muted-foreground">
+              {line?.name ?? "—"}
+            </div>
+          </div>
+        </div>
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+          <Bell className="h-4 w-4 text-muted-foreground" />
+          {hasOpenFaults && (
+            <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-destructive" />
+          )}
         </div>
       </div>
 
@@ -369,8 +388,48 @@ function DashboardBody({
     );
   }
 
+  // Same formulas as PerformanceSection's monthAdh (making/packing) and
+  // DowntimeSection's lossPct — recomputed here from the same entries/
+  // downtimes rather than imported, just to drive this compact mobile-only
+  // summary row; not a new source of truth, so it can't drift from the full
+  // sections below it.
+  const monthMakingPlan = entries.reduce((s, e) => s + Number(e.making_plan), 0);
+  const monthMakingActual = entries.reduce((s, e) => s + Number(e.making_actual), 0);
+  const makingAdh = monthMakingPlan > 0 ? monthMakingActual / monthMakingPlan : 0;
+  const monthPackingPlan = entries.reduce((s, e) => s + Number(e.packing_plan), 0);
+  const monthPackingActual = entries.reduce((s, e) => s + Number(e.packing_actual), 0);
+  const packingAdh = monthPackingPlan > 0 ? monthPackingActual / monthPackingPlan : 0;
+  const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
+  const totalDown = downtimes.reduce((s, d) => s + Number(d.minutes), 0);
+  const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
+  const adhColor = (v: number) =>
+    v >= 0.9 ? "text-success" : v >= 0.7 ? "text-warning" : "text-destructive";
+  const lossColor = lossPct < 10 ? "text-success" : lossPct < 25 ? "text-warning" : "text-destructive";
+
   return (
-    <Suspense fallback={<ChartsSkeleton />}>
+    <>
+      {/* Mobile-only at-a-glance summary — the full Making/Packing/Downtime
+          sections below (in the Suspense boundary) carry the same numbers
+          plus charts; this is just a quick compact read before scrolling. */}
+      <div className="mt-6 rounded-2xl border border-border bg-card p-4 shadow-card md:hidden">
+        <p className="mb-3 text-sm font-semibold">Performance</p>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Making adherence</span>
+            <span className={`font-medium ${adhColor(makingAdh)}`}>{pct(makingAdh)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Packing adherence</span>
+            <span className={`font-medium ${adhColor(packingAdh)}`}>{pct(packingAdh)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Loss %</span>
+            <span className={`font-medium ${lossColor}`}>{lossPct.toFixed(1)}%</span>
+          </div>
+        </div>
+      </div>
+
+      <Suspense fallback={<ChartsSkeleton />}>
       <div className="mt-6 grid grid-cols-1 gap-6">
         <div data-pdf-section="performance-making">
           <PerformanceSection
@@ -418,6 +477,7 @@ function DashboardBody({
         </div>
       </div>
     </Suspense>
+    </>
   );
 }
 
