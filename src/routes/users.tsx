@@ -215,7 +215,7 @@ function UsersPage() {
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader className="sticky top-16 z-10 bg-card">
+              <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
                 <TableRow>
                   <TableHead className="max-md:min-w-[160px]">User</TableHead>
                   <TableHead className="hidden md:table-cell">Department</TableHead>

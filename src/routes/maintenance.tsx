@@ -522,7 +522,7 @@ function EventsListCard({
 
         <div className="hidden md:block overflow-x-auto">
           <Table>
-            <TableHeader className="sticky top-16 z-10 bg-card">
+            <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
               <TableRow>
                 <TableHead>Event</TableHead>
                 <TableHead className="hidden md:table-cell">Line</TableHead>
@@ -2063,7 +2063,7 @@ function StoppagesSection({
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader className="sticky top-16 z-10 bg-card">
+              <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
                 <TableRow>
                   <TableHead>Line</TableHead>
                   <TableHead>Status</TableHead>

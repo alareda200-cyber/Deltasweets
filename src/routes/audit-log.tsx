@@ -207,7 +207,7 @@ function AuditLogPage() {
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader className="sticky top-16 z-10 bg-card">
+              <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
                 <TableRow>
                   <TableHead className="max-md:min-w-[170px]">User</TableHead>
                   <TableHead className="max-md:min-w-[110px]">Action</TableHead>
