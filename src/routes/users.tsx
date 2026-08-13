@@ -8,25 +8,68 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
-import { TableSkeletonRows } from "@/components/TableSkeletonRows";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import { TableSkeletonRows } from "@/components/TableSkeletonRows";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreVertical, Plus, Eye, Pencil, KeyRound, Ban, CheckCircle2, Trash2, Inbox, Info } from "lucide-react";
+import {
+  MoreVertical,
+  Plus,
+  Eye,
+  Pencil,
+  KeyRound,
+  Ban,
+  CheckCircle2,
+  Trash2,
+  Inbox,
+  Info,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { ALL_ROLES, ROLE_LABELS, type Role } from "@/lib/permissions";
-import { createUserFn, resetPasswordFn, setUserStatusFn, deleteUserFn } from "@/lib/users-actions.server";
+import {
+  createUserFn,
+  resetPasswordFn,
+  setUserStatusFn,
+  deleteUserFn,
+} from "@/lib/users-actions.server";
 import { logAudit } from "@/lib/audit";
 
 // This deployment is Firebase Hosting ONLY (a pure static SPA) — there is
@@ -69,18 +112,28 @@ interface UserRow {
 const PAGE_SIZE = 10;
 
 function initials(row: UserRow) {
-  const n = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.display_name || row.email;
-  return n.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  const n =
+    `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.display_name || row.email;
+  return n
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 }
 function fullName(row: UserRow) {
   return `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.display_name || "—";
 }
 function roleColorClass(role: string) {
   switch (role) {
-    case "admin": return "text-accent";
-    case "maintenance": return "text-warning";
-    case "production": return "text-success";
-    default: return "text-muted-foreground"; // viewer, quality
+    case "admin":
+      return "text-accent";
+    case "maintenance":
+      return "text-warning";
+    case "production":
+      return "text-success";
+    default:
+      return "text-muted-foreground"; // viewer, quality
   }
 }
 
@@ -90,7 +143,11 @@ function UsersPage() {
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("departments").select("*").eq("is_active", true).order("name");
+      const { data, error } = await supabase
+        .from("departments")
+        .select("*")
+        .eq("is_active", true)
+        .order("name");
       if (error) throw error;
       return data;
     },
@@ -98,7 +155,10 @@ function UsersPage() {
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["all-users"],
     queryFn: async (): Promise<UserRow[]> => {
-      const { data, error } = await supabase.from("profiles").select("*, departments(name)").order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*, departments(name)")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data as unknown as UserRow[];
     },
@@ -108,7 +168,9 @@ function UsersPage() {
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [deptFilter, setDeptFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
-  const [sortKey, setSortKey] = useState<"name" | "created_at" | "last_login" | "role">("created_at");
+  const [sortKey, setSortKey] = useState<"name" | "created_at" | "last_login" | "role">(
+    "created_at",
+  );
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
 
@@ -117,7 +179,9 @@ function UsersPage() {
   const [editRow, setEditRow] = useState<UserRow | null>(null);
   const [resetRow, setResetRow] = useState<UserRow | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
-  const [statusRow, setStatusRow] = useState<{ row: UserRow; next: "active" | "inactive" } | null>(null);
+  const [statusRow, setStatusRow] = useState<{ row: UserRow; next: "active" | "inactive" } | null>(
+    null,
+  );
   const [deleteRow, setDeleteRow] = useState<UserRow | null>(null);
 
   function refetchAll() {
@@ -131,7 +195,10 @@ function UsersPage() {
       if (statusFilter && u.status !== statusFilter) return false;
       if (search.trim()) {
         const q = search.trim().toLowerCase();
-        const hay = [fullName(u), u.username, u.email, u.departments?.name, u.role].filter(Boolean).join(" ").toLowerCase();
+        const hay = [fullName(u), u.username, u.email, u.departments?.name, u.role]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -140,8 +207,9 @@ function UsersPage() {
       const dir = sortDir === "asc" ? 1 : -1;
       if (sortKey === "name") return fullName(a).localeCompare(fullName(b)) * dir;
       if (sortKey === "role") return a.role.localeCompare(b.role) * dir;
-      if (sortKey === "last_login") return ((a.last_login ?? "") > (b.last_login ?? "") ? 1 : -1) * dir;
-      return ((a.created_at) > (b.created_at) ? 1 : -1) * dir;
+      if (sortKey === "last_login")
+        return ((a.last_login ?? "") > (b.last_login ?? "") ? 1 : -1) * dir;
+      return (a.created_at > b.created_at ? 1 : -1) * dir;
     });
     return list;
   }, [users, search, roleFilter, deptFilter, statusFilter, sortKey, sortDir]);
@@ -155,40 +223,86 @@ function UsersPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Users</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{users.length} user{users.length === 1 ? "" : "s"} · admin only</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {users.length} user{users.length === 1 ? "" : "s"} · admin only
+          </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} disabled={!SERVER_ACTIONS_AVAILABLE}>
-          <Plus className="mr-1.5 h-4 w-4" />Create User
+          <Plus className="mr-1.5 h-4 w-4" />
+          Create User
         </Button>
       </div>
 
       {!SERVER_ACTIONS_AVAILABLE && (
         <div className="mb-6 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
           <Info className="h-3.5 w-3.5 shrink-0" />
-          <span>Create / reset / delete need a backend — manage in Supabase Dashboard. Editing below works.</span>
+          <span>
+            Create / reset / delete need a backend — manage in Supabase Dashboard. Editing below
+            works.
+          </span>
         </div>
       )}
 
       <Card>
         <CardHeader>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-            <Input placeholder="Search name, username, email, department…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="md:col-span-2" />
-            <Select value={roleFilter || "all"} onValueChange={(v) => { setRoleFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="All Roles" /></SelectTrigger>
+            <Input
+              placeholder="Search name, username, email, department…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="md:col-span-2"
+            />
+            <Select
+              value={roleFilter || "all"}
+              onValueChange={(v) => {
+                setRoleFilter(v === "all" ? "" : v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Roles" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Roles</SelectItem>
-                {ALL_ROLES.map((r) => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}
+                {ALL_ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <Select value={deptFilter || "all"} onValueChange={(v) => { setDeptFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="All Departments" /></SelectTrigger>
+            <Select
+              value={deptFilter || "all"}
+              onValueChange={(v) => {
+                setDeptFilter(v === "all" ? "" : v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Departments" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Departments</SelectItem>
-                {departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                {departments.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <Select value={statusFilter || "all"} onValueChange={(v) => { setStatusFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger><SelectValue placeholder="All Status" /></SelectTrigger>
+            <Select
+              value={statusFilter || "all"}
+              onValueChange={(v) => {
+                setStatusFilter(v === "all" ? "" : v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Status" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
@@ -199,7 +313,9 @@ function UsersPage() {
           <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
             Sort by:
             <Select value={sortKey} onValueChange={(v) => setSortKey(v as typeof sortKey)}>
-              <SelectTrigger className="h-7 w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-7 w-40">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="name">Name</SelectItem>
                 <SelectItem value="created_at">Created Date</SelectItem>
@@ -207,122 +323,226 @@ function UsersPage() {
                 <SelectItem value="role">Role</SelectItem>
               </SelectContent>
             </Select>
-            <Button size="sm" variant="ghost" className="h-7" onClick={() => setSortDir((d) => d === "asc" ? "desc" : "asc")}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+            >
               {sortDir === "asc" ? "▲ Asc" : "▼ Desc"}
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+          <Table stickyHeader>
+            <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+              <TableRow>
+                <TableHead className="max-md:min-w-[160px]">User</TableHead>
+                <TableHead className="hidden md:table-cell">Department</TableHead>
+                <TableHead className="max-md:min-w-[110px]">Role</TableHead>
+                <TableHead className="max-md:min-w-[130px]">Status</TableHead>
+                <TableHead className="hidden xl:table-cell">Created</TableHead>
+                <TableHead className="max-md:min-w-[60px] text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && <TableSkeletonRows columns={6} />}
+              {!isLoading && pageRows.length === 0 && (
                 <TableRow>
-                  <TableHead className="max-md:min-w-[160px]">User</TableHead>
-                  <TableHead className="hidden md:table-cell">Department</TableHead>
-                  <TableHead className="max-md:min-w-[110px]">Role</TableHead>
-                  <TableHead className="max-md:min-w-[130px]">Status</TableHead>
-                  <TableHead className="hidden xl:table-cell">Created</TableHead>
-                  <TableHead className="max-md:min-w-[60px] text-right">Actions</TableHead>
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
+                    <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                    <p className="mt-2">No users match this filter.</p>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading && <TableSkeletonRows columns={6} />}
-                {!isLoading && pageRows.length === 0 && (
-                  <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground"><Inbox className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2">No users match this filter.</p></TableCell></TableRow>
-                )}
-                {pageRows.map((u) => (
-                  <TableRow key={u.id} className="hover:bg-muted/50">
-                    <TableCell>
-                      <div className="flex items-center gap-2.5">
-                        <Avatar className="h-8 w-8"><AvatarFallback>{initials(u)}</AvatarFallback></Avatar>
-                        <div>
-                          <p className="text-sm font-medium leading-tight">{fullName(u)}</p>
-                          <p className="text-xs text-muted-foreground leading-tight">{u.email}</p>
-                        </div>
+              )}
+              {pageRows.map((u) => (
+                <TableRow key={u.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="flex items-center gap-2.5">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback>{initials(u)}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm font-medium leading-tight">{fullName(u)}</p>
+                        <p className="text-xs text-muted-foreground leading-tight">{u.email}</p>
                       </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{u.departments?.name || "—"}</TableCell>
-                    <TableCell>
-                      <span className={`text-sm font-medium ${roleColorClass(u.role)}`}>{ROLE_LABELS[u.role as Role] ?? u.role}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${u.status === "active" ? "bg-success" : "bg-muted-foreground"}`} />
-                        <span className="text-sm">{u.status === "active" ? "Active" : "Inactive"}</span>
-                      </div>
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        {u.last_login ? `Last seen ${new Date(u.last_login).toLocaleDateString()}` : "Never signed in"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button size="icon" variant="ghost"><MoreVertical className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setViewRow(u)}><Eye className="mr-2 h-4 w-4" />View</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setEditRow(u)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
-                          <DropdownMenuItem disabled={!SERVER_ACTIONS_AVAILABLE} onClick={() => setResetRow(u)}><KeyRound className="mr-2 h-4 w-4" />Reset Password</DropdownMenuItem>
-                          {u.status === "active" ? (
-                            <DropdownMenuItem disabled={!SERVER_ACTIONS_AVAILABLE} onClick={() => setStatusRow({ row: u, next: "inactive" })}><Ban className="mr-2 h-4 w-4" />Deactivate</DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem disabled={!SERVER_ACTIONS_AVAILABLE} onClick={() => setStatusRow({ row: u, next: "active" })}><CheckCircle2 className="mr-2 h-4 w-4" />Activate</DropdownMenuItem>
-                          )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                    {u.departments?.name || "—"}
+                  </TableCell>
+                  <TableCell>
+                    <span className={`text-sm font-medium ${roleColorClass(u.role)}`}>
+                      {ROLE_LABELS[u.role as Role] ?? u.role}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${u.status === "active" ? "bg-success" : "bg-muted-foreground"}`}
+                      />
+                      <span className="text-sm">
+                        {u.status === "active" ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {u.last_login
+                        ? `Last seen ${new Date(u.last_login).toLocaleDateString()}`
+                        : "Never signed in"}
+                    </p>
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">
+                    {new Date(u.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon" variant="ghost">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setViewRow(u)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          View
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setEditRow(u)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!SERVER_ACTIONS_AVAILABLE}
+                          onClick={() => setResetRow(u)}
+                        >
+                          <KeyRound className="mr-2 h-4 w-4" />
+                          Reset Password
+                        </DropdownMenuItem>
+                        {u.status === "active" ? (
                           <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            disabled={!SERVER_ACTIONS_AVAILABLE || u.id === currentUser?.id || (u.role === "admin" && adminCount <= 1)}
-                            onClick={() => setDeleteRow(u)}
+                            disabled={!SERVER_ACTIONS_AVAILABLE}
+                            onClick={() => setStatusRow({ row: u, next: "inactive" })}
                           >
-                            <Trash2 className="mr-2 h-4 w-4" />Delete
+                            <Ban className="mr-2 h-4 w-4" />
+                            Deactivate
                           </DropdownMenuItem>
-                          {!SERVER_ACTIONS_AVAILABLE && (
-                            <p className="px-2 py-1.5 text-[11px] text-muted-foreground">Requires a server — see banner above</p>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                        ) : (
+                          <DropdownMenuItem
+                            disabled={!SERVER_ACTIONS_AVAILABLE}
+                            onClick={() => setStatusRow({ row: u, next: "active" })}
+                          >
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                            Activate
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          disabled={
+                            !SERVER_ACTIONS_AVAILABLE ||
+                            u.id === currentUser?.id ||
+                            (u.role === "admin" && adminCount <= 1)
+                          }
+                          onClick={() => setDeleteRow(u)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                        {!SERVER_ACTIONS_AVAILABLE && (
+                          <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                            Requires a server — see banner above
+                          </p>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           <div className="mt-4 flex items-center justify-end gap-3 text-sm text-muted-foreground">
-            <span>Page {page} of {totalPages} ({filtered.length} users)</span>
-            <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-            <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            <span>
+              Page {page} of {totalPages} ({filtered.length} users)
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              Prev
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
           </div>
         </CardContent>
       </Card>
 
-      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} departments={departments} onCreated={refetchAll} />
+      <CreateUserDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        departments={departments}
+        onCreated={refetchAll}
+      />
       <ViewUserDialog row={viewRow} onOpenChange={(o) => !o && setViewRow(null)} />
-      <EditUserDialog row={editRow} departments={departments} onOpenChange={(o) => !o && setEditRow(null)} onSaved={refetchAll} />
+      <EditUserDialog
+        row={editRow}
+        departments={departments}
+        onOpenChange={(o) => !o && setEditRow(null)}
+        onSaved={refetchAll}
+      />
 
-      <Dialog open={!!resetRow} onOpenChange={(o) => { if (!o) { setResetRow(null); setTempPassword(null); } }}>
+      <Dialog
+        open={!!resetRow}
+        onOpenChange={(o) => {
+          if (!o) {
+            setResetRow(null);
+            setTempPassword(null);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reset Password</DialogTitle>
             <DialogDescription>
-              {tempPassword ? "Share this temporary password with the user. It will not be shown again." : `Generate a temporary password for ${resetRow ? fullName(resetRow) : ""}? They'll be required to change it on next login.`}
+              {tempPassword
+                ? "Share this temporary password with the user. It will not be shown again."
+                : `Generate a temporary password for ${resetRow ? fullName(resetRow) : ""}? They'll be required to change it on next login.`}
             </DialogDescription>
           </DialogHeader>
           {tempPassword ? (
-            <div className="rounded-md border border-border bg-muted p-3 text-center font-mono text-lg tracking-wider">{tempPassword}</div>
+            <div className="rounded-md border border-border bg-muted p-3 text-center font-mono text-lg tracking-wider">
+              {tempPassword}
+            </div>
           ) : (
             <DialogFooter>
-              <Button variant="outline" onClick={() => setResetRow(null)}>Cancel</Button>
-              <Button onClick={async () => {
-                if (!resetRow) return;
-                try {
-                  const res = await resetPasswordFn({ data: { userId: resetRow.id } });
-                  setTempPassword(res.tempPassword);
-                  toast.success("Temporary password generated");
-                  void logAudit("user.reset_password", "user", resetRow.id, { email: resetRow.email });
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Reset failed");
-                }
-              }}>Generate Password</Button>
+              <Button variant="outline" onClick={() => setResetRow(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!resetRow) return;
+                  try {
+                    const res = await resetPasswordFn({ data: { userId: resetRow.id } });
+                    setTempPassword(res.tempPassword);
+                    toast.success("Temporary password generated");
+                    void logAudit("user.reset_password", "user", resetRow.id, {
+                      email: resetRow.email,
+                    });
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Reset failed");
+                  }
+                }}
+              >
+                Generate Password
+              </Button>
             </DialogFooter>
           )}
         </DialogContent>
@@ -331,7 +551,9 @@ function UsersPage() {
       <AlertDialog open={!!statusRow} onOpenChange={(o) => !o && setStatusRow(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{statusRow?.next === "inactive" ? "Deactivate user?" : "Activate user?"}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {statusRow?.next === "inactive" ? "Deactivate user?" : "Activate user?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {statusRow?.next === "inactive"
                 ? `${statusRow ? fullName(statusRow.row) : ""} will no longer be able to sign in. Their account and data are kept — this does not delete anything.`
@@ -340,19 +562,30 @@ function UsersPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={async () => {
-              if (!statusRow) return;
-              try {
-                await setUserStatusFn({ data: { userId: statusRow.row.id, status: statusRow.next } });
-                toast.success(statusRow.next === "inactive" ? "User deactivated" : "User activated");
-                void logAudit(statusRow.next === "inactive" ? "user.deactivate" : "user.activate", "user", statusRow.row.id, { email: statusRow.row.email });
-                refetchAll();
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Update failed");
-              } finally {
-                setStatusRow(null);
-              }
-            }}>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!statusRow) return;
+                try {
+                  await setUserStatusFn({
+                    data: { userId: statusRow.row.id, status: statusRow.next },
+                  });
+                  toast.success(
+                    statusRow.next === "inactive" ? "User deactivated" : "User activated",
+                  );
+                  void logAudit(
+                    statusRow.next === "inactive" ? "user.deactivate" : "user.activate",
+                    "user",
+                    statusRow.row.id,
+                    { email: statusRow.row.email },
+                  );
+                  refetchAll();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Update failed");
+                } finally {
+                  setStatusRow(null);
+                }
+              }}
+            >
               Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -364,24 +597,27 @@ function UsersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Permanently delete this user?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteRow ? fullName(deleteRow) : ""} ({deleteRow?.email}) will be permanently removed and can no longer sign in. This cannot be undone.
+              {deleteRow ? fullName(deleteRow) : ""} ({deleteRow?.email}) will be permanently
+              removed and can no longer sign in. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={async () => {
-              if (!deleteRow) return;
-              try {
-                await deleteUserFn({ data: { userId: deleteRow.id } });
-                toast.success("User deleted successfully");
-                void logAudit("user.delete", "user", deleteRow.id, { email: deleteRow.email });
-                refetchAll();
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Delete failed");
-              } finally {
-                setDeleteRow(null);
-              }
-            }}>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!deleteRow) return;
+                try {
+                  await deleteUserFn({ data: { userId: deleteRow.id } });
+                  toast.success("User deleted successfully");
+                  void logAudit("user.delete", "user", deleteRow.id, { email: deleteRow.email });
+                  refetchAll();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Delete failed");
+                } finally {
+                  setDeleteRow(null);
+                }
+              }}
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -391,8 +627,16 @@ function UsersPage() {
   );
 }
 
-function CreateUserDialog({ open, onOpenChange, departments, onCreated }: {
-  open: boolean; onOpenChange: (o: boolean) => void; departments: { id: string; name: string }[]; onCreated: () => void;
+function CreateUserDialog({
+  open,
+  onOpenChange,
+  departments,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  departments: { id: string; name: string }[];
+  onCreated: () => void;
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -407,8 +651,16 @@ function CreateUserDialog({ open, onOpenChange, departments, onCreated }: {
   const [submitting, setSubmitting] = useState(false);
 
   function reset() {
-    setFirstName(""); setLastName(""); setUsername(""); setEmail(""); setPhone("");
-    setDepartmentId(""); setRole("viewer"); setStatus("active"); setPassword(""); setConfirm("");
+    setFirstName("");
+    setLastName("");
+    setUsername("");
+    setEmail("");
+    setPhone("");
+    setDepartmentId("");
+    setRole("viewer");
+    setStatus("active");
+    setPassword("");
+    setConfirm("");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -417,14 +669,31 @@ function CreateUserDialog({ open, onOpenChange, departments, onCreated }: {
       return toast.error("Please fill in all required fields.");
     }
     if (!/^\S+@\S+\.\S+$/.test(email)) return toast.error("Invalid email address.");
-    if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
-      return toast.error("Password must be at least 8 characters and include uppercase, lowercase, and a number.");
+    if (
+      password.length < 8 ||
+      !/[A-Z]/.test(password) ||
+      !/[a-z]/.test(password) ||
+      !/[0-9]/.test(password)
+    ) {
+      return toast.error(
+        "Password must be at least 8 characters and include uppercase, lowercase, and a number.",
+      );
     }
     if (password !== confirm) return toast.error("Passwords do not match.");
     setSubmitting(true);
     try {
       const created = await createUserFn({
-        data: { email: email.trim(), password, firstName: firstName.trim(), lastName: lastName.trim(), username: username.trim(), phone: phone.trim() || null, departmentId: departmentId || null, role, status },
+        data: {
+          email: email.trim(),
+          password,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          username: username.trim(),
+          phone: phone.trim() || null,
+          departmentId: departmentId || null,
+          role,
+          status,
+        },
       });
       toast.success("User created successfully");
       void logAudit("user.create", "user", created.id, { email: email.trim(), role });
@@ -443,48 +712,106 @@ function CreateUserDialog({ open, onOpenChange, departments, onCreated }: {
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create User</DialogTitle>
-          <DialogDescription>New users can sign in immediately with the password set below.</DialogDescription>
+          <DialogDescription>
+            New users can sign in immediately with the password set below.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>First Name</Label><Input value={firstName} onChange={(e) => setFirstName(e.target.value)} required /></div>
-            <div><Label>Last Name</Label><Input value={lastName} onChange={(e) => setLastName(e.target.value)} required /></div>
+            <div>
+              <Label>First Name</Label>
+              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+            </div>
+            <div>
+              <Label>Last Name</Label>
+              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Username</Label><Input value={username} onChange={(e) => setUsername(e.target.value)} required /></div>
-            <div><Label>Phone (optional)</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+            <div>
+              <Label>Username</Label>
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} required />
+            </div>
+            <div>
+              <Label>Phone (optional)</Label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
           </div>
-          <div><Label>Email</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+          <div>
+            <Label>Email</Label>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Department</Label>
               <Select value={departmentId} onValueChange={setDepartmentId}>
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent>{departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+                <SelectTrigger>
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Role</Label>
               <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{ALL_ROLES.map((r) => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           </div>
           <div>
             <Label>Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as "active" | "inactive")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Password</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
-            <div><Label>Confirm Password</Label><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required /></div>
+            <div>
+              <Label>Password</Label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <Label>Confirm Password</Label>
+              <Input
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                required
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={submitting}>{submitting ? "Creating…" : "Create User"}</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Creating…" : "Create User"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -492,20 +819,50 @@ function CreateUserDialog({ open, onOpenChange, departments, onCreated }: {
   );
 }
 
-function ViewUserDialog({ row, onOpenChange }: { row: UserRow | null; onOpenChange: (o: boolean) => void }) {
+function ViewUserDialog({
+  row,
+  onOpenChange,
+}: {
+  row: UserRow | null;
+  onOpenChange: (o: boolean) => void;
+}) {
   return (
     <Dialog open={!!row} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{row ? fullName(row) : ""}</DialogTitle><DialogDescription>{row?.email}</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{row ? fullName(row) : ""}</DialogTitle>
+          <DialogDescription>{row?.email}</DialogDescription>
+        </DialogHeader>
         {row && (
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><p className="text-xs text-muted-foreground">Username</p><p>{row.username || "—"}</p></div>
-            <div><p className="text-xs text-muted-foreground">Phone</p><p>{row.phone || "—"}</p></div>
-            <div><p className="text-xs text-muted-foreground">Department</p><p>{row.departments?.name || "—"}</p></div>
-            <div><p className="text-xs text-muted-foreground">Role</p><p>{ROLE_LABELS[row.role as Role] ?? row.role}</p></div>
-            <div><p className="text-xs text-muted-foreground">Status</p><p>{row.status}</p></div>
-            <div><p className="text-xs text-muted-foreground">Last Login</p><p>{row.last_login ? new Date(row.last_login).toLocaleString() : "Never"}</p></div>
-            <div><p className="text-xs text-muted-foreground">Created</p><p>{new Date(row.created_at).toLocaleString()}</p></div>
+            <div>
+              <p className="text-xs text-muted-foreground">Username</p>
+              <p>{row.username || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Phone</p>
+              <p>{row.phone || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Department</p>
+              <p>{row.departments?.name || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Role</p>
+              <p>{ROLE_LABELS[row.role as Role] ?? row.role}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Status</p>
+              <p>{row.status}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Last Login</p>
+              <p>{row.last_login ? new Date(row.last_login).toLocaleString() : "Never"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Created</p>
+              <p>{new Date(row.created_at).toLocaleString()}</p>
+            </div>
           </div>
         )}
       </DialogContent>
@@ -513,8 +870,16 @@ function ViewUserDialog({ row, onOpenChange }: { row: UserRow | null; onOpenChan
   );
 }
 
-function EditUserDialog({ row, departments, onOpenChange, onSaved }: {
-  row: UserRow | null; departments: { id: string; name: string }[]; onOpenChange: (o: boolean) => void; onSaved: () => void;
+function EditUserDialog({
+  row,
+  departments,
+  onOpenChange,
+  onSaved,
+}: {
+  row: UserRow | null;
+  departments: { id: string; name: string }[];
+  onOpenChange: (o: boolean) => void;
+  onSaved: () => void;
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -526,8 +891,12 @@ function EditUserDialog({ row, departments, onOpenChange, onSaved }: {
 
   useMemo(() => {
     if (row) {
-      setFirstName(row.first_name ?? ""); setLastName(row.last_name ?? ""); setPhone(row.phone ?? "");
-      setDepartmentId(row.department_id ?? ""); setRole(row.role as Role); setStatus(row.status as "active" | "inactive");
+      setFirstName(row.first_name ?? "");
+      setLastName(row.last_name ?? "");
+      setPhone(row.phone ?? "");
+      setDepartmentId(row.department_id ?? "");
+      setRole(row.role as Role);
+      setStatus(row.status as "active" | "inactive");
     }
   }, [row]);
 
@@ -546,19 +915,26 @@ function EditUserDialog({ row, departments, onOpenChange, onSaved }: {
         const { setUserStatusFn } = await import("@/lib/users-actions.server");
         await setUserStatusFn({ data: { userId: row.id, status } });
       }
-      const { error } = await supabase.from("profiles").update({
-        first_name: firstName.trim(),
-        last_name: lastName.trim(),
-        display_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
-        phone: phone.trim() || null,
-        department_id: departmentId || null,
-        role,
-      }).eq("id", row.id);
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          display_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+          phone: phone.trim() || null,
+          department_id: departmentId || null,
+          role,
+        })
+        .eq("id", row.id);
       if (error) throw error;
       toast.success("User updated");
       void logAudit("user.edit", "user", row.id, { email: row.email });
       if (role !== row.role) {
-        void logAudit("user.change_role", "user", row.id, { email: row.email, from: row.role, to: role });
+        void logAudit("user.change_role", "user", row.id, {
+          email: row.email,
+          from: row.role,
+          to: role,
+        });
       }
       onOpenChange(false);
       onSaved();
@@ -572,40 +948,85 @@ function EditUserDialog({ row, departments, onOpenChange, onSaved }: {
   return (
     <Dialog open={!!row} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Edit User</DialogTitle><DialogDescription>{row?.email} (email cannot be changed)</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Edit User</DialogTitle>
+          <DialogDescription>{row?.email} (email cannot be changed)</DialogDescription>
+        </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>First Name</Label><Input value={firstName} onChange={(e) => setFirstName(e.target.value)} required /></div>
-            <div><Label>Last Name</Label><Input value={lastName} onChange={(e) => setLastName(e.target.value)} required /></div>
+            <div>
+              <Label>First Name</Label>
+              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+            </div>
+            <div>
+              <Label>Last Name</Label>
+              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+            </div>
           </div>
-          <div><Label>Phone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+          <div>
+            <Label>Phone</Label>
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Department</Label>
               <Select value={departmentId} onValueChange={setDepartmentId}>
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent>{departments.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+                <SelectTrigger>
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Role</Label>
               <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{ALL_ROLES.map((r) => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           </div>
           <div>
             <Label>Status</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as "active" | "inactive")} disabled={!SERVER_ACTIONS_AVAILABLE}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+            <Select
+              value={status}
+              onValueChange={(v) => setStatus(v as "active" | "inactive")}
+              disabled={!SERVER_ACTIONS_AVAILABLE}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
             </Select>
-            {!SERVER_ACTIONS_AVAILABLE && <p className="mt-1 text-xs text-muted-foreground">Requires a server — change this from the Supabase Dashboard instead.</p>}
+            {!SERVER_ACTIONS_AVAILABLE && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Requires a server — change this from the Supabase Dashboard instead.
+              </p>
+            )}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={submitting}>{submitting ? "Saving…" : "Save Changes"}</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Saving…" : "Save Changes"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

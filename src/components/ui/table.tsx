@@ -2,9 +2,24 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
-    <div className="relative w-full overflow-auto">
+interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  // The wrapper div below is `overflow-auto` by default so narrow/mobile
+  // viewports still get horizontal scroll — but `overflow-auto` (even with
+  // nothing to scroll) makes this div a "scrolling ancestor" per the CSS
+  // spec, which position:sticky in a caller's <thead> resolves against
+  // instead of the page. Since this div itself never scrolls vertically,
+  // that permanently offsets a sticky header by its `top` value instead of
+  // only once the page actually scrolls there. Opt into `stickyHeader` on
+  // the handful of tables that use a sticky <thead> to swap this div to
+  // `overflow-visible`, letting sticky resolve against the real page scroll
+  // instead — callers then need their own `overflow-x-auto` wrapper for
+  // horizontal scroll, same as before. Every other table is unaffected.
+  stickyHeader?: boolean;
+}
+
+const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, stickyHeader, ...props }, ref) => (
+    <div className={cn("relative w-full", stickyHeader ? "overflow-visible" : "overflow-auto")}>
       <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
     </div>
   ),

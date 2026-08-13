@@ -488,7 +488,12 @@ function EventsListCard({
           </Select>
           <div>
             <Label className="text-xs">From</Label>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9" />
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-9"
+            />
           </div>
           <div>
             <Label className="text-xs">To</Label>
@@ -520,8 +525,8 @@ function EventsListCard({
           ))}
         </div>
 
-        <div className="hidden md:block overflow-x-auto">
-          <Table>
+        <div className="hidden md:block">
+          <Table stickyHeader>
             <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
               <TableRow>
                 <TableHead>Event</TableHead>
@@ -540,7 +545,10 @@ function EventsListCard({
               {isLoading && <TableSkeletonRows columns={10} />}
               {!isLoading && events.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell
+                    colSpan={10}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
                     <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
                     <p className="mt-2">No maintenance events match this filter.</p>
                   </TableCell>
@@ -588,7 +596,9 @@ function EventsListCard({
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusBadgeVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+                      <Badge variant={statusBadgeVariant(e.status)}>
+                        {STATUS_LABELS[e.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
                       {new Date(e.started_at).toLocaleString()}
@@ -752,7 +762,10 @@ function MaintenancePage() {
   // MTTR/repeat-failure-rate below intentionally keep reading the raw
   // `events` array — they're a different question (event start/resolve
   // timing), not a sum, so member-level granularity there is correct as-is.
-  const collapsedEvents = useMemo(() => collapseStoppageEvents(events, stoppages), [events, stoppages]);
+  const collapsedEvents = useMemo(
+    () => collapseStoppageEvents(events, stoppages),
+    [events, stoppages],
+  );
 
   // Reliability Analytics section — every number below is derived from the
   // already-fetched `events` (same line/type/date filters as the table
@@ -991,7 +1004,11 @@ function MaintenancePage() {
           </p>
         </div>
         {canEdit && (
-          <Button size="sm" className="shrink-0 bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setCreateOpen(true)}>
+          <Button
+            size="sm"
+            className="shrink-0 bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => setCreateOpen(true)}
+          >
             <Plus className="mr-1 h-4 w-4" />
             Event
           </Button>
@@ -1127,69 +1144,69 @@ function MaintenancePage() {
           uses the sidebar layout instead (renderActiveSection below), which
           covers the exact same content via the same extracted components. */}
       <div className="md:hidden">
-      <MobileCollapsibleSection title="Maintenance events" count={events.length}>
-      <Tabs defaultValue="events">
-        <TabsList>
-          <TabsTrigger value="events">Events</TabsTrigger>
-          <TabsTrigger value="stoppages" className="gap-1.5">
-            Stoppages
-            {orphanedStoppageCount > 0 && (
-              <Badge
-                variant="destructive"
-                className="h-4 min-w-4 justify-center px-1 text-[10px] leading-none"
-              >
-                {orphanedStoppageCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-        </TabsList>
+        <MobileCollapsibleSection title="Maintenance events" count={events.length}>
+          <Tabs defaultValue="events">
+            <TabsList>
+              <TabsTrigger value="events">Events</TabsTrigger>
+              <TabsTrigger value="stoppages" className="gap-1.5">
+                Stoppages
+                {orphanedStoppageCount > 0 && (
+                  <Badge
+                    variant="destructive"
+                    className="h-4 min-w-4 justify-center px-1 text-[10px] leading-none"
+                  >
+                    {orphanedStoppageCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="events">
-          <EventsListCard
-            lines={lines}
-            lineId={lineId}
-            setLineId={setLineId}
-            type={type}
-            setType={setType}
-            status={status}
-            setStatus={setStatus}
-            from={from}
-            setFrom={setFrom}
-            to={to}
-            setTo={setTo}
-            isLoading={isLoading}
-            events={events}
-            onSelectEvent={setSelectedEvent}
-          />
-        </TabsContent>
+            <TabsContent value="events">
+              <EventsListCard
+                lines={lines}
+                lineId={lineId}
+                setLineId={setLineId}
+                type={type}
+                setType={setType}
+                status={status}
+                setStatus={setStatus}
+                from={from}
+                setFrom={setFrom}
+                to={to}
+                setTo={setTo}
+                isLoading={isLoading}
+                events={events}
+                onSelectEvent={setSelectedEvent}
+              />
+            </TabsContent>
 
-        <TabsContent value="stoppages">
-          <StoppagesSection
-            rows={allStoppageRows}
-            canDelete={canDelete}
-            onView={setViewStoppageId}
-            onDelete={handleDeleteStoppage}
-          />
-        </TabsContent>
-      </Tabs>
-      </MobileCollapsibleSection>
+            <TabsContent value="stoppages">
+              <StoppagesSection
+                rows={allStoppageRows}
+                canDelete={canDelete}
+                onView={setViewStoppageId}
+                onDelete={handleDeleteStoppage}
+              />
+            </TabsContent>
+          </Tabs>
+        </MobileCollapsibleSection>
 
-      <div className="mt-6 md:mt-0">
-      <MobileCollapsibleSection title="Reliability Analytics">
-      <ReliabilityAnalyticsSection
-        totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
-        repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
-        availabilityPct={reliabilitySummary.availabilityPct}
-        topLossesByDowntime={topLossesByDowntime}
-        topLossesByFrequency={topLossesByFrequency}
-        meanDowntimePerFault={meanDowntimePerFault}
-        chronicVsSporadic={chronicVsSporadic}
-        reliabilityByLine={reliabilityByLine}
-      />
-      </MobileCollapsibleSection>
-      </div>
+        <div className="mt-6 md:mt-0">
+          <MobileCollapsibleSection title="Reliability Analytics">
+            <ReliabilityAnalyticsSection
+              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+              availabilityPct={reliabilitySummary.availabilityPct}
+              topLossesByDowntime={topLossesByDowntime}
+              topLossesByFrequency={topLossesByFrequency}
+              meanDowntimePerFault={meanDowntimePerFault}
+              chronicVsSporadic={chronicVsSporadic}
+              reliabilityByLine={reliabilityByLine}
+            />
+          </MobileCollapsibleSection>
+        </div>
 
-      <MetricsTable metrics={metrics} />
+        <MetricsTable metrics={metrics} />
       </div>
 
       {/* Desktop (md: and up): sidebar layout — Overview (Events, Stoppages)
@@ -1203,7 +1220,12 @@ function MaintenancePage() {
               label: "Overview",
               items: [
                 { id: "events", label: "Events", icon: List, count: events.length },
-                { id: "stoppages", label: "Stoppages", icon: Layers, count: allStoppageRows.length },
+                {
+                  id: "stoppages",
+                  label: "Stoppages",
+                  icon: Layers,
+                  count: allStoppageRows.length,
+                },
               ],
             },
             {
@@ -1389,7 +1411,8 @@ function localMtbfHours(events: MaintenanceEvent[]): number | null {
   for (const groupEvents of groups.values()) {
     if (groupEvents.length < 2) continue;
     const starts = groupEvents.map((e) => new Date(e.started_at).getTime()).sort((a, b) => a - b);
-    for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
+    for (let i = 1; i < starts.length; i++)
+      totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
     totalGapCount += starts.length - 1;
   }
   if (totalGapCount === 0) return null;
@@ -1690,161 +1713,161 @@ function TopLossesGrid({
   }));
 
   return (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <h3 className="text-sm font-semibold">Top Losses by Downtime</h3>
-          </CardHeader>
-          <CardContent>
-            {downtimeChartData.length === 0 ? (
-              <EmptyMiniState />
-            ) : (
-              <div className="h-72 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={downtimeChartData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="var(--color-border)"
-                      horizontal={false}
-                    />
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      width={isMobile ? 70 : 120}
-                      tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "var(--color-popover)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
-                      labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                    />
-                    <Bar dataKey="minutes" radius={[0, 6, 6, 0]} fill="#ef4444" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">Top Losses by Downtime</h3>
+        </CardHeader>
+        <CardContent>
+          {downtimeChartData.length === 0 ? (
+            <EmptyMiniState />
+          ) : (
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={downtimeChartData}
+                  layout="vertical"
+                  margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--color-border)"
+                    horizontal={false}
+                  />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={isMobile ? 70 : 120}
+                    tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--color-popover)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
+                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                  />
+                  <Bar dataKey="minutes" radius={[0, 6, 6, 0]} fill="#ef4444" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <h3 className="text-sm font-semibold">Top Losses by Frequency</h3>
-          </CardHeader>
-          <CardContent>
-            {frequencyChartData.length === 0 ? (
-              <EmptyMiniState />
-            ) : (
-              <div className="h-72 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={frequencyChartData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="var(--color-border)"
-                      horizontal={false}
-                    />
-                    <XAxis
-                      type="number"
-                      allowDecimals={false}
-                      tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      width={isMobile ? 70 : 120}
-                      tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: "var(--color-popover)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value: number) => [
-                        `${value} event${value === 1 ? "" : "s"}`,
-                        "Frequency",
-                      ]}
-                      labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                    />
-                    <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="#3b82f6" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">Top Losses by Frequency</h3>
+        </CardHeader>
+        <CardContent>
+          {frequencyChartData.length === 0 ? (
+            <EmptyMiniState />
+          ) : (
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={frequencyChartData}
+                  layout="vertical"
+                  margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--color-border)"
+                    horizontal={false}
+                  />
+                  <XAxis
+                    type="number"
+                    allowDecimals={false}
+                    tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={isMobile ? 70 : 120}
+                    tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--color-popover)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    formatter={(value: number) => [
+                      `${value} event${value === 1 ? "" : "s"}`,
+                      "Frequency",
+                    ]}
+                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                  />
+                  <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <h3 className="text-sm font-semibold">Mean Downtime per Fault</h3>
-          </CardHeader>
-          <CardContent>
-            {meanDowntimePerFault.length === 0 ? (
-              <EmptyMiniState />
-            ) : (
-              <ul className="space-y-2">
-                {meanDowntimePerFault.slice(0, 10).map((t) => (
-                  <li
-                    key={t.title}
-                    className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
-                  >
-                    <span className="truncate">{t.title}</span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">Mean Downtime per Fault</h3>
+        </CardHeader>
+        <CardContent>
+          {meanDowntimePerFault.length === 0 ? (
+            <EmptyMiniState />
+          ) : (
+            <ul className="space-y-2">
+              {meanDowntimePerFault.slice(0, 10).map((t) => (
+                <li
+                  key={t.title}
+                  className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
+                >
+                  <span className="truncate">{t.title}</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    {formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <h3 className="text-sm font-semibold">Chronic vs Sporadic</h3>
-            <p className="text-xs text-muted-foreground">Chronic = recurred + above-avg duration</p>
-          </CardHeader>
-          <CardContent>
-            {chronicVsSporadic.length === 0 ? (
-              <EmptyMiniState />
-            ) : (
-              <ul className="space-y-2">
-                {chronicVsSporadic.slice(0, 10).map((t) => (
-                  <li
-                    key={t.title}
-                    className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
-                  >
-                    <span className="truncate">{t.title}</span>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="tabular-nums text-muted-foreground">{t.count}x</span>
-                      <Badge variant={t.chronic ? "destructive" : "outline"}>
-                        {t.chronic ? "Chronic" : "Sporadic"}
-                      </Badge>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-semibold">Chronic vs Sporadic</h3>
+          <p className="text-xs text-muted-foreground">Chronic = recurred + above-avg duration</p>
+        </CardHeader>
+        <CardContent>
+          {chronicVsSporadic.length === 0 ? (
+            <EmptyMiniState />
+          ) : (
+            <ul className="space-y-2">
+              {chronicVsSporadic.slice(0, 10).map((t) => (
+                <li
+                  key={t.title}
+                  className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
+                >
+                  <span className="truncate">{t.title}</span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="tabular-nums text-muted-foreground">{t.count}x</span>
+                    <Badge variant={t.chronic ? "destructive" : "outline"}>
+                      {t.chronic ? "Chronic" : "Sporadic"}
+                    </Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -1852,54 +1875,51 @@ function TopLossesGrid({
 // alongside MetricsTable, independent of the headline cards / Top Losses.
 function ReliabilityByLineTable({ reliabilityByLine }: { reliabilityByLine: LineReliability[] }) {
   return (
-      <Card>
-        <CardHeader>
-          <h3 className="text-sm font-semibold">Reliability by Line</h3>
-          <p className="text-xs text-muted-foreground">
-            Sorted worst availability first, computed from the currently filtered events.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-semibold">Reliability by Line</h3>
+        <p className="text-xs text-muted-foreground">
+          Sorted worst availability first, computed from the currently filtered events.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Line</TableHead>
+                <TableHead>MTBF</TableHead>
+                <TableHead>MTTR</TableHead>
+                <TableHead>Equipment Availability</TableHead>
+                <TableHead className="hidden sm:table-cell">Events</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {reliabilityByLine.length === 0 && (
                 <TableRow>
-                  <TableHead>Line</TableHead>
-                  <TableHead>MTBF</TableHead>
-                  <TableHead>MTTR</TableHead>
-                  <TableHead>Equipment Availability</TableHead>
-                  <TableHead className="hidden sm:table-cell">Events</TableHead>
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                    No events match this filter.
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {reliabilityByLine.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="py-8 text-center text-sm text-muted-foreground"
-                    >
-                      No events match this filter.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {reliabilityByLine.map((r) => (
-                  <TableRow key={r.lineId}>
-                    <TableCell className="text-sm">{r.lineName}</TableCell>
-                    <TableCell className="tabular-nums">{formatHours(r.mtbfHours)}</TableCell>
-                    <TableCell className="tabular-nums">{formatHours(r.mttrHours)}</TableCell>
-                    <TableCell className="tabular-nums">
-                      {r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
-                      {r.eventCount}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+              )}
+              {reliabilityByLine.map((r) => (
+                <TableRow key={r.lineId}>
+                  <TableCell className="text-sm">{r.lineName}</TableCell>
+                  <TableCell className="tabular-nums">{formatHours(r.mtbfHours)}</TableCell>
+                  <TableCell className="tabular-nums">{formatHours(r.mttrHours)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {r.availabilityPct === null ? "—" : `${r.availabilityPct.toFixed(1)}%`}
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                    {r.eventCount}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2061,78 +2081,76 @@ function StoppagesSection({
           </p>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+          <Table stickyHeader>
+            <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+              <TableRow>
+                <TableHead>Line</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Started</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>Events</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 && (
                 <TableRow>
-                  <TableHead>Line</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden sm:table-cell">Started</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Events</TableHead>
-                  <TableHead className="w-10" />
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
+                    <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                    <p className="mt-2">No stoppages recorded yet.</p>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="py-10 text-center text-sm text-muted-foreground"
-                    >
-                      <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
-                      <p className="mt-2">No stoppages recorded yet.</p>
+              )}
+              {pageRows.map((s) => {
+                const orphaned = s.eventCount === 0;
+                return (
+                  <TableRow
+                    key={s.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => onView(s.id)}
+                  >
+                    <TableCell className="text-sm font-medium">{s.lineName}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant={statusBadgeVariant(s.status)}>
+                          {STATUS_LABELS[s.status]}
+                        </Badge>
+                        {orphaned && (
+                          <Badge variant="destructive" className="gap-1">
+                            <AlertTriangle className="h-3 w-3" />
+                            Orphaned
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
+                      {new Date(s.startedAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm tabular-nums">
+                      {formatDuration(s.durationMinutes * 60_000)}
+                    </TableCell>
+                    <TableCell className="text-sm tabular-nums">{s.eventCount}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {orphaned && canDelete && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setPendingDeleteId(s.id)}
+                          aria-label="Delete orphaned stoppage"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
-                )}
-                {pageRows.map((s) => {
-                  const orphaned = s.eventCount === 0;
-                  return (
-                    <TableRow
-                      key={s.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => onView(s.id)}
-                    >
-                      <TableCell className="text-sm font-medium">{s.lineName}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge variant={statusBadgeVariant(s.status)}>
-                            {STATUS_LABELS[s.status]}
-                          </Badge>
-                          {orphaned && (
-                            <Badge variant="destructive" className="gap-1">
-                              <AlertTriangle className="h-3 w-3" />
-                              Orphaned
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground">
-                        {new Date(s.startedAt).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-sm tabular-nums">
-                        {formatDuration(s.durationMinutes * 60_000)}
-                      </TableCell>
-                      <TableCell className="text-sm tabular-nums">{s.eventCount}</TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        {orphaned && canDelete && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => setPendingDeleteId(s.id)}
-                            aria-label="Delete orphaned stoppage"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+                );
+              })}
+            </TableBody>
+          </Table>
 
           {rows.length > 0 && (
             <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
