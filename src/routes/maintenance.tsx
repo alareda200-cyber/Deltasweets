@@ -198,6 +198,48 @@ function MobileCollapsibleSection({
   );
 }
 
+// Mobile-only compact variant of the shared KpiCard, used only for the 3
+// headline Reliability Analytics cards — KpiCard itself (used all over the
+// app) isn't touched. p-5 + text-2xl/3xl + truncate was clipping/wrapping
+// values like "39h 21m" at 3-across mobile width; this trades the icon and
+// full label for whitespace-nowrap, a smaller value, and a 2-line label cap.
+function MiniKpiCard({
+  label,
+  value,
+  sub,
+  variant = "default",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  variant?: "default" | "primary" | "success" | "warning" | "danger";
+}) {
+  const tone = {
+    default: "from-card to-card",
+    primary: "from-primary/10 to-primary/[0.02]",
+    success: "from-success/15 to-success/[0.02]",
+    warning: "from-warning/15 to-warning/[0.02]",
+    danger: "from-destructive/15 to-destructive/[0.02]",
+  }[variant];
+  const accent = {
+    default: "text-foreground",
+    primary: "text-primary",
+    success: "text-success",
+    warning: "text-warning",
+    danger: "text-destructive",
+  }[variant];
+
+  return (
+    <div className={`rounded-xl border border-border bg-gradient-to-br p-2 shadow-card ${tone}`}>
+      <p className="line-clamp-2 text-[9px] font-medium uppercase leading-tight tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className={`mt-1 whitespace-nowrap text-lg font-medium tabular-nums ${accent}`}>{value}</p>
+      {sub && <p className="mt-1 hidden text-xs text-muted-foreground md:block">{sub}</p>}
+    </div>
+  );
+}
+
 function MaintenancePage() {
   const { data: lines } = useSuspenseQuery(linesQuery);
   const { role, user, profile } = useAuth();
@@ -1264,6 +1306,20 @@ function ReliabilityAnalyticsSection({
     count: t.count,
   }));
 
+  // Shared between the mobile MiniKpiCard row and the desktop KpiCard row
+  // below, so both always agree on color/threshold.
+  const repeatVariant =
+    repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success";
+  const availabilityVariant =
+    availabilityPct === null
+      ? "default"
+      : availabilityPct >= 90
+        ? "success"
+        : availabilityPct >= 75
+          ? "warning"
+          : "danger";
+  const availabilityValue = availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`;
+
   return (
     <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
       <div>
@@ -1273,7 +1329,33 @@ function ReliabilityAnalyticsSection({
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      {/* Mobile: compact 3-across cards — no icon (no room), and the
+          downtime value is decimal hours ("39.4h") instead of
+          formatDuration's "39h 21m", which was clipping/wrapping at this
+          width. Desktop keeps the original KpiCard row untouched (hidden
+          md:grid below). */}
+      <div className="grid grid-cols-3 gap-1 md:hidden">
+        <MiniKpiCard
+          label="Maintenance events downtime"
+          value={`${(totalDowntimeMinutes / 60).toFixed(1)}h`}
+          sub="from /maintenance records only"
+          variant="warning"
+        />
+        <MiniKpiCard
+          label="Repeat Failure Rate"
+          value={`${repeatFailureRatePct.toFixed(1)}%`}
+          sub="Events whose title recurs ÷ total"
+          variant={repeatVariant}
+        />
+        <MiniKpiCard
+          label="Equipment Availability"
+          value={availabilityValue}
+          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
+          variant={availabilityVariant}
+        />
+      </div>
+
+      <div className="hidden md:grid md:grid-cols-3 md:gap-4">
         <KpiCard
           label="Maintenance events downtime"
           value={formatDuration(totalDowntimeMinutes * 60_000)}
@@ -1286,24 +1368,14 @@ function ReliabilityAnalyticsSection({
           value={`${repeatFailureRatePct.toFixed(1)}%`}
           sub="Events whose title recurs ÷ total"
           icon={Repeat}
-          variant={
-            repeatFailureRatePct > 30 ? "danger" : repeatFailureRatePct > 10 ? "warning" : "success"
-          }
+          variant={repeatVariant}
         />
         <KpiCard
           label="Equipment Availability"
-          value={availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`}
+          value={availabilityValue}
           sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
           icon={Gauge}
-          variant={
-            availabilityPct === null
-              ? "default"
-              : availabilityPct >= 90
-                ? "success"
-                : availabilityPct >= 75
-                  ? "warning"
-                  : "danger"
-          }
+          variant={availabilityVariant}
         />
       </div>
 
