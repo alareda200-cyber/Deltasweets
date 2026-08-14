@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { EntryHistoryPanel } from "@/components/EntryHistoryPanel";
@@ -17,7 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus, Save, History } from "lucide-react";
+import {
+  Trash2,
+  Plus,
+  Save,
+  History,
+  ChevronRight,
+  Recycle,
+  Users,
+  MessageSquare,
+} from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, ResponsiveContainer, Legend } from "recharts";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,6 +65,27 @@ interface DtRow {
   reason_name: string;
   area: string;
   minutes: number;
+}
+
+// Adherence (actual/plan): higher is better. Loss (downtime/available): lower
+// is better — thresholds mirror the ones DashboardSummary already uses on
+// index.tsx (lossPct < 10/25) rather than reusing the adherence thresholds,
+// which would mislabel a low-loss day as "red".
+function adherenceColor(pct: number | null) {
+  if (pct === null) return "text-muted-foreground";
+  return pct >= 90 ? "text-success" : pct >= 70 ? "text-warning" : "text-destructive";
+}
+function adherenceBarColor(pct: number | null) {
+  if (pct === null) return "bg-muted-foreground/40";
+  return pct >= 90 ? "bg-success" : pct >= 70 ? "bg-warning" : "bg-destructive";
+}
+function lossColor(pct: number | null) {
+  if (pct === null) return "text-muted-foreground";
+  return pct < 10 ? "text-success" : pct < 25 ? "text-warning" : "text-destructive";
+}
+function lossBarColor(pct: number | null) {
+  if (pct === null) return "bg-muted-foreground/40";
+  return pct < 10 ? "bg-success" : pct < 25 ? "bg-warning" : "bg-destructive";
 }
 
 function EntryPage() {
@@ -98,6 +128,12 @@ function EntryPage() {
   const [existingEntryId, setExistingEntryId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // Desktop-only collapsed/expanded state for the Rework / Area owners /
+  // Comments rows. Mobile keeps these sections permanently expanded (see the
+  // md:hidden blocks below), so there's no mobile equivalent of this state.
+  const [openRework, setOpenRework] = useState(false);
+  const [openAreaOwners, setOpenAreaOwners] = useState(false);
+  const [openComments, setOpenComments] = useState(false);
   const duplicatingRef = useRef(false);
 
   const { data: customFields = [] } = useQuery(fieldsQuery(lineId));
@@ -232,6 +268,28 @@ function EntryPage() {
 
   const validDowntimes = downtimes.filter((d) => d.reason_name && Number(d.minutes) > 0);
   const totalDowntime = validDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
+
+  // Live, desktop-only summary — recomputed from the same form state as the
+  // rest of the form on every keystroke. null (not 0) means "no plan/
+  // available-time entered yet", so the tiles below can show "—" instead of
+  // a misleading 0%/100%.
+  const liveSummary = useMemo(() => {
+    const mPlan = Number(makingPlan) || 0;
+    const mActual = Number(makingActual) || 0;
+    const pPlan = Number(packingPlan) || 0;
+    const pActual = Number(packingActual) || 0;
+    const avail = Number(availableMin) || 0;
+    return {
+      mPlan,
+      mActual,
+      pPlan,
+      pActual,
+      avail,
+      makingPct: makingPlan !== "" && mPlan > 0 ? (mActual / mPlan) * 100 : null,
+      packingPct: packingPlan !== "" && pPlan > 0 ? (pActual / pPlan) * 100 : null,
+      lossPct: availableMin !== "" && avail > 0 ? (totalDowntime / avail) * 100 : null,
+    };
+  }, [makingPlan, makingActual, packingPlan, packingActual, availableMin, totalDowntime]);
 
   async function handleSave() {
     if (saving) return;
@@ -567,14 +625,23 @@ function EntryPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Daily Production Entry</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            One entry per line · per date · per shift. Existing entries are loaded for editing.
+            {activeLineName} · {date} · Shift {shift}
           </p>
         </div>
-        {canViewHistory && (
-          <Button variant="outline" onClick={() => setShowHistory((s) => !s)}>
-            {showHistory ? "Hide Entry History" : "Entry History"}
+        <div className="flex shrink-0 items-center gap-2">
+          {canViewHistory && (
+            <Button variant="outline" onClick={() => setShowHistory((s) => !s)}>
+              {showHistory ? "Hide Entry History" : "Entry History"}
+            </Button>
+          )}
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={handleSave}
+            disabled={saveDisabled}
+          >
+            <Save className="mr-2 h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
           </Button>
-        )}
+        </div>
       </div>
 
       {readOnly && (
@@ -619,6 +686,37 @@ function EntryPage() {
           ))}
         </TabsList>
       </Tabs>
+
+      {/* Desktop-only live summary — recomputed from liveSummary on every
+          keystroke, mirrors the adherence/loss formulas used by the
+          Dashboard so the numbers here never drift from what Save will
+          produce. Mobile keeps scrolling straight into the field cards. */}
+      <div className="mb-4 hidden grid-cols-4 gap-px overflow-hidden rounded-lg bg-border md:grid">
+        <SummaryTile
+          label="Making"
+          value={liveSummary.makingPct !== null ? `${liveSummary.makingPct.toFixed(0)}%` : "—"}
+          sub={`${liveSummary.mActual.toLocaleString()} / ${liveSummary.mPlan.toLocaleString()}`}
+          colorClass={adherenceColor(liveSummary.makingPct)}
+        />
+        <SummaryTile
+          label="Packing"
+          value={liveSummary.packingPct !== null ? `${liveSummary.packingPct.toFixed(0)}%` : "—"}
+          sub={`${liveSummary.pActual.toLocaleString()} / ${liveSummary.pPlan.toLocaleString()}`}
+          colorClass={adherenceColor(liveSummary.packingPct)}
+        />
+        <SummaryTile
+          label="Downtime"
+          value={`${totalDowntime.toLocaleString()} min`}
+          sub={`${validDowntimes.length} stoppage${validDowntimes.length === 1 ? "" : "s"}`}
+          colorClass="text-foreground"
+        />
+        <SummaryTile
+          label="Loss"
+          value={liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"}
+          sub={`of ${liveSummary.avail.toLocaleString()} min`}
+          colorClass={lossColor(liveSummary.lossPct)}
+        />
+      </div>
 
       <div
         className="grid grid-cols-1 gap-6 lg:grid-cols-3"
@@ -732,95 +830,187 @@ function EntryPage() {
             {/* Desktop-only (md:contents unwraps into the grid above at
                 md+, exactly as before) — same fields, original 3-column
                 layout, completely unchanged. */}
-            <div className="hidden md:contents">
-            <Field label="Date">
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </Field>
-            <Field label="Shift">
-              <Select value={shift} onValueChange={setShift}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A">Shift A</SelectItem>
-                  <SelectItem value="B">Shift B</SelectItem>
-                  <SelectItem value="C">Shift C</SelectItem>
-                  <SelectItem value="DAY">Full Day</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Available Time (min)">
-              <Input
-                type="number"
-                value={availableMin}
-                onChange={(e) => setAvailableMin(e.target.value)}
-              />
-            </Field>
-
-            <Field label="Making Plan (kg)">
-              <Input
-                type="number"
-                value={makingPlan}
-                onChange={(e) => setMakingPlan(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <Field label="Making Actual (kg)">
-              <Input
-                type="number"
-                value={makingActual}
-                onChange={(e) => setMakingActual(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <div />
-
-            <Field label="Packing Plan (kg)">
-              <Input
-                type="number"
-                value={packingPlan}
-                onChange={(e) => setPackingPlan(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <Field label="Packing Actual (kg)">
-              <Input
-                type="number"
-                value={packingActual}
-                onChange={(e) => setPackingActual(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <div />
-
-            <Field label="Rework Cooking (kg)">
-              <Input
-                type="number"
-                value={reworkCooking}
-                onChange={(e) => setReworkCooking(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <Field label="Rework Making (kg)">
-              <Input
-                type="number"
-                value={reworkMaking}
-                onChange={(e) => setReworkMaking(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
-            <Field label="Rework Packing (kg)">
-              <Input
-                type="number"
-                value={reworkPacking}
-                onChange={(e) => setReworkPacking(e.target.value)}
-                disabled={!canEditProduction}
-              />
-            </Field>
+            {/* Desktop-only — Date/Shift/Available Time stay as plain
+                fields; Making/Packing move into the paired adherence cards
+                below and Rework moves into the collapsible row further
+                down. */}
+            <div className="hidden gap-4 md:col-span-3 md:grid md:grid-cols-3">
+              <Field label="Date">
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <Field label="Shift">
+                <Select value={shift} onValueChange={setShift}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="A">Shift A</SelectItem>
+                    <SelectItem value="B">Shift B</SelectItem>
+                    <SelectItem value="C">Shift C</SelectItem>
+                    <SelectItem value="DAY">Full Day</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Available Time (min)">
+                <Input
+                  type="number"
+                  value={availableMin}
+                  onChange={(e) => setAvailableMin(e.target.value)}
+                />
+              </Field>
             </div>
 
+            <div className="hidden gap-4 md:col-span-3 md:grid md:grid-cols-2">
+              <AdherenceCard
+                title="Making"
+                planValue={makingPlan}
+                actualValue={makingActual}
+                onPlanChange={setMakingPlan}
+                onActualChange={setMakingActual}
+                disabled={!canEditProduction}
+                pct={liveSummary.makingPct}
+              />
+              <AdherenceCard
+                title="Packing"
+                planValue={packingPlan}
+                actualValue={packingActual}
+                onPlanChange={setPackingPlan}
+                onActualChange={setPackingActual}
+                disabled={!canEditProduction}
+                pct={liveSummary.packingPct}
+              />
+            </div>
+
+            {/* Desktop-only — Rework / Area owners & performance / Comments
+                collapsed into rows; mobile keeps its always-expanded
+                originals (Rework fields inline above, Area owners &
+                Comments blocks below). */}
+            <div className="hidden md:col-span-3 md:flex md:flex-col md:gap-3">
+              <CollapsibleRow
+                icon={Recycle}
+                title="Rework"
+                summary={`${(
+                  (Number(reworkCooking) || 0) +
+                  (Number(reworkMaking) || 0) +
+                  (Number(reworkPacking) || 0)
+                ).toLocaleString()} kg total`}
+                open={openRework}
+                onToggle={() => setOpenRework((o) => !o)}
+              >
+                <div className="grid grid-cols-3 gap-4">
+                  <Field label="Rework Cooking (kg)">
+                    <Input
+                      type="number"
+                      value={reworkCooking}
+                      onChange={(e) => setReworkCooking(e.target.value)}
+                      disabled={!canEditProduction}
+                    />
+                  </Field>
+                  <Field label="Rework Making (kg)">
+                    <Input
+                      type="number"
+                      value={reworkMaking}
+                      onChange={(e) => setReworkMaking(e.target.value)}
+                      disabled={!canEditProduction}
+                    />
+                  </Field>
+                  <Field label="Rework Packing (kg)">
+                    <Input
+                      type="number"
+                      value={reworkPacking}
+                      onChange={(e) => setReworkPacking(e.target.value)}
+                      disabled={!canEditProduction}
+                    />
+                  </Field>
+                </div>
+              </CollapsibleRow>
+
+              {productionAreas.length > 0 && (
+                <CollapsibleRow
+                  icon={Users}
+                  title="Area owners & performance"
+                  summary={`${productionAreas.length} areas · ${
+                    Object.values(areaOwnerSelections).filter((s) => s.ownerId).length
+                  } assigned`}
+                  open={openAreaOwners}
+                  onToggle={() => setOpenAreaOwners((o) => !o)}
+                >
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {productionAreas.map((area) => {
+                      const sel = areaOwnerSelections[area.id] ?? { ownerId: "", score: "" };
+                      return (
+                        <div key={area.id} className="rounded-lg border border-border p-3">
+                          <p className="mb-2 text-sm font-semibold">{area.name}</p>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <Field label="Owner">
+                              <Select
+                                value={sel.ownerId}
+                                onValueChange={(v) =>
+                                  setAreaOwnerSelections((p) => ({
+                                    ...p,
+                                    [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" },
+                                  }))
+                                }
+                                disabled={!canEditAreaOwners}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Unassigned" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {areaOwners.map((o) => (
+                                    <SelectItem key={o.id} value={o.id}>
+                                      {o.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </Field>
+                            <Field label="Performance Score %">
+                              <Input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step="0.01"
+                                placeholder="0–100"
+                                value={sel.score}
+                                onChange={(e) =>
+                                  setAreaOwnerSelections((p) => ({
+                                    ...p,
+                                    [area.id]: {
+                                      ownerId: p[area.id]?.ownerId ?? "",
+                                      score: e.target.value,
+                                    },
+                                  }))
+                                }
+                                disabled={!canEditAreaOwners}
+                              />
+                            </Field>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CollapsibleRow>
+              )}
+
+              <CollapsibleRow
+                icon={MessageSquare}
+                title="Comments"
+                open={openComments}
+                onToggle={() => setOpenComments((o) => !o)}
+              >
+                <Textarea
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  rows={2}
+                  disabled={!canEditNotes}
+                />
+              </CollapsibleRow>
+            </div>
+
+            {/* Mobile-only — unchanged, always-expanded Area owners block. */}
             {productionAreas.length > 0 && (
-              <div className="col-span-1 md:col-span-3">
+              <div className="col-span-1 md:hidden">
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Area owners &amp; performance
                 </div>
@@ -903,7 +1093,8 @@ function EntryPage() {
               </div>
             )}
 
-            <div className="col-span-1 md:col-span-3">
+            {/* Mobile-only — unchanged, always-expanded Comments block. */}
+            <div className="md:hidden">
               <Label className="text-xs">Comments</Label>
               <Textarea
                 value={comments}
@@ -921,10 +1112,16 @@ function EntryPage() {
             <div>
               <CardTitle>Downtime Log</CardTitle>
               <CardDescription>
-                Total: <b>{totalDowntime} min</b>
+                <b>{totalDowntime}</b> min ·{" "}
+                {liveSummary.lossPct !== null ? liveSummary.lossPct.toFixed(1) : "0"}% of available
               </CardDescription>
             </div>
-            <Button size="sm" variant="outline" onClick={addDowntime} disabled={!canEditDowntime}>
+            <Button
+              size="sm"
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+              onClick={addDowntime}
+              disabled={!canEditDowntime}
+            >
               <Plus className="mr-1 h-4 w-4" />
               Add
             </Button>
@@ -1030,6 +1227,19 @@ function EntryPage() {
               }
               downtimeMin={totalDowntime}
             />
+
+            <div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full ${lossBarColor(liveSummary.lossPct)}`}
+                  style={{ width: `${Math.min(100, Math.max(0, liveSummary.lossPct ?? 0))}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {liveSummary.lossPct !== null ? liveSummary.lossPct.toFixed(1) : "0"}% of{" "}
+                {liveSummary.avail.toLocaleString()} available min
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1068,6 +1278,128 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <Label className="text-xs">{label}</Label>
       <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+// One cell of the desktop-only live summary row under the line tabs.
+function SummaryTile({
+  label,
+  value,
+  sub,
+  colorClass,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  colorClass: string;
+}) {
+  return (
+    <div className="bg-card px-4 py-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
+    </div>
+  );
+}
+
+// Desktop-only paired Making/Packing card: header adherence %, Plan/Actual
+// side by side, thin progress bar underneath — replaces the 4 separate
+// Field entries the desktop grid used to render for these.
+function AdherenceCard({
+  title,
+  planValue,
+  actualValue,
+  onPlanChange,
+  onActualChange,
+  disabled,
+  pct,
+}: {
+  title: string;
+  planValue: string;
+  actualValue: string;
+  onPlanChange: (v: string) => void;
+  onActualChange: (v: string) => void;
+  disabled: boolean;
+  pct: number | null;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/50 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className={`text-xs font-medium ${adherenceColor(pct)}`}>
+          {pct !== null ? `${pct.toFixed(0)}% adherence` : "— adherence"}
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Plan (kg)">
+          <Input
+            type="number"
+            value={planValue}
+            onChange={(e) => onPlanChange(e.target.value)}
+            disabled={disabled}
+          />
+        </Field>
+        <Field label="Actual (kg)">
+          <Input
+            type="number"
+            value={actualValue}
+            onChange={(e) => onActualChange(e.target.value)}
+            disabled={disabled}
+          />
+        </Field>
+      </div>
+      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-background">
+        <div
+          className={`h-full rounded-full ${adherenceBarColor(pct)}`}
+          style={{ width: `${Math.min(100, Math.max(0, pct ?? 0))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Desktop-only collapsed-by-default row (Rework / Area owners & performance
+// / Comments) — bare useState toggle, same reasoning as
+// MobileCollapsibleSection in maintenance.tsx: no Radix mount/animation
+// machinery needed, and mobile never renders this at all (it keeps its own
+// always-expanded originals), so there's no "force back open below md" case
+// to handle here.
+function CollapsibleRow({
+  icon: Icon,
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  summary?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/50">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          {title}
+        </span>
+        <span className="flex items-center gap-2">
+          {summary && <span className="text-xs text-muted-foreground">{summary}</span>}
+          <ChevronRight
+            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        </span>
+      </button>
+      {open && <div className="border-t border-border p-3">{children}</div>}
     </div>
   );
 }
