@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   BarChart,
   Bar,
@@ -22,6 +23,9 @@ interface Props {
 
 export function DowntimeSection({ entries, downtimes }: Props) {
   const isMobile = useIsMobile();
+  // Mobile-only "Show all N causes" toggle for the horizontal-bar list below
+  // (see the md:hidden block) — collapsed to the top 6 by default.
+  const [showAllCauses, setShowAllCauses] = useState(false);
   const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
   // Summed from the same combined downtimes array (entry_downtimes +
   // maintenance_events, see maintenanceEventsAsDowntimes) that feeds the
@@ -109,6 +113,8 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
           <KpiCard
             label="Total Available Time (min)"
+            mobileLabel="Available (min)"
+            mobileIcon={Clock}
             value={fmt(totalAvail)}
             icon={Clock}
             variant="primary"
@@ -116,6 +122,8 @@ export function DowntimeSection({ entries, downtimes }: Props) {
           />
           <KpiCard
             label="Total Downtime (min)"
+            mobileLabel="Downtime (min)"
+            mobileIcon={AlertOctagon}
             value={fmt(totalDown)}
             icon={AlertOctagon}
             variant="warning"
@@ -177,27 +185,46 @@ export function DowntimeSection({ entries, downtimes }: Props) {
         </div>
       ) : (
         <>
-          {/* Mobile: compact top-5 mini bars — same ranked chartData as the
-              full chart below, just the biggest causes at a glance instead of
-              the angled 12-label Pareto (which stays desktop-only). */}
-          <div className="flex items-end gap-2 md:hidden" style={{ height: 40 }}>
-            {chartData.slice(0, 5).map((d, i, top5) => {
-              const maxMinutes = Math.max(...top5.map((x) => x.minutes), 1);
-              const barHeight = Math.max(4, Math.round((d.minutes / maxMinutes) * 40));
-              return (
-                <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                  <div className="flex h-10 w-full items-end justify-center">
-                    <div
-                      className="w-full max-w-[22px] rounded-t bg-primary"
-                      style={{ height: barHeight }}
-                    />
+          {/* Mobile: horizontal-bar top-6 causes list — same ranked chartData
+              (and gradient) as the full chart below, just laid out so the
+              name/%/minutes are all readable instead of the angled 12-label
+              Pareto (which stays desktop-only, unchanged, below). */}
+          <div className="md:hidden">
+            <div className="space-y-2">
+              {(showAllCauses ? chartData : chartData.slice(0, 6)).map((d, i) => {
+                const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
+                const hue = 260 - i * 8;
+                return (
+                  <div key={d.fullName} className="flex items-center gap-2">
+                    <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
+                      {d.fullName}
+                    </span>
+                    <div className="h-4 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%`,
+                          background: `linear-gradient(to right, oklch(0.75 0.18 ${hue}), oklch(0.55 0.18 ${hue}))`,
+                        }}
+                      />
+                    </div>
+                    <span className="w-20 shrink-0 text-right text-xs font-semibold tabular-nums">
+                      {fmt(Math.round(d.minutes))}m · {d.pct}%
+                    </span>
                   </div>
-                  <span className="w-full truncate text-center text-[8px] text-muted-foreground">
-                    {d.name}
-                  </span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+
+            {chartData.length > 6 && (
+              <button
+                type="button"
+                onClick={() => setShowAllCauses((v) => !v)}
+                className="mt-3 text-xs font-medium text-primary"
+              >
+                {showAllCauses ? "Show fewer causes ↑" : `Show all ${allReasons.length} causes ↓`}
+              </button>
+            )}
           </div>
 
           <div className="hidden md:block">

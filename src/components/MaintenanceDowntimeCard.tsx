@@ -42,7 +42,7 @@ import {
   statusBadgeVariant,
   formatDuration,
 } from "@/lib/maintenance-format";
-import { Wrench, AlertOctagon, Activity } from "lucide-react";
+import { Wrench, AlertOctagon, Activity, TimerOff } from "lucide-react";
 
 interface Props {
   downtimes: EntryDowntime[];
@@ -107,6 +107,9 @@ export function MaintenanceDowntimeCard({
     (e) => e.status === "open" || e.status === "in_progress",
   );
   const [selectedEvent, setSelectedEvent] = useState<MaintenanceEvent | null>(null);
+  // Mobile-only "Show all N causes" toggle for the horizontal-bar list below
+  // the donut (see the md:hidden block) — collapsed to the top 4 by default.
+  const [showAllCauses, setShowAllCauses] = useState(false);
 
   // entries is ordered by entry_date ascending (see entriesQuery), so the
   // last element is the most recent day — same "last day" the Dashboard's
@@ -198,6 +201,58 @@ export function MaintenanceDowntimeCard({
     pct: totalMinutes > 0 ? Math.round((r.minutes / totalMinutes) * 1000) / 10 : 0,
   }));
 
+  // Mobile-only donut split (see the md:hidden block below) — same `scoped`
+  // rows as everything above, bucketed into the 4 groups a maintenance
+  // manager actually thinks in: mechanical/electrical/preventive failures
+  // (from maintenance_events, distinguished via pareto_reason_name — see
+  // maintenanceEventsAsDowntimes) vs. downtime logged directly on the daily
+  // entry form under a Maintenance-category department (source !==
+  // "maintenance", the non-event "Production stoppages" bucket).
+  const donutBuckets = [
+    {
+      key: "mechanical",
+      label: "Mechanical",
+      color: "var(--color-destructive)",
+      minutes: scoped
+        .filter((d) => d.pareto_reason_name === "Mechanical Maintenance")
+        .reduce((s, d) => s + Number(d.minutes), 0),
+    },
+    {
+      key: "electrical",
+      label: "Electrical",
+      color: "var(--color-primary)",
+      minutes: scoped
+        .filter((d) => d.pareto_reason_name === "Electrical Maintenance")
+        .reduce((s, d) => s + Number(d.minutes), 0),
+    },
+    {
+      key: "preventive",
+      label: "Preventive",
+      color: "var(--color-warning)",
+      minutes: scoped
+        .filter((d) => d.pareto_reason_name === "Preventive Maintenance")
+        .reduce((s, d) => s + Number(d.minutes), 0),
+    },
+    {
+      key: "production",
+      label: "Production stoppages",
+      color: "var(--color-accent)",
+      minutes: scoped
+        .filter((d) => d.source !== "maintenance")
+        .reduce((s, d) => s + Number(d.minutes), 0),
+    },
+  ];
+  const donutCircumference = 2 * Math.PI * 15.9;
+  let donutCumulative = 0;
+  const donutSegments = donutBuckets
+    .filter((b) => b.minutes > 0)
+    .map((b) => {
+      const len = totalMinutes > 0 ? (b.minutes / totalMinutes) * donutCircumference : 0;
+      const seg = { ...b, len, offset: -donutCumulative, pct: totalMinutes > 0 ? Math.round((b.minutes / totalMinutes) * 100) : 0 };
+      donutCumulative += len;
+      return seg;
+    });
+
   const rankedReasons = (() => {
     const byReason = new Map<
       string,
@@ -240,6 +295,8 @@ export function MaintenanceDowntimeCard({
           <div className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3">
             <KpiCard
               label="Maintenance downtime (all sources)"
+              mobileLabel="Downtime"
+              mobileIcon={TimerOff}
               value={fmt(totalMinutes)}
               sub="maintenance events + daily entry"
               icon={Wrench}
@@ -269,6 +326,7 @@ export function MaintenanceDowntimeCard({
             <div className="grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3">
               <KpiCard
                 label="Maintenance Downtime (min)"
+                mobileLabel="Downtime (min)"
                 value={fmt(Math.round(lastDayMaintenanceMinutes))}
                 variant={lastDayMaintenanceMinutes > 0 ? "warning" : "default"}
                 className="p-3 md:p-5"
@@ -309,7 +367,100 @@ export function MaintenanceDowntimeCard({
                   downtime.
                 </p>
               )}
-              <div className="h-[200px] w-full md:h-80">
+
+              {/* Mobile: donut split by type (Mechanical/Electrical/Preventive/
+                  Production stoppages) + a compact horizontal-bar top-4 causes
+                  list, instead of the angled 12-label Pareto (which stays
+                  desktop-only, unchanged, below). */}
+              <div className="md:hidden">
+                <div className="flex items-center gap-4">
+                  <div className="relative h-24 w-24 shrink-0">
+                    <svg viewBox="0 0 42 42" className="h-24 w-24 -rotate-90">
+                      <circle
+                        cx="21"
+                        cy="21"
+                        r="15.9"
+                        fill="none"
+                        stroke="var(--color-border)"
+                        strokeWidth="5"
+                      />
+                      {donutSegments.map((s) => (
+                        <circle
+                          key={s.key}
+                          cx="21"
+                          cy="21"
+                          r="15.9"
+                          fill="none"
+                          stroke={s.color}
+                          strokeWidth="5"
+                          strokeDasharray={`${s.len} ${donutCircumference - s.len}`}
+                          strokeDashoffset={s.offset}
+                        />
+                      ))}
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-lg font-bold tabular-nums leading-none">
+                        {fmt(totalMinutes)}
+                      </span>
+                      <span className="mt-0.5 text-[9px] text-muted-foreground">min</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {donutBuckets.map((b) => (
+                      <div key={b.key} className="flex items-center gap-1.5 text-xs">
+                        <span
+                          className="h-[7px] w-[7px] shrink-0 rounded-sm"
+                          style={{ background: b.color }}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                          {b.label}
+                        </span>
+                        <span className="shrink-0 font-semibold tabular-nums">
+                          {totalMinutes > 0 ? Math.round((b.minutes / totalMinutes) * 100) : 0}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {(showAllCauses ? chartData : chartData.slice(0, 4)).map((d, i) => {
+                    const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
+                    const hue = 25 + i * 20;
+                    return (
+                      <div key={d.fullName} className="flex items-center gap-2">
+                        <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
+                          {d.fullName}
+                        </span>
+                        <div className="h-[13px] flex-1 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%`,
+                              background: `linear-gradient(to right, oklch(0.75 0.18 ${hue}), oklch(0.55 0.18 ${hue}))`,
+                            }}
+                          />
+                        </div>
+                        <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums">
+                          {fmt(Math.round(d.minutes))}m
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {chartData.length > 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCauses((v) => !v)}
+                    className="mt-3 text-xs font-medium text-primary"
+                  >
+                    {showAllCauses ? "Show fewer causes ↑" : `Show all ${allReasons.length} causes ↓`}
+                  </button>
+                )}
+              </div>
+
+              <div className="hidden h-80 w-full md:block">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 60 }}>
                     <defs>
