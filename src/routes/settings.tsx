@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, useQueryClient, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -32,6 +32,8 @@ import {
   AlertTriangle,
   Database,
   ChevronRight,
+  Tags,
+  Merge,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -69,6 +71,13 @@ function validateMasterDataInput(name: string, code: string): string | null {
   if (!name.trim()) return "Name is required";
   if (!code.trim()) return "Code is required";
   return null;
+}
+
+// Shared by FaultTitlesCard's duplicate-title alert and its Rename/Merge
+// dialogs — two titles are "the same fault, typed differently" if they're
+// identical once case and incidental whitespace are ignored.
+function normalizeTitleKey(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 // Small uppercase label above each group of Cards below (People, Production
@@ -233,6 +242,26 @@ function SettingsPage() {
       return data;
     },
   });
+  // Every distinct title used on a maintenance_events row, with how many
+  // events currently carry it — grouped client-side (there's no server-side
+  // GROUP BY here, same reasoning as the rest of this page's admin-scale
+  // master-data tables) and sorted by count desc for FaultTitlesCard.
+  const { data: faultTitleStats = [] } = useQuery({
+    queryKey: ["fault-title-stats"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("maintenance_events").select("title");
+      if (error) throw error;
+      const counts = new Map<string, number>();
+      for (const row of data ?? []) {
+        const t = row.title;
+        if (!t) continue;
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+      return Array.from(counts.entries())
+        .map(([title, count]) => ({ title, count }))
+        .sort((a, b) => b.count - a.count);
+    },
+  });
   const qc = useQueryClient();
   const [selectedLine, setSelectedLine] = useState(lines[0]?.id ?? "");
   const [activeSection, setActiveSection] = useState("users");
@@ -286,6 +315,12 @@ function SettingsPage() {
           label: "Severity Levels",
           icon: AlertTriangle,
           count: severityLevels.length,
+        },
+        {
+          id: "faultTitles",
+          label: "Fault Titles",
+          icon: Tags,
+          count: faultTitleStats.length,
         },
       ],
     },
@@ -341,6 +376,8 @@ function SettingsPage() {
         return <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />;
       case "severityLevels":
         return <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />;
+      case "faultTitles":
+        return <FaultTitlesCard stats={faultTitleStats} qc={qc} />;
       case "backup":
         return <BackupCard qc={qc} />;
       default:
@@ -425,6 +462,7 @@ function SettingsPage() {
           </div>
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
             <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />
+            <FaultTitlesCard stats={faultTitleStats} qc={qc} />
           </div>
         </section>
 
@@ -2158,6 +2196,336 @@ function SeverityLevelsCard({
         </div>
       </CardContent>
     </MobileCollapsibleCard>
+  );
+}
+
+interface FaultTitleStat {
+  title: string;
+  count: number;
+}
+
+// The set of queries that reflect a maintenance_events.title value —
+// invalidated together after every rename/merge so the Maintenance page's
+// event list, stoppage member lists, and this card's own stats all pick up
+// the new spelling. maintenance-metrics isn't included: it aggregates by
+// line/date, not by title.
+function invalidateFaultTitleQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["fault-title-stats"] });
+  qc.invalidateQueries({ queryKey: ["maintenance-events"] });
+  qc.invalidateQueries({ queryKey: ["maintenance-stoppage-events"] });
+}
+
+function FaultTitlesCard({
+  stats,
+  qc,
+}: {
+  stats: FaultTitleStat[];
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const [renaming, setRenaming] = useState<FaultTitleStat | null>(null);
+  const [merging, setMerging] = useState<FaultTitleStat | null>(null);
+
+  // Titles that normalize identically (case/whitespace-only differences)
+  // but aren't literally the same string — the likely-duplicate candidates
+  // surfaced above the table. Each group sorted by count desc so the most-
+  // used spelling reads as the natural merge target.
+  const duplicateGroups = useMemo(() => {
+    const byKey = new Map<string, FaultTitleStat[]>();
+    for (const s of stats) {
+      const key = normalizeTitleKey(s.title);
+      const group = byKey.get(key);
+      if (group) group.push(s);
+      else byKey.set(key, [s]);
+    }
+    return Array.from(byKey.values())
+      .filter((group) => group.length > 1)
+      .map((group) => [...group].sort((a, b) => b.count - a.count));
+  }, [stats]);
+
+  // Shared by Rename, Merge, and the duplicate-group quick-merge button —
+  // relabeling a title is always the same UPDATE regardless of which UI
+  // triggered it.
+  async function renameTitle(oldTitle: string, newTitle: string) {
+    const trimmed = newTitle.trim();
+    if (!trimmed || trimmed === oldTitle) return false;
+    const { error } = await supabase
+      .from("maintenance_events")
+      .update({ title: trimmed })
+      .eq("title", oldTitle);
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    void logAudit("settings.update", "maintenance_event_title", undefined, {
+      from: oldTitle,
+      to: trimmed,
+    });
+    invalidateFaultTitleQueries(qc);
+    return true;
+  }
+
+  async function quickMerge(group: FaultTitleStat[]) {
+    const [primary, ...rest] = group;
+    if (
+      !confirm(
+        `Merge ${rest.map((r) => `"${r.title}"`).join(", ")} into "${primary.title}"? This relabels every matching maintenance event.`,
+      )
+    )
+      return;
+    for (const r of rest) {
+      const ok = await renameTitle(r.title, primary.title);
+      if (!ok) return;
+    }
+    toast.success(`Merged into "${primary.title}"`);
+  }
+
+  return (
+    <MobileCollapsibleCard
+      icon={Tags}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Fault Titles"
+      count={stats.length}
+    >
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Tags} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Fault Titles</CardTitle>
+            <CardDescription>
+              Every title used on a maintenance event, plant-wide. Rename or merge to keep
+              recurring-fault reporting (Top Losses, Chronic vs Sporadic) clean.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {duplicateGroups.length > 0 && (
+          <div className="mb-4 space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-warning-foreground">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Similar titles found — likely the same fault typed differently
+            </p>
+            {duplicateGroups.map((group) => (
+              <div
+                key={group.map((g) => g.title).join("|")}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background/60 p-2 text-sm"
+              >
+                <span className="min-w-0 flex-1">
+                  {group.map((g, i) => (
+                    <span key={g.title}>
+                      {i > 0 && <span className="text-muted-foreground"> · </span>}
+                      <span className={i === 0 ? "font-medium" : "text-muted-foreground"}>
+                        {g.title}
+                      </span>{" "}
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        ({g.count})
+                      </span>
+                    </span>
+                  ))}
+                </span>
+                <Button size="sm" variant="outline" onClick={() => quickMerge(group)}>
+                  <Merge className="mr-1.5 h-3.5 w-3.5" />
+                  Merge into "{group[0].title}"
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="max-h-96 space-y-1.5 overflow-auto">
+          {stats.map((s) => (
+            <div
+              key={s.title}
+              className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm"
+            >
+              <p className="min-w-0 flex-1 truncate font-medium">{s.title}</p>
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
+                {s.count} event{s.count === 1 ? "" : "s"}
+              </span>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={() => setRenaming(s)}>
+                  <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={stats.length < 2}
+                  onClick={() => setMerging(s)}
+                >
+                  <Merge className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          {stats.length === 0 && (
+            <p className="p-4 text-center text-sm text-muted-foreground">
+              No maintenance events logged yet.
+            </p>
+          )}
+        </div>
+      </CardContent>
+
+      <RenameFaultTitleDialog
+        stat={renaming}
+        onOpenChange={(o) => !o && setRenaming(null)}
+        onRename={renameTitle}
+      />
+      <MergeFaultTitleDialog
+        stat={merging}
+        others={stats.filter((s) => s.title !== merging?.title)}
+        onOpenChange={(o) => !o && setMerging(null)}
+        onMerge={renameTitle}
+      />
+    </MobileCollapsibleCard>
+  );
+}
+
+function RenameFaultTitleDialog({
+  stat,
+  onOpenChange,
+  onRename,
+}: {
+  stat: FaultTitleStat | null;
+  onOpenChange: (o: boolean) => void;
+  onRename: (oldTitle: string, newTitle: string) => Promise<boolean>;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Re-seed whenever a different row is opened for renaming — keyed on the
+  // title itself (this dialog's identity for a stat with no id), same
+  // stale-refetch-safety reasoning as TechnicianDialog above.
+  useEffect(() => {
+    setValue(stat?.title ?? "");
+  }, [stat?.title]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!stat) return;
+    setSaving(true);
+    try {
+      const trimmed = value.trim();
+      const ok = await onRename(stat.title, trimmed);
+      if (ok) {
+        toast.success(
+          `Renamed to "${trimmed}" — ${stat.count} event${stat.count === 1 ? "" : "s"} updated`,
+        );
+        onOpenChange(false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!stat} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename Fault Title</DialogTitle>
+          <DialogDescription>
+            Applies to every maintenance event currently titled "{stat?.title}" ({stat?.count ?? 0}{" "}
+            event{stat?.count === 1 ? "" : "s"}).
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <Label>Title</Label>
+            <Input value={value} onChange={(e) => setValue(e.target.value)} required autoFocus />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={saving || !value.trim() || value.trim() === stat?.title}
+            >
+              {saving ? "Renaming…" : "Rename"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function MergeFaultTitleDialog({
+  stat,
+  others,
+  onOpenChange,
+  onMerge,
+}: {
+  stat: FaultTitleStat | null;
+  others: FaultTitleStat[];
+  onOpenChange: (o: boolean) => void;
+  onMerge: (oldTitle: string, newTitle: string) => Promise<boolean>;
+}) {
+  const [target, setTarget] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setTarget("");
+  }, [stat?.title]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!stat || !target) return;
+    if (
+      !confirm(
+        `Merge "${stat.title}" (${stat.count} event${stat.count === 1 ? "" : "s"}) into "${target}"? This cannot be undone.`,
+      )
+    )
+      return;
+    setSaving(true);
+    try {
+      const ok = await onMerge(stat.title, target);
+      if (ok) {
+        toast.success(`Merged into "${target}"`);
+        onOpenChange(false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!stat} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Merge Fault Title</DialogTitle>
+          <DialogDescription>
+            Relabels every event currently titled "{stat?.title}" ({stat?.count ?? 0} event
+            {stat?.count === 1 ? "" : "s"}) to the title picked below — "{stat?.title}" then
+            disappears from this list.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <Label>Merge into</Label>
+            <Select value={target} onValueChange={setTarget}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select target title" />
+              </SelectTrigger>
+              <SelectContent>
+                {others.map((o) => (
+                  <SelectItem key={o.title} value={o.title}>
+                    {o.title} ({o.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving || !target}>
+              {saving ? "Merging…" : "Merge"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
