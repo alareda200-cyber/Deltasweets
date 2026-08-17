@@ -681,6 +681,10 @@ function MaintenancePage() {
   // analyst filtering the table down to one line shouldn't see the open-count
   // cards silently change to match.
   const { data: allEvents = [] } = useQuery(maintenanceEventsQuery(null, null, null, null, null));
+  // Feeds CreateEventDialog's Title-field autocomplete/near-match hint —
+  // memoized so its reference is stable across renders that don't change
+  // allEvents (CreateEventDialog's own useMemos key off this array).
+  const allEventTitles = useMemo(() => allEvents.map((e) => e.title), [allEvents]);
   const { data: metrics = [] } = useQuery(maintenanceMetricsQuery());
   // Global (unfiltered) stoppage list — used to look up each stoppage
   // referenced by `events`/`allEvents` for the "Part of Stoppage" badge and
@@ -1308,6 +1312,7 @@ function MaintenancePage() {
         onOpenChange={setCreateOpen}
         lines={lines}
         onCreate={handleCreate}
+        existingTitles={allEventTitles}
       />
       <StoppageDialog
         open={stoppageDialogOpen || viewStoppageId !== null}
@@ -1317,6 +1322,7 @@ function MaintenancePage() {
         canEdit={canEdit}
         userId={user?.id ?? null}
         onCreateEvent={insertEvent}
+        existingTitles={allEventTitles}
       />
       <EventDetailDialog
         event={selectedEvent}
@@ -2203,12 +2209,20 @@ function StoppagesSection({
   );
 }
 
+// Used by CreateEventDialog's Title-field autocomplete/near-match hint to
+// decide whether two titles are "the same" ignoring case and incidental
+// whitespace differences.
+function normalizeTitle(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function CreateEventDialog({
   open,
   onOpenChange,
   lines,
   stoppage,
   onCreate,
+  existingTitles = [],
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -2228,10 +2242,16 @@ function CreateEventDialog({
     technicianIds: string[];
     stoppageId: string | null;
   }) => Promise<void>;
+  // Titles of every existing maintenance event (any line), plant-wide — used
+  // to drive the Title field's autocomplete dropdown and its "Did you mean…"
+  // near-match hint below. Passed down from MaintenancePage's already-loaded
+  // allEvents so this dialog doesn't run its own query.
+  existingTitles?: string[];
 }) {
   const [lineId, setLineId] = useState(stoppage?.lineId ?? "");
   const [type, setType] = useState<MaintenanceType>("mechanical");
   const [title, setTitle] = useState("");
+  const [titleFocused, setTitleFocused] = useState(false);
   const [description, setDescription] = useState("");
   const [startedAt, setStartedAt] = useState(() => toDatetimeLocalValue(new Date()));
   const [severityLabel, setSeverityLabel] = useState("");
@@ -2239,6 +2259,49 @@ function CreateEventDialog({
   const [submitting, setSubmitting] = useState(false);
   const { data: technicians = [] } = useQuery(techniciansQuery);
   const activeTechnicians = technicians.filter((t) => t.is_active);
+
+  // Deduplicated by normalized form (lowercase + trim + collapsed
+  // whitespace), keeping the first-seen literal spelling — existingTitles
+  // comes from allEvents which is ordered newest-first, so that's the most
+  // recent spelling of each title.
+  const uniqueTitles = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of existingTitles) {
+      const t = raw.trim();
+      if (!t) continue;
+      const key = normalizeTitle(t);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
+    return out;
+  }, [existingTitles]);
+
+  const normalizedTitle = normalizeTitle(title);
+
+  // Dropdown suggestions: other titles containing what's typed so far.
+  // Excludes anything that already normalizes the same as the current
+  // input — that case is the "Did you mean…" hint below instead.
+  const titleSuggestions = useMemo(() => {
+    if (!normalizedTitle) return [];
+    return uniqueTitles
+      .filter((t) => {
+        const key = normalizeTitle(t);
+        return key !== normalizedTitle && key.includes(normalizedTitle);
+      })
+      .slice(0, 6);
+  }, [uniqueTitles, normalizedTitle]);
+
+  // A near-match: same title once normalized, but not literally identical
+  // (different case/spacing) — e.g. "conveyor belt slip" vs "Conveyor  Belt
+  // Slip". Surfaced separately from titleSuggestions so typos of an existing
+  // title get corrected rather than just listed alongside partial matches.
+  const titleNearMatch = useMemo(() => {
+    if (!normalizedTitle) return null;
+    const match = uniqueTitles.find((t) => normalizeTitle(t) === normalizedTitle);
+    return match && match !== title ? match : null;
+  }, [uniqueTitles, normalizedTitle, title]);
 
   function reset() {
     setLineId(stoppage?.lineId ?? "");
@@ -2355,9 +2418,51 @@ function CreateEventDialog({
               />
             </div>
           </div>
-          <div>
+          <div className="relative">
             <Label>Title</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} required />
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onFocus={() => setTitleFocused(true)}
+              onBlur={() => setTitleFocused(false)}
+              autoComplete="off"
+              required
+            />
+            {titleFocused && titleSuggestions.length > 0 && (
+              <ul className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                {titleSuggestions.map((s) => (
+                  <li key={s}>
+                    <button
+                      type="button"
+                      className="block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent"
+                      // Keeps the Title input focused on click so this menu
+                      // doesn't unmount (via the blur handler above) before
+                      // the click itself registers.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setTitle(s);
+                        setTitleFocused(false);
+                      }}
+                    >
+                      {s}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {titleNearMatch && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Did you mean{" "}
+                <button
+                  type="button"
+                  className="font-medium text-primary underline underline-offset-2"
+                  onClick={() => setTitle(titleNearMatch)}
+                >
+                  {titleNearMatch}
+                </button>
+                ?
+              </p>
+            )}
           </div>
           <div>
             <Label>Description (optional)</Label>
@@ -2407,6 +2512,7 @@ function StoppageDialog({
   userId,
   onCreateEvent,
   initialStoppageId = null,
+  existingTitles = [],
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -2427,6 +2533,9 @@ function StoppageDialog({
   // existing stoppage (as opposed to the "New Stoppage" button, which opens
   // it with this null and starts the create form below).
   initialStoppageId?: string | null;
+  // Forwarded to the "Add Event" CreateEventDialog below for its Title
+  // autocomplete — see existingTitles on CreateEventDialog.
+  existingTitles?: string[];
 }) {
   const [stoppageId, setStoppageId] = useState<string | null>(initialStoppageId);
   const [lineId, setLineId] = useState("");
@@ -2613,6 +2722,7 @@ function StoppageDialog({
             const id = await onCreateEvent(data);
             if (id) setAddEventOpen(false);
           }}
+          existingTitles={existingTitles}
         />
       )}
     </>
