@@ -2002,7 +2002,7 @@ function ReliabilityByLineTable({ reliabilityByLine }: { reliabilityByLine: Line
       <CardHeader>
         <h3 className="text-sm font-semibold">Reliability by Line</h3>
         <p className="text-xs text-muted-foreground">
-          Sorted worst availability first, computed from the currently filtered events.
+          Sorted worst availability first, computed from the events matching the current filters.
         </p>
       </CardHeader>
       <CardContent>
@@ -2098,10 +2098,14 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
   return (
     <Card className="mt-6">
       <CardHeader>
-        <h2 className="text-lg font-semibold">MTBF / MTTR by Line & Type</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold">MTBF / MTTR by Line & Type</h2>
+          <Badge variant="outline" className="font-normal text-muted-foreground">
+            Not affected by filters
+          </Badge>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Lifetime reliability metrics — not affected by the table filters above. Sorted worst MTBF
-          first.
+          Lifetime reliability across all data. Sorted worst MTBF first.
         </p>
       </CardHeader>
       <CardContent>
@@ -2196,11 +2200,16 @@ function StoppagesSection({
     <>
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold">Stoppages</h2>
-          <p className="text-sm text-muted-foreground">
-            Downtime windows grouping several maintenance events. Rows marked{" "}
-            <span className="font-medium text-foreground">Orphaned</span> have no member events left
-            and can be deleted.
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">Stoppages</h3>
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              Not affected by filters
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Downtime windows grouping several maintenance events. Shows every stoppage in the plant,
+            so one is never hidden while its events are still visible. Rows marked Orphaned have no
+            member events left and can be deleted.
           </p>
         </CardHeader>
         <CardContent>

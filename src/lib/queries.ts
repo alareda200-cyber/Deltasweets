@@ -474,6 +474,19 @@ export interface MaintenanceNote {
   created_at: string;
 }
 
+// started_at is timestamptz, not date — a bare "YYYY-MM-DD" string is read by
+// Postgres as midnight UTC (03:00 Cairo), which both shifts the start bound
+// and silently excludes the whole of the "to" day. Build explicit local-day
+// boundaries instead and use an exclusive upper bound.
+function localDayStartISO(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+function localDayEndExclusiveISO(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d + 1, 0, 0, 0, 0).toISOString();
+}
+
 export const maintenanceEventsQuery = (
   lineId?: string | null,
   type?: MaintenanceType | null,
@@ -494,8 +507,8 @@ export const maintenanceEventsQuery = (
       if (lineId) query = query.eq("line_id", lineId);
       if (type) query = query.eq("type", type);
       if (status) query = query.eq("status", status);
-      if (from) query = query.gte("started_at", from);
-      if (to) query = query.lte("started_at", to);
+      if (from) query = query.gte("started_at", localDayStartISO(from));
+      if (to) query = query.lt("started_at", localDayEndExclusiveISO(to));
       // Run alongside the events query, not after it — the technicians
       // table is tiny and this keeps the roundtrip parallel instead of
       // serial.

@@ -90,7 +90,12 @@ export interface MaintenanceReportOptions {
   availabilityPct: number | null;
   topLossesByDowntime: { title: string; totalMinutes: number }[];
   topLossesByFrequency: { title: string; count: number }[];
-  chronicVsSporadic: { title: string; count: number; chronic: boolean }[];
+  chronicVsSporadic: {
+    title: string;
+    count: number;
+    chronic: boolean;
+    category: "critical" | "chronic" | "sporadic" | "minor";
+  }[];
   reliabilityByLine: { lineName: string; mtbfHours: number | null; mttrHours: number | null; availabilityPct: number | null; eventCount: number }[];
   // Stoppages (see MaintenanceStoppage) referenced by `events` above, one row
   // each — computed by the caller (src/routes/maintenance.tsx's
@@ -360,11 +365,21 @@ function ReportLayout({
 
   const top5Downtime = topLossesByDowntime.slice(0, 5);
   const top5Frequency = topLossesByFrequency.slice(0, 5);
-  const chronicTitles = chronicVsSporadic.filter((t) => t.chronic);
-  const sporadicTitles = chronicVsSporadic.filter((t) => !t.chronic);
-  const chronicEventCount = chronicTitles.reduce((s, t) => s + t.count, 0);
-  const sporadicEventCount = sporadicTitles.reduce((s, t) => s + t.count, 0);
-  const topChronic = [...chronicTitles].sort((a, b) => b.count - a.count).slice(0, 5);
+
+  const FAULT_CATEGORY_META = [
+    { key: "critical", label: "Critical", color: "#dc2626", hint: "frequent + long" },
+    { key: "chronic", label: "Chronic", color: "#2563eb", hint: "frequent + short" },
+    { key: "sporadic", label: "Sporadic", color: "#64748b", hint: "rare + long" },
+    { key: "minor", label: "Minor", color: "#94a3b8", hint: "rare + short" },
+  ] as const;
+
+  const faultsByCategory = FAULT_CATEGORY_META.map((meta) => {
+    const titles = chronicVsSporadic.filter((t) => t.category === meta.key);
+    const eventCount = titles.reduce((s, t) => s + t.count, 0);
+    return { ...meta, titles, eventCount };
+  });
+
+  const topFaults = [...chronicVsSporadic].sort((a, b) => b.count - a.count).slice(0, 8);
 
   return (
     <div style={{ width: CAPTURE_WIDTH, background: "#ffffff", fontFamily: "Arial, Helvetica, sans-serif", color: "#1e293b" }}>
@@ -533,31 +548,44 @@ function ReportLayout({
         data-pdf-section="reliability-chronic"
         style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
-        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Chronic vs Sporadic Summary</p>
-        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>Chronic = recurred + above-average duration.</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 16 }}>
-          <ReportKpiCard label="Chronic Faults" value={`${chronicTitles.length} titles · ${chronicEventCount} events`} accent="#dc2626" />
-          <ReportKpiCard label="Sporadic Faults" value={`${sporadicTitles.length} titles · ${sporadicEventCount} events`} accent="#64748b" />
+        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Fault Classification</p>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>
+          By frequency vs mean duration. Critical = frequent and long.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+          {faultsByCategory.map((c) => (
+            <ReportKpiCard
+              key={c.key}
+              label={c.label}
+              value={`${c.titles.length} titles · ${c.eventCount} events`}
+              accent={c.color}
+            />
+          ))}
         </div>
-        {topChronic.length > 0 && (
+        {topFaults.length > 0 && (
           <>
             <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
-              Top Chronic Faults
+              Top Faults
             </p>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
                   <th style={th}>Title</th>
                   <th style={th}>Occurrences</th>
+                  <th style={th}>Category</th>
                 </tr>
               </thead>
               <tbody>
-                {topChronic.map((t) => (
-                  <tr key={t.title}>
-                    <td style={td}>{t.title}</td>
-                    <td style={td}>{t.count}</td>
-                  </tr>
-                ))}
+                {topFaults.map((t) => {
+                  const meta = FAULT_CATEGORY_META.find((m) => m.key === t.category);
+                  return (
+                    <tr key={t.title}>
+                      <td style={td}>{t.title}</td>
+                      <td style={td}>{t.count}</td>
+                      <td style={{ ...td, color: meta?.color, fontWeight: 600 }}>{meta?.label ?? t.category}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </>
