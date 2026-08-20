@@ -390,14 +390,12 @@ function MaintenanceKpiGrid({
   );
 }
 
-// Filters + events list — extracted so the mobile Tabs instance and the
-// desktop sidebar's Events section call the exact same component instead of
-// duplicating this Card. The internal mobile-card-list / desktop-table
-// split (unchanged from before) is redundant at each call site now (mobile
-// callers only ever render at <768px, desktop callers only at ≥768px), but
-// left in place rather than simplified — it's still correct, and touching
-// it risks the actual table/card rendering logic, not just layout.
-function EventsListCard({
+// Filter bar — lifted to page scope (rendered once, above both the mobile
+// stack and the desktop sidebar+content grid) so it stays visible no matter
+// which section (Events, Stoppages, Reliability, Top losses, MTBF / MTTR) is
+// active. Reliability and Top losses are driven by the same filter state as
+// Events, so the controls can't live inside EventsListCard's own Card.
+function MaintenanceFilters({
   lines,
   lineId,
   setLineId,
@@ -409,9 +407,6 @@ function EventsListCard({
   setFrom,
   to,
   setTo,
-  isLoading,
-  events,
-  onSelectEvent,
 }: {
   lines: { id: string; name: string }[];
   lineId: string;
@@ -424,26 +419,11 @@ function EventsListCard({
   setFrom: (v: string) => void;
   to: string;
   setTo: (v: string) => void;
-  isLoading: boolean;
-  events: MaintenanceEvent[];
-  onSelectEvent: (e: MaintenanceEvent) => void;
 }) {
-  const PAGE_SIZE = 20;
-  const [page, setPage] = useState(1);
-  // Reset to page 1 whenever the actual filters change — not whenever
-  // `events` itself changes, which would also fire on every background
-  // refetch of the *same* filtered list (e.g. after editing an event
-  // elsewhere) and needlessly kick the user back to page 1.
-  const filterKey = `${lineId}|${type}|${status}|${from}|${to}`;
-  useEffect(() => {
-    setPage(1);
-  }, [filterKey]);
-  const totalPages = Math.max(1, Math.ceil(events.length / PAGE_SIZE));
-  const pageRows = events.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
+  const hasAny = Boolean(lineId || type || status || from || to);
   return (
-    <Card>
-      <CardHeader>
+    <Card className="mb-6">
+      <CardContent className="pt-6">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <Select value={lineId || "all"} onValueChange={(v) => setLineId(v === "all" ? "" : v)}>
             <SelectTrigger>
@@ -500,7 +480,81 @@ function EventsListCard({
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" />
           </div>
         </div>
-      </CardHeader>
+        {hasAny && (
+          <div className="mt-3 flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setLineId("");
+                setType("");
+                setStatus("");
+                setFrom("");
+                setTo("");
+              }}
+            >
+              Clear filters
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Filters + events list — extracted so the mobile Tabs instance and the
+// desktop sidebar's Events section call the exact same component instead of
+// duplicating this Card. The internal mobile-card-list / desktop-table
+// split (unchanged from before) is redundant at each call site now (mobile
+// callers only ever render at <768px, desktop callers only at ≥768px), but
+// left in place rather than simplified — it's still correct, and touching
+// it risks the actual table/card rendering logic, not just layout.
+function EventsListCard({
+  lines,
+  lineId,
+  setLineId,
+  type,
+  setType,
+  status,
+  setStatus,
+  from,
+  setFrom,
+  to,
+  setTo,
+  isLoading,
+  events,
+  onSelectEvent,
+}: {
+  lines: { id: string; name: string }[];
+  lineId: string;
+  setLineId: (v: string) => void;
+  type: MaintenanceType | "";
+  setType: (v: MaintenanceType | "") => void;
+  status: MaintenanceStatus | "";
+  setStatus: (v: MaintenanceStatus | "") => void;
+  from: string;
+  setFrom: (v: string) => void;
+  to: string;
+  setTo: (v: string) => void;
+  isLoading: boolean;
+  events: MaintenanceEvent[];
+  onSelectEvent: (e: MaintenanceEvent) => void;
+}) {
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  // Reset to page 1 whenever the actual filters change — not whenever
+  // `events` itself changes, which would also fire on every background
+  // refetch of the *same* filtered list (e.g. after editing an event
+  // elsewhere) and needlessly kick the user back to page 1.
+  const filterKey = `${lineId}|${type}|${status}|${from}|${to}`;
+  useEffect(() => {
+    setPage(1);
+  }, [filterKey]);
+  const totalPages = Math.max(1, Math.ceil(events.length / PAGE_SIZE));
+  const pageRows = events.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  return (
+    <Card>
       <CardContent>
         {/* Mobile: one card per event instead of the table below (which is
             desktop-only, hidden md:block, fully unchanged) — same
@@ -814,24 +868,39 @@ function MaintenancePage() {
         .sort((a, b) => b.meanMinutes - a.meanMinutes),
     [titleAggregates],
   );
-  // Chronic = recurred (count > 1) AND its average duration is worse than
-  // the overall (current-filter) MTTR — a fault that only ever ran short
-  // shouldn't count as chronic just because it happened twice. Sporadic is
-  // everything else, including every single-occurrence fault, by
-  // definition (see reliability-management brief this was built against).
-  // When MTTR itself is unknown (no resolved events yet), nothing can be
-  // judged "above average" honestly, so nothing is marked chronic.
+  // Two independent axes, not one boolean. Frequency: does this title recur more than
+  // the median title? Duration: is a single occurrence longer than the overall MTTR?
+  //   high freq + long  -> critical  (worst: recurs AND each one is expensive)
+  //   high freq + short -> chronic   (TPM's chronic loss: small, frequent, normalised)
+  //   low  freq + long  -> sporadic  (sudden, large, rare)
+  //   low  freq + short -> minor     (noise)
+  // A single occurrence can never be critical/chronic. When MTTR is unknown, no title
+  // is judged "long" — same honesty rule the previous implementation used.
   const chronicVsSporadic = useMemo(() => {
     const mttrThresholdMinutes =
       reliabilitySummary.mttrHours !== null ? reliabilitySummary.mttrHours * 60 : null;
+    const counts = failureTitleAggregates.map((t) => t.count).sort((a, b) => a - b);
+    const medianCount =
+      counts.length === 0
+        ? 0
+        : counts.length % 2 === 1
+          ? counts[(counts.length - 1) / 2]
+          : (counts[counts.length / 2 - 1] + counts[counts.length / 2]) / 2;
     return failureTitleAggregates
-      .map((t) => ({ ...t, meanMinutes: t.totalMinutes / t.count }))
-      .map((t) => ({
-        ...t,
-        chronic:
-          t.count > 1 && mttrThresholdMinutes !== null && t.meanMinutes > mttrThresholdMinutes,
-      }))
-      .sort((a, b) => b.count - a.count);
+      .map((t) => {
+        const meanMinutes = t.totalMinutes / t.count;
+        const frequent = t.count > 1 && t.count >= medianCount;
+        const long = mttrThresholdMinutes !== null && meanMinutes > mttrThresholdMinutes;
+        const category: FaultCategory = frequent
+          ? long
+            ? "critical"
+            : "chronic"
+          : long
+            ? "sporadic"
+            : "minor";
+        return { ...t, meanMinutes, category, chronic: category === "critical" || category === "chronic" };
+      })
+      .sort((a, b) => b.totalMinutes - a.totalMinutes);
   }, [failureTitleAggregates, reliabilitySummary.mttrHours]);
   const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
   // Stoppages referenced by the currently-filtered `events` — same
@@ -1126,6 +1195,23 @@ function MaintenancePage() {
           )}
         </div>
       </div>
+
+      {/* Filter bar — page-scoped (outside both the mobile stack and the
+          desktop sidebar+content grid below), so it renders once and stays
+          visible across every section on both viewports. */}
+      <MaintenanceFilters
+        lines={lines}
+        lineId={lineId}
+        setLineId={setLineId}
+        type={type}
+        setType={setType}
+        status={status}
+        setStatus={setStatus}
+        from={from}
+        setFrom={setFrom}
+        to={to}
+        setTo={setTo}
+      />
 
       {/* Mobile: stays in this always-visible position exactly as before.
           Desktop: this exact grid (same MaintenanceKpiGrid) moves inside the
@@ -1463,6 +1549,25 @@ interface TitleAggregate {
   count: number;
 }
 
+type FaultCategory = "critical" | "chronic" | "sporadic" | "minor";
+
+const faultCategoryLabel: Record<FaultCategory, string> = {
+  critical: "Critical",
+  chronic: "Chronic",
+  sporadic: "Sporadic",
+  minor: "Minor",
+};
+
+const faultCategoryBadgeVariant: Record<
+  FaultCategory,
+  "default" | "destructive" | "secondary" | "outline"
+> = {
+  critical: "destructive",
+  chronic: "default",
+  sporadic: "secondary",
+  minor: "outline",
+};
+
 // Groups events by title (trimmed, case-insensitive) — the display title
 // keeps the first occurrence's original casing/spacing.
 function aggregateByTitle(events: MaintenanceEvent[]): TitleAggregate[] {
@@ -1712,7 +1817,7 @@ function TopLossesGrid({
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
+  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; category: FaultCategory; chronic: boolean })[];
 }) {
   const isMobile = useIsMobile();
   const nameMaxLen = isMobile ? 10 : 20;
@@ -1858,7 +1963,9 @@ function TopLossesGrid({
       <Card>
         <CardHeader>
           <h3 className="text-sm font-semibold">Chronic vs Sporadic</h3>
-          <p className="text-xs text-muted-foreground">Chronic = recurred + above-avg duration</p>
+          <p className="text-xs text-muted-foreground">
+            By frequency vs duration — Critical, Chronic, Sporadic, Minor
+          </p>
         </CardHeader>
         <CardContent>
           {chronicVsSporadic.length === 0 ? (
@@ -1873,8 +1980,8 @@ function TopLossesGrid({
                   <span className="truncate">{t.title}</span>
                   <div className="flex shrink-0 items-center gap-2">
                     <span className="tabular-nums text-muted-foreground">{t.count}x</span>
-                    <Badge variant={t.chronic ? "destructive" : "outline"}>
-                      {t.chronic ? "Chronic" : "Sporadic"}
+                    <Badge variant={faultCategoryBadgeVariant[t.category]}>
+                      {faultCategoryLabel[t.category]}
                     </Badge>
                   </div>
                 </li>
@@ -1959,7 +2066,7 @@ function ReliabilityAnalyticsSection({
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; chronic: boolean })[];
+  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; category: FaultCategory; chronic: boolean })[];
   reliabilityByLine: LineReliability[];
 }) {
   return (
