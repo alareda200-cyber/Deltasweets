@@ -19,6 +19,11 @@ const CAPTURE_WIDTH = 1000; // px
 
 export interface MaintenanceReportOptions {
   lineName: string;
+  // "" means unfiltered ("All types" / "All statuses") — rendered into the
+  // header subtitle alongside lineName/from/to so the export always states
+  // its own scope (see TYPE_LABELS/STATUS_LABELS below).
+  type: MaintenanceType | "";
+  status: MaintenanceStatus | "";
   from: string | null;
   to: string | null;
   // Display name (or email fallback) of the user who triggered the export —
@@ -27,25 +32,51 @@ export interface MaintenanceReportOptions {
   generatedBy: string;
   // Currently-filtered events (line/type/status/date filters from the
   // /maintenance page) — this is the "what got exported" set, used for the
-  // events table and the Mechanical vs Electrical downtime chart.
+  // events table (every member row, including stoppage members, keeps its
+  // own "Part of Stoppage" badge here) and the Mechanical vs Electrical
+  // downtime chart's per-row source. NOT used for the chart's minute totals
+  // — see collapsedEvents below.
   events: MaintenanceEvent[];
+  // Same filtered set as `events`, but with each stoppage's member events
+  // collapsed into one representative row (see collapseStoppageEvents in
+  // queries.ts) — the /maintenance page's own "one downtime answer per
+  // stoppage" view. Used for the Downtime-by-Type minute totals so a
+  // multi-event stoppage's window isn't double-counted across its members,
+  // matching totalDowntimeMinutes/topLossesByDowntime below (both already
+  // built from the caller's own collapsedEvents memo).
+  collapsedEvents: MaintenanceEvent[];
   // Lifetime, unfiltered MTBF/MTTR by Line & Type — same semantics as the
   // live page's own metrics table (its own doc comment: "not affected by
   // the table filters above"), reused as-is for consistency.
   metrics: MaintenanceMetric[];
-  // Plant-wide summary numbers, already computed by the caller (same values
-  // as the live page's own top KPI cards) — this module only presents them,
-  // it doesn't re-derive MTBF/MTTR math itself.
+  // Scoped to the current filter (`events`), not plant-wide — each has a
+  // `lifetime*` counterpart below (the previous, plant-wide value) shown as
+  // a small muted line under its KPI card, so the export never implies a
+  // filtered figure is the plant's whole story.
   totalEvents: number;
   openCount: number;
   // Preventive events are kept out of openCount (which feeds the same
   // mechanical/electrical-only reliability story as the KPI cards above it)
   // and shown as its own card instead — see MaintenanceType docs.
   openPreventiveCount: number;
+  // Computed from the filtered `events`, same formula (grouped by
+  // line_id + type, preventive excluded) as the live page's Reliability
+  // Analytics section — not the lifetime `metrics` weighted average.
   mtbfMechanicalHours: number | null;
   mttrMechanicalHours: number | null;
   mtbfElectricalHours: number | null;
   mttrElectricalHours: number | null;
+  // Plant-wide counterparts of the 7 fields above, from the live page's own
+  // top KPI cards (openCount/openPreventiveCount) and the lifetime `metrics`
+  // weighted average (MTBF/MTTR) — rendered as "Lifetime: …" under each
+  // re-scoped card.
+  lifetimeTotalEvents: number;
+  lifetimeOpenCount: number;
+  lifetimeOpenPreventiveCount: number;
+  lifetimeMtbfMechanicalHours: number | null;
+  lifetimeMttrMechanicalHours: number | null;
+  lifetimeMtbfElectricalHours: number | null;
+  lifetimeMttrElectricalHours: number | null;
   // Reliability Analytics numbers — the exact same values already computed
   // by the live /maintenance page's own useMemo hooks (see
   // src/routes/maintenance.tsx), passed through rather than re-derived here,
@@ -197,13 +228,29 @@ const td: CSSProperties = {
   borderBottom: "1px solid #f1f5f9",
 };
 
-function ReportKpiCard({ label, value, accent }: { label: string; value: string; accent: string }) {
+function ReportKpiCard({
+  label,
+  value,
+  accent,
+  lifetime,
+}: {
+  label: string;
+  value: string;
+  accent: string;
+  // Plant-wide value this card's (now filter-scoped) `value` was previously
+  // showing — omitted for cards that were already filter-scoped (Open
+  // Stoppages) so they don't grow a redundant/misleading line.
+  lifetime?: string;
+}) {
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "14px 16px", background: "#ffffff" }}>
       <p style={{ margin: 0, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: "#64748b" }}>
         {label}
       </p>
       <p style={{ margin: "6px 0 0", fontSize: 22, fontWeight: 800, color: accent }}>{value}</p>
+      {lifetime !== undefined && (
+        <p style={{ margin: "4px 0 0", fontSize: 10, color: "#94a3b8" }}>Lifetime: {lifetime}</p>
+      )}
     </div>
   );
 }
@@ -245,6 +292,7 @@ function FrequencyBar({ label, count, pct, color }: { label: string; count: numb
 
 function ReportLayout({
   events,
+  collapsedEvents,
   metrics,
   totalEvents,
   openCount,
@@ -253,6 +301,13 @@ function ReportLayout({
   mttrMechanicalHours,
   mtbfElectricalHours,
   mttrElectricalHours,
+  lifetimeTotalEvents,
+  lifetimeOpenCount,
+  lifetimeOpenPreventiveCount,
+  lifetimeMtbfMechanicalHours,
+  lifetimeMttrMechanicalHours,
+  lifetimeMtbfElectricalHours,
+  lifetimeMttrElectricalHours,
   totalDowntimeMinutes,
   repeatFailureRatePct,
   availabilityPct,
@@ -264,6 +319,7 @@ function ReportLayout({
 }: Pick<
   MaintenanceReportOptions,
   | "events"
+  | "collapsedEvents"
   | "metrics"
   | "totalEvents"
   | "openCount"
@@ -272,6 +328,13 @@ function ReportLayout({
   | "mttrMechanicalHours"
   | "mtbfElectricalHours"
   | "mttrElectricalHours"
+  | "lifetimeTotalEvents"
+  | "lifetimeOpenCount"
+  | "lifetimeOpenPreventiveCount"
+  | "lifetimeMtbfMechanicalHours"
+  | "lifetimeMttrMechanicalHours"
+  | "lifetimeMtbfElectricalHours"
+  | "lifetimeMttrElectricalHours"
   | "totalDowntimeMinutes"
   | "repeatFailureRatePct"
   | "availabilityPct"
@@ -281,9 +344,14 @@ function ReportLayout({
   | "reliabilityByLine"
   | "stoppagesSummary"
 >) {
-  const mechMinutes = events.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
-  const elecMinutes = events.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
-  const prevMinutes = events.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDurationMinutes(e), 0);
+  // Downtime-by-Type reads collapsedEvents (one row per stoppage), not the
+  // raw `events` the table below lists — otherwise a multi-event stoppage's
+  // window gets summed once per member instead of once per stoppage, and
+  // this chart's total silently drifts from totalDowntimeMinutes/
+  // topLossesByDowntime (both already collapsedEvents-based).
+  const mechMinutes = collapsedEvents.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
+  const elecMinutes = collapsedEvents.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
+  const prevMinutes = collapsedEvents.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDurationMinutes(e), 0);
   const totalMinutes = mechMinutes + elecMinutes + prevMinutes;
   const mechPct = totalMinutes > 0 ? (mechMinutes / totalMinutes) * 100 : 0;
   const elecPct = totalMinutes > 0 ? (elecMinutes / totalMinutes) * 100 : 0;
@@ -304,13 +372,48 @@ function ReportLayout({
         data-pdf-section="kpis"
         style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, padding: 20, background: "#ffffff" }}
       >
-        <ReportKpiCard label="Total Events" value={String(totalEvents)} accent="#1e293b" />
-        <ReportKpiCard label="Open" value={String(openCount)} accent={openCount > 0 ? "#d97706" : "#16a34a"} />
-        <ReportKpiCard label="MTBF (Mechanical)" value={formatHours(mtbfMechanicalHours)} accent="#4f46e5" />
-        <ReportKpiCard label="MTTR (Mechanical)" value={formatHours(mttrMechanicalHours)} accent="#4f46e5" />
-        <ReportKpiCard label="MTBF (Electrical)" value={formatHours(mtbfElectricalHours)} accent="#f59e0b" />
-        <ReportKpiCard label="MTTR (Electrical)" value={formatHours(mttrElectricalHours)} accent="#f59e0b" />
-        <ReportKpiCard label="Open Preventive" value={String(openPreventiveCount)} accent={openPreventiveCount > 0 ? "#d97706" : "#16a34a"} />
+        <ReportKpiCard
+          label="Total Events"
+          value={String(totalEvents)}
+          accent="#1e293b"
+          lifetime={String(lifetimeTotalEvents)}
+        />
+        <ReportKpiCard
+          label="Open"
+          value={String(openCount)}
+          accent={openCount > 0 ? "#d97706" : "#16a34a"}
+          lifetime={String(lifetimeOpenCount)}
+        />
+        <ReportKpiCard
+          label="MTBF (Mechanical)"
+          value={formatHours(mtbfMechanicalHours)}
+          accent="#4f46e5"
+          lifetime={formatHours(lifetimeMtbfMechanicalHours)}
+        />
+        <ReportKpiCard
+          label="MTTR (Mechanical)"
+          value={formatHours(mttrMechanicalHours)}
+          accent="#4f46e5"
+          lifetime={formatHours(lifetimeMttrMechanicalHours)}
+        />
+        <ReportKpiCard
+          label="MTBF (Electrical)"
+          value={formatHours(mtbfElectricalHours)}
+          accent="#f59e0b"
+          lifetime={formatHours(lifetimeMtbfElectricalHours)}
+        />
+        <ReportKpiCard
+          label="MTTR (Electrical)"
+          value={formatHours(mttrElectricalHours)}
+          accent="#f59e0b"
+          lifetime={formatHours(lifetimeMttrElectricalHours)}
+        />
+        <ReportKpiCard
+          label="Open Preventive"
+          value={String(openPreventiveCount)}
+          accent={openPreventiveCount > 0 ? "#d97706" : "#16a34a"}
+          lifetime={String(lifetimeOpenPreventiveCount)}
+        />
         <ReportKpiCard label="Total Stoppages" value={String(stoppagesSummary.length)} accent="#1e293b" />
       </div>
 
@@ -546,6 +649,22 @@ function ReportLayout({
         data-pdf-section="metrics-table"
         style={{ margin: "0 20px 20px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
+        <div
+          style={{
+            display: "inline-block",
+            marginBottom: 10,
+            padding: "4px 10px",
+            borderRadius: 999,
+            background: "#fef3c7",
+            color: "#92400e",
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 0.4,
+          }}
+        >
+          Lifetime context — not affected by this report's filters
+        </div>
         <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>MTBF / MTTR by Line & Type</p>
         <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>Lifetime reliability metrics, worst MTBF first.</p>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -597,10 +716,13 @@ function ReportLayout({
  */
 export async function exportMaintenanceReportToPdf({
   lineName,
+  type,
+  status,
   from,
   to,
   generatedBy,
   events,
+  collapsedEvents,
   metrics,
   totalEvents,
   openCount,
@@ -609,6 +731,13 @@ export async function exportMaintenanceReportToPdf({
   mttrMechanicalHours,
   mtbfElectricalHours,
   mttrElectricalHours,
+  lifetimeTotalEvents,
+  lifetimeOpenCount,
+  lifetimeOpenPreventiveCount,
+  lifetimeMtbfMechanicalHours,
+  lifetimeMttrMechanicalHours,
+  lifetimeMtbfElectricalHours,
+  lifetimeMttrElectricalHours,
   totalDowntimeMinutes,
   repeatFailureRatePct,
   availabilityPct,
@@ -636,6 +765,7 @@ export async function exportMaintenanceReportToPdf({
       root.render(
         <ReportLayout
           events={events}
+          collapsedEvents={collapsedEvents}
           metrics={metrics}
           totalEvents={totalEvents}
           openCount={openCount}
@@ -644,6 +774,13 @@ export async function exportMaintenanceReportToPdf({
           mttrMechanicalHours={mttrMechanicalHours}
           mtbfElectricalHours={mtbfElectricalHours}
           mttrElectricalHours={mttrElectricalHours}
+          lifetimeTotalEvents={lifetimeTotalEvents}
+          lifetimeOpenCount={lifetimeOpenCount}
+          lifetimeOpenPreventiveCount={lifetimeOpenPreventiveCount}
+          lifetimeMtbfMechanicalHours={lifetimeMtbfMechanicalHours}
+          lifetimeMttrMechanicalHours={lifetimeMttrMechanicalHours}
+          lifetimeMtbfElectricalHours={lifetimeMtbfElectricalHours}
+          lifetimeMttrElectricalHours={lifetimeMttrElectricalHours}
           totalDowntimeMinutes={totalDowntimeMinutes}
           repeatFailureRatePct={repeatFailureRatePct}
           availabilityPct={availabilityPct}
@@ -692,8 +829,10 @@ export async function exportMaintenanceReportToPdf({
     doc.text("Maintenance Report", textX, cursorY + 16);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    const periodText = from && to ? `${from} → ${to}` : "All time";
-    doc.text(`${lineName} · ${periodText}`, textX, cursorY + 32);
+    const periodText = from && to ? `${from} -> ${to}` : "All time";
+    const typeText = type ? TYPE_LABELS[type] : "All types";
+    const statusText = status ? STATUS_LABELS[status] : "All statuses";
+    doc.text(`${lineName} · ${typeText} · ${statusText} · ${periodText}`, textX, cursorY + 32);
     doc.text(`Generated ${generatedAt.toLocaleString()} by ${generatedBy}`, textX, cursorY + 46);
     cursorY += Math.max(logo?.heightPt ?? 0, 50) + 16;
 
