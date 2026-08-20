@@ -750,6 +750,7 @@ export type Database = {
           first_name: string | null
           id: string
           last_login: string | null
+          last_seen_at: string | null
           last_name: string | null
           must_change_password: boolean
           phone: string | null
@@ -767,6 +768,7 @@ export type Database = {
           first_name?: string | null
           id: string
           last_login?: string | null
+          last_seen_at?: string | null
           last_name?: string | null
           must_change_password?: boolean
           phone?: string | null
@@ -784,6 +786,7 @@ export type Database = {
           first_name?: string | null
           id?: string
           last_login?: string | null
+          last_seen_at?: string | null
           last_name?: string | null
           must_change_password?: boolean
           phone?: string | null
@@ -895,6 +898,7 @@ export type Database = {
     Functions: {
       is_admin: { Args: { check_user_id: string }; Returns: boolean }
       touch_last_login: { Args: never; Returns: undefined }
+      touch_last_seen: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

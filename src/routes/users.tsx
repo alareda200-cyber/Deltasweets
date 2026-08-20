@@ -105,6 +105,7 @@ interface UserRow {
   role: string;
   status: string;
   last_login: string | null;
+  last_seen_at: string | null;
   created_at: string;
   departments: { name: string } | null;
 }
@@ -135,6 +136,19 @@ function roleColorClass(role: string) {
     default:
       return "text-muted-foreground"; // viewer, quality
   }
+}
+
+// Presence bands. Deliberately coarse: last_seen_at is only written on
+// navigation, throttled to once per 10 minutes, so anything finer than
+// these bands would imply a precision the data does not have.
+function presenceOf(lastSeenAt: string | null): { dot: string; label: string; tone: string } {
+  if (!lastSeenAt) return { dot: "bg-muted-foreground/40", label: "Never seen", tone: "text-muted-foreground" };
+  const mins = Math.floor((Date.now() - new Date(lastSeenAt).getTime()) / 60000);
+  if (mins < 5) return { dot: "bg-success", label: "Online now", tone: "text-success" };
+  if (mins < 60) return { dot: "bg-warning", label: `${mins}m ago`, tone: "text-muted-foreground" };
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return { dot: "bg-muted-foreground", label: `${hours}h ago`, tone: "text-muted-foreground" };
+  return { dot: "bg-muted-foreground/40", label: new Date(lastSeenAt).toLocaleDateString(), tone: "text-muted-foreground" };
 }
 
 function UsersPage() {
@@ -358,7 +372,9 @@ function UsersPage() {
                   </TableCell>
                 </TableRow>
               )}
-              {pageRows.map((u) => (
+              {pageRows.map((u) => {
+                const presence = presenceOf(u.last_seen_at);
+                return (
                 <TableRow key={u.id} className="hover:bg-muted/50">
                   <TableCell>
                     <div className="flex items-center gap-2.5">
@@ -388,10 +404,9 @@ function UsersPage() {
                         {u.status === "active" ? "Active" : "Inactive"}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {u.last_login
-                        ? `Last seen ${new Date(u.last_login).toLocaleDateString()}`
-                        : "Never signed in"}
+                    <p className={`mt-0.5 flex items-center gap-1 text-[10px] ${presence.tone}`}>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${presence.dot}`} />
+                      {presence.label}
                     </p>
                   </TableCell>
                   <TableCell className="hidden xl:table-cell text-xs text-muted-foreground">
@@ -458,7 +473,8 @@ function UsersPage() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
           <div className="mt-4 flex items-center justify-end gap-3 text-sm text-muted-foreground">
@@ -854,6 +870,10 @@ function ViewUserDialog({
             <div>
               <p className="text-xs text-muted-foreground">Status</p>
               <p>{row.status}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Last Seen</p>
+              <p>{row.last_seen_at ? new Date(row.last_seen_at).toLocaleString() : "Never"}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Last Login</p>

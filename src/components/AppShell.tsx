@@ -15,9 +15,10 @@ import {
   AlertTriangle,
   Wrench,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
+import { touchLastSeen } from "@/lib/presence";
 import { can } from "@/lib/permissions";
 import { ROLE_LABELS, type Role } from "@/lib/permissions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -72,6 +73,9 @@ const mobileNav = [
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const { role, profile, signOut } = useAuth();
+  useEffect(() => {
+    touchLastSeen();
+  }, [pathname]);
   const navigate = useNavigate();
   const visibleNav = nav.filter((n) => can(role, n.permission));
   const visibleMobileNav = mobileNav.filter((n) => can(role, n.permission));
