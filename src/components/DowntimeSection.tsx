@@ -310,7 +310,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             <div className="space-y-2">
               {(showAllCauses ? chartData : chartData.slice(0, 6)).map((d, i) => {
                 const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
-                const hue = 260 - i * 8;
+                const hue = 260 - i * 4;
                 return (
                   <div key={d.fullName} className="flex items-center gap-2">
                     <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
@@ -350,7 +350,11 @@ export function DowntimeSection({ entries, downtimes }: Props) {
                 <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 54 }}>
                   <defs>
                     {chartData.map((_, i) => {
-                      const hue = 260 - i * 8;
+                      // 4° per rank, not 8°: with up to 12 bars an 8° step ran the ramp from
+                      // blue into teal-green by the tail, and green reads as "fine" on a plant
+                      // board — these are all faults. Same step MaintenanceDowntimeCard uses,
+                      // so the two cards on this dashboard speak one colour language.
+                      const hue = 260 - i * 4;
                       return (
                         <linearGradient key={i} id={`dt3d-${i}`} x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor={`oklch(0.75 0.18 ${hue})`} />

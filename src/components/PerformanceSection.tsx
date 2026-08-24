@@ -23,6 +23,14 @@ interface Props {
   accentColor: string;
 }
 
+// Dot colour = that day's adherence band. Deliberately the same three
+// tokens and the same cut-offs as the Adherence KpiCard.
+function adhDotColor(adh: number) {
+  if (adh >= 0.9) return "var(--color-success)";
+  if (adh >= 0.7) return "var(--color-warning)";
+  return "var(--color-destructive)";
+}
+
 export function PerformanceSection({ title, subtitle, entries, field, accentColor }: Props) {
   const isMobile = useIsMobile();
   const planKey = field === "making" ? "making_plan" : "packing_plan";
@@ -47,11 +55,36 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
   const dayVar = dayActual - dayPlan;
   const dayAdh = dayPlan > 0 ? dayActual / dayPlan : 0;
 
-  const chartData = entries.map((e) => ({
-    date: e.entry_date.slice(5),
-    Plan: Number(e[planKey]),
-    Actual: Number(e[actualKey]),
-  }));
+  const chartData = entries.map((e) => {
+    const plan = Number(e[planKey]);
+    const actual = Number(e[actualKey]);
+    return {
+      date: e.entry_date.slice(5),
+      Plan: plan,
+      Actual: actual,
+      // Adherence drives the dot colour below. Same 0.9 / 0.7 cut-offs as
+      // the Adherence KpiCard above, so the chart and the card can never
+      // disagree about what a good day is.
+      adh: plan > 0 ? actual / plan : 0,
+    };
+  });
+
+  // Only meaningful when there is more than one day and they actually
+  // differ — otherwise every dot would claim to be both best and worst.
+  let worstIdx = -1;
+  let bestIdx = -1;
+  if (chartData.length > 1) {
+    worstIdx = 0;
+    bestIdx = 0;
+    chartData.forEach((d, i) => {
+      if (d.adh < chartData[worstIdx].adh) worstIdx = i;
+      if (d.adh > chartData[bestIdx].adh) bestIdx = i;
+    });
+    if (worstIdx === bestIdx) {
+      worstIdx = -1;
+      bestIdx = -1;
+    }
+  }
 
   return (
     <section className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8">
@@ -124,7 +157,11 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
 
       {/* Chart */}
       <div>
-        <p className="mb-3 text-sm font-semibold">Daily Plan vs Actual (kg)</p>
+        <p className="text-sm font-semibold">Daily Plan vs Actual (kg)</p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Actual dot colour = that day&apos;s adherence — green ≥ 90%, amber 70–89%, red &lt; 70%.
+          The two ringed dots are the best and worst day of the period.
+        </p>
         <div className="h-[200px] w-full md:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
@@ -134,9 +171,19 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
               />
               {/* 8% headroom so the Plan line never renders flat against the
-                  top edge of the plot area, which made it read as clipped. */}
+                  top edge of the plot area, which made it read as clipped.
+                  The headroom is then rounded up to a clean step (not just
+                  the nearest integer) so Recharts keeps even tick spacing. */}
               <YAxis
-                domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.08)]}
+                domain={[
+                  0,
+                  (dataMax: number) => {
+                    const raw = dataMax * 1.08;
+                    if (!Number.isFinite(raw) || raw <= 0) return 0;
+                    const step = 10 ** Math.max(0, Math.floor(Math.log10(raw)) - 1);
+                    return Math.ceil(raw / step) * step;
+                  },
+                ]}
                 tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
               />
               <Tooltip
@@ -146,6 +193,11 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                   borderRadius: 8,
                   fontSize: 12,
                 }}
+                formatter={(value: number, name: string, item: { payload?: { adh: number } }) =>
+                  name === "Actual"
+                    ? [`${fmt(value)} kg · ${pct(item.payload?.adh ?? 0)} adherence`, name]
+                    : [`${fmt(value)} kg`, name]
+                }
               />
               {/* Hidden on mobile to save vertical space — Plan/Actual are
                   still distinguishable via the tooltip and the section's own
@@ -188,8 +240,25 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 dataKey="Actual"
                 stroke={accentColor}
                 strokeWidth={2.5}
-                dot={{ r: 3 }}
-                activeDot={{ r: 5 }}
+                // Colour alone can't carry this (colour-blind users, greyscale PDF
+                // export), so best/worst also get a bigger radius and a ring.
+                dot={(props: { cx?: number; cy?: number; index?: number; payload?: { adh: number } }) => {
+                  const { cx, cy, index = 0, payload } = props;
+                  if (cx == null || cy == null || !payload) return <g key={index} />;
+                  const extreme = index === worstIdx || index === bestIdx;
+                  return (
+                    <circle
+                      key={index}
+                      cx={cx}
+                      cy={cy}
+                      r={extreme ? 5.5 : 3.5}
+                      fill={adhDotColor(payload.adh)}
+                      stroke="var(--color-card)"
+                      strokeWidth={extreme ? 2.5 : 1}
+                    />
+                  );
+                }}
+                activeDot={{ r: 6, strokeDasharray: "none" }}
               />
             </LineChart>
           </ResponsiveContainer>
