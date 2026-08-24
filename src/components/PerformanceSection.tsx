@@ -133,7 +133,12 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 dataKey="date"
                 tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
               />
-              <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+              {/* 8% headroom so the Plan line never renders flat against the
+                  top edge of the plot area, which made it read as clipped. */}
+              <YAxis
+                domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.08)]}
+                tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
+              />
               <Tooltip
                 contentStyle={{
                   background: "var(--color-popover)",
@@ -156,15 +161,30 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 stroke="var(--color-muted-foreground)"
                 strokeDasharray="4 4"
               />
+              {/* `linear`, not `monotone`. Plan and Actual are one discrete
+                  measurement per day; a monotone spline draws a smooth curve
+                  *through* values that were never recorded — on a day with a
+                  sharp drop it renders a plausible-looking dip either side of
+                  the real point, which reads as production data. Straight
+                  segments show only what was entered.
+                  Plan is also dashed: two solid lines separated by colour
+                  alone fail "don't convey information by colour only", and the
+                  legend is suppressed on mobile (above), so line style is the
+                  only cue a phone user gets. */}
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="Plan"
                 stroke="var(--color-muted-foreground)"
                 strokeWidth={2}
-                dot={false}
+                strokeDasharray="6 4"
+                // Recharts hands the Line's own props to its dots, so the dash
+                // pattern was being applied to each 2.5px circle and rendering
+                // them as chevrons. Reset it on the dot only.
+                dot={{ r: 2.5, strokeDasharray: "none" }}
+                activeDot={{ r: 4, strokeDasharray: "none" }}
               />
               <Line
-                type="monotone"
+                type="linear"
                 dataKey="Actual"
                 stroke={accentColor}
                 strokeWidth={2.5}

@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   Cell,
   LabelList,
+  ReferenceArea,
 } from "recharts";
 import {
   maintenanceEventsQuery,
@@ -66,6 +67,32 @@ function eventDurationMinutes(e: MaintenanceEvent): number {
   const startedMs = new Date(e.started_at).getTime();
   const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
   return Math.max(0, (endMs - startedMs) / 60_000);
+}
+
+// Bar colour encodes RANK, nothing else. The previous ramp walked
+// `hue = 25 + i * 20` — red → orange → yellow → green → blue across twelve
+// bars — which in a plant dashboard reads as a severity scale: the
+// tenth-worst cause rendered green ("fine") and Preventive, which is planned
+// work, rendered bright red ("worst problem in the factory"). A single-hue
+// ramp keeps colour from carrying a verdict, and matches DowntimeSection,
+// which already uses one. The step is 4° (not the 8° used there) because this
+// chart shows up to 12 bars — at 8° the tail lands in teal again.
+// Preventive gets the warning hue and is pinned to the end of the ranking.
+const PREVENTIVE_HUE = 75;
+function rampStops(rank: number, preventive: boolean) {
+  if (preventive) {
+    return {
+      from: `oklch(0.86 0.16 ${PREVENTIVE_HUE})`,
+      mid: `oklch(0.72 0.16 ${PREVENTIVE_HUE})`,
+      to: `oklch(0.55 0.14 ${PREVENTIVE_HUE})`,
+    };
+  }
+  const hue = 260 - rank * 4;
+  return {
+    from: `oklch(0.75 0.18 ${hue})`,
+    mid: `oklch(0.6 0.18 ${hue})`,
+    to: `oklch(0.4 0.16 ${hue})`,
+  };
 }
 
 // This card is driven by master data — it never hardcodes a department name
@@ -182,24 +209,63 @@ export function MaintenanceDowntimeCard({
   // Maintenance" bar swallowing every individual fault was the bug; this
   // now groups the same way the Top Reasons list below already does, so
   // the chart and the list agree on what a "reason" is.
-  const byReason = new Map<string, { reason: string; minutes: number }>();
+  const byReason = new Map<string, { reason: string; minutes: number; preventive: boolean }>();
   for (const d of scoped) {
+    // Preventive is scheduled work, not a failure. It is already excluded
+    // from the Events KPI, MTBF and MTTR — so it must not compete with real
+    // faults for the top bar either. Tracked per group here and pushed to
+    // the end of the ranking below, with its own colour.
+    const isPreventive = d.pareto_reason_name === "Preventive Maintenance";
     const cur = byReason.get(d.reason_name);
-    if (cur) cur.minutes += Number(d.minutes);
-    else byReason.set(d.reason_name, { reason: d.reason_name, minutes: Number(d.minutes) });
+    if (cur) {
+      cur.minutes += Number(d.minutes);
+      cur.preventive = cur.preventive && isPreventive;
+    } else {
+      byReason.set(d.reason_name, {
+        reason: d.reason_name,
+        minutes: Number(d.minutes),
+        preventive: isPreventive,
+      });
+    }
   }
-  const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
-  const sortedReasons = allReasons.slice(0, 12);
-  const chartData = sortedReasons.map((r) => ({
-    name: r.reason.length > 18 ? `${r.reason.slice(0, 18)}…` : r.reason,
-    fullName: r.reason,
-    minutes: r.minutes,
-    // % of totalMinutes (the "Maintenance downtime (all sources)" KPI above)
-    // rather than % of just the top-12 shown — keeps this chart's
-    // percentages from silently re-normalizing to 100% when more than 12
-    // distinct reasons exist, so they stay comparable to that KPI.
-    pct: totalMinutes > 0 ? Math.round((r.minutes / totalMinutes) * 1000) / 10 : 0,
-  }));
+  const ranked = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
+  const correctiveReasons = ranked.filter((r) => !r.preventive);
+  const preventiveReasons = ranked.filter((r) => r.preventive);
+  // Correctives keep the descending order; preventive groups always trail
+  // them, whatever their size.
+  const allReasons = [...correctiveReasons, ...preventiveReasons];
+  // Preventive is moved out of the *ranking*, not out of the *chart*. Slicing
+  // the combined list to 12 dropped it entirely whenever there were 12+
+  // corrective causes — which is worse than the ramp problem this reordering
+  // was meant to fix, because preventive is usually the single largest block
+  // of maintenance minutes. Reserve its slots first, then fill the rest with
+  // the top correctives.
+  const CHART_MAX = 12;
+  const shownPreventive = preventiveReasons.slice(0, Math.min(2, preventiveReasons.length));
+  const shownCorrective = correctiveReasons.slice(
+    0,
+    Math.max(1, CHART_MAX - shownPreventive.length),
+  );
+  const sortedReasons = [...shownCorrective, ...shownPreventive];
+  const chartData = sortedReasons.map((r) => {
+    // A preventive bar sits behind its own divider under a "scheduled work"
+    // caption, so repeating "Maintenance" in the tick only costs the
+    // characters that then get truncated away — "Preventive Mainten…". Drop a
+    // trailing "Maintenance" from preventive labels and the name fits whole.
+    // A preventive job with any other title ("Weekly greasing") is untouched.
+    const label = r.preventive ? r.reason.replace(/\s*maintenance\s*$/i, "") : r.reason;
+    return {
+      name: label.length > 18 ? `${label.slice(0, 18)}…` : label,
+      fullName: r.reason,
+      minutes: r.minutes,
+      preventive: r.preventive,
+      // % of totalMinutes (the "Maintenance downtime (all sources)" KPI above)
+      // rather than % of just the top-12 shown — keeps this chart's
+      // percentages from silently re-normalizing to 100% when more than 12
+      // distinct reasons exist, so they stay comparable to that KPI.
+      pct: totalMinutes > 0 ? Math.round((r.minutes / totalMinutes) * 1000) / 10 : 0,
+    };
+  });
 
   // Mobile-only donut split (see the md:hidden block below) — same `scoped`
   // rows as everything above, bucketed into the 4 groups a maintenance
@@ -248,7 +314,12 @@ export function MaintenanceDowntimeCard({
     .filter((b) => b.minutes > 0)
     .map((b) => {
       const len = totalMinutes > 0 ? (b.minutes / totalMinutes) * donutCircumference : 0;
-      const seg = { ...b, len, offset: -donutCumulative, pct: totalMinutes > 0 ? Math.round((b.minutes / totalMinutes) * 100) : 0 };
+      const seg = {
+        ...b,
+        len,
+        offset: -donutCumulative,
+        pct: totalMinutes > 0 ? Math.round((b.minutes / totalMinutes) * 100) : 0,
+      };
       donutCumulative += len;
       return seg;
     });
@@ -361,10 +432,19 @@ export function MaintenanceDowntimeCard({
             </div>
           ) : (
             <div className="mb-6">
-              {allReasons.length > 12 && (
+              {allReasons.length > sortedReasons.length && (
                 <p className="mb-2 text-xs text-muted-foreground">
-                  Showing top 12 of {allReasons.length} causes — bar % is share of "all sources"
-                  downtime.
+                  Showing {sortedReasons.length} of {allReasons.length} causes — bar % is share of
+                  "all sources" downtime.
+                </p>
+              )}
+              {chartData.some((d) => d.preventive) && (
+                <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span
+                    className="inline-block h-[9px] w-[9px] shrink-0 rounded-sm"
+                    style={{ background: `oklch(0.72 0.16 ${PREVENTIVE_HUE})` }}
+                  />
+                  Preventive maintenance is scheduled work — shown last, outside the fault ranking.
                 </p>
               )}
 
@@ -426,7 +506,7 @@ export function MaintenanceDowntimeCard({
                 <div className="mt-4 space-y-2">
                   {(showAllCauses ? chartData : chartData.slice(0, 4)).map((d, i) => {
                     const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
-                    const hue = 25 + i * 20;
+                    const stops = rampStops(i, d.preventive);
                     return (
                       <div key={d.fullName} className="flex items-center gap-2">
                         <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
@@ -437,7 +517,7 @@ export function MaintenanceDowntimeCard({
                             className="h-full rounded-full"
                             style={{
                               width: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%`,
-                              background: `linear-gradient(to right, oklch(0.75 0.18 ${hue}), oklch(0.55 0.18 ${hue}))`,
+                              background: `linear-gradient(to right, ${stops.from}, ${stops.mid})`,
                             }}
                           />
                         </div>
@@ -455,7 +535,9 @@ export function MaintenanceDowntimeCard({
                     onClick={() => setShowAllCauses((v) => !v)}
                     className="mt-3 text-xs font-medium text-primary"
                   >
-                    {showAllCauses ? "Show fewer causes ↑" : `Show all ${allReasons.length} causes ↓`}
+                    {showAllCauses
+                      ? "Show fewer causes ↑"
+                      : `Show all ${allReasons.length} causes ↓`}
                   </button>
                 )}
               </div>
@@ -464,13 +546,13 @@ export function MaintenanceDowntimeCard({
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 60 }}>
                     <defs>
-                      {chartData.map((_, i) => {
-                        const hue = 25 + i * 20;
+                      {chartData.map((d, i) => {
+                        const stops = rampStops(i, d.preventive);
                         return (
                           <linearGradient key={i} id={`maint-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={`oklch(0.75 0.18 ${hue})`} />
-                            <stop offset="50%" stopColor={`oklch(0.6 0.18 ${hue})`} />
-                            <stop offset="100%" stopColor={`oklch(0.4 0.16 ${hue})`} />
+                            <stop offset="0%" stopColor={stops.from} />
+                            <stop offset="50%" stopColor={stops.mid} />
+                            <stop offset="100%" stopColor={stops.to} />
                           </linearGradient>
                         );
                       })}
@@ -480,6 +562,22 @@ export function MaintenanceDowntimeCard({
                       stroke="var(--color-border)"
                       vertical={false}
                     />
+                    {/* Recharts can't draw a rule *between* two categories on a
+                        band axis, so this is a band behind the preventive
+                        bars, not a divider line — declared before <Bar> so it
+                        renders underneath them. */}
+                    {chartData.some((d) => d.preventive) && (
+                      <ReferenceArea
+                        x1={chartData.find((d) => d.preventive)?.name}
+                        x2={chartData[chartData.length - 1]?.name}
+                        fill={`oklch(0.86 0.16 ${PREVENTIVE_HUE})`}
+                        fillOpacity={0.16}
+                        stroke={`oklch(0.72 0.16 ${PREVENTIVE_HUE})`}
+                        strokeOpacity={0.45}
+                        strokeDasharray="4 4"
+                        ifOverflow="extendDomain"
+                      />
+                    )}
                     <XAxis
                       dataKey="name"
                       interval={0}

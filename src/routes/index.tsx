@@ -159,7 +159,12 @@ function Dashboard() {
             className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-card md:flex-row md:items-end md:justify-between"
           >
             <Tabs value={lineId} onValueChange={setLineId} className="min-w-0 flex-1">
-              <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto bg-muted/50 p-1">
+              <Label className="text-xs">Line</Label>
+              {/* Wraps instead of scrolling. `overflow-x-auto` put the trailing
+                  lines behind scroll arrows even when they would have fit on a
+                  second row, and horizontally-scrolled content is easy to miss
+                  entirely — the row simply looked like it ended. */}
+              <TabsList className="flex h-auto w-full flex-wrap items-center justify-start gap-1 bg-muted/50 p-1">
                 {lines.map((l) => (
                   <TabsTrigger
                     key={l.id}
@@ -405,7 +410,8 @@ function DashboardBody({
   const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
   const adhColor = (v: number) =>
     v >= 0.9 ? "text-success" : v >= 0.7 ? "text-warning" : "text-destructive";
-  const lossColor = lossPct < 10 ? "text-success" : lossPct < 25 ? "text-warning" : "text-destructive";
+  const lossColor =
+    lossPct < 10 ? "text-success" : lossPct < 25 ? "text-warning" : "text-destructive";
 
   return (
     <>
@@ -431,53 +437,53 @@ function DashboardBody({
       </div>
 
       <Suspense fallback={<ChartsSkeleton />}>
-      <div className="mt-6 grid grid-cols-1 gap-6">
-        <div data-pdf-section="performance-making">
-          <PerformanceSection
-            title="1. Making / Depositing Performance"
-            subtitle="Plan vs Actual — Weight (kg)"
-            entries={entries}
-            field="making"
-            accentColor={color}
-          />
-        </div>
-        <div data-pdf-section="performance-packing">
-          <PerformanceSection
-            title="2. Packing Performance"
-            subtitle="Plan vs Actual — Packed Quantity (kg)"
-            entries={entries}
-            field="packing"
-            accentColor={color}
-          />
-        </div>
-        <div data-pdf-section="quality">
-          <TopQualityAreaCard
-            productionAreas={productionAreas}
-            areaOwners={areaOwners}
-            entryAreaOwners={entryAreaOwners}
-          />
-        </div>
-        <div data-pdf-section="downtime">
-          <DowntimeSection entries={entries} downtimes={downtimes} />
-        </div>
-        {can(role, "dashboard.viewMaintenanceCard") && (
-          <div data-pdf-section="maintenance">
-            <MaintenanceDowntimeCard
-              downtimes={downtimes}
-              departments={departments}
-              departmentCategories={departmentCategories}
-              downtimeTypes={downtimeTypes}
-              severityLevels={severityLevels}
+        <div className="mt-6 grid grid-cols-1 gap-6">
+          <div data-pdf-section="performance-making">
+            <PerformanceSection
+              title="1. Making / Depositing Performance"
+              subtitle="Plan vs Actual — Weight (kg)"
               entries={entries}
-              maintenanceEvents={lineMaintenanceEvents}
+              field="making"
+              accentColor={color}
             />
           </div>
-        )}
-        <div data-pdf-section="rework">
-          <ReworkSection entries={entries} />
+          <div data-pdf-section="performance-packing">
+            <PerformanceSection
+              title="2. Packing Performance"
+              subtitle="Plan vs Actual — Packed Quantity (kg)"
+              entries={entries}
+              field="packing"
+              accentColor={color}
+            />
+          </div>
+          <div data-pdf-section="quality">
+            <TopQualityAreaCard
+              productionAreas={productionAreas}
+              areaOwners={areaOwners}
+              entryAreaOwners={entryAreaOwners}
+            />
+          </div>
+          <div data-pdf-section="downtime">
+            <DowntimeSection entries={entries} downtimes={downtimes} />
+          </div>
+          {can(role, "dashboard.viewMaintenanceCard") && (
+            <div data-pdf-section="maintenance">
+              <MaintenanceDowntimeCard
+                downtimes={downtimes}
+                departments={departments}
+                departmentCategories={departmentCategories}
+                downtimeTypes={downtimeTypes}
+                severityLevels={severityLevels}
+                entries={entries}
+                maintenanceEvents={lineMaintenanceEvents}
+              />
+            </div>
+          )}
+          <div data-pdf-section="rework">
+            <ReworkSection entries={entries} />
+          </div>
         </div>
-      </div>
-    </Suspense>
+      </Suspense>
     </>
   );
 }

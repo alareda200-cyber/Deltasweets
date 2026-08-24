@@ -21,11 +21,63 @@ interface Props {
   downtimes: EntryDowntime[];
 }
 
+// Recharts renders X-axis ticks as a single <text> node, so a long category
+// name can only be rotated or clipped. This splits the label on spaces into at
+// most two lines of ~18 characters each, drawn horizontally, and only then
+// truncates. Two lines at 10.5px occupy less vertical space than the 70px the
+// -30° rotation reserved, and stay readable.
+const TICK_LINE_MAX = 18;
+function WrappedTick(props: { x?: number; y?: number; payload?: { value?: string } }) {
+  const { x = 0, y = 0, payload } = props;
+  const label = String(payload?.value ?? "");
+  const words = label.split(" ");
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length > TICK_LINE_MAX && cur) {
+      lines.push(cur);
+      cur = w;
+      if (lines.length === 2) break;
+    } else {
+      cur = next;
+    }
+  }
+  if (lines.length < 2 && cur) lines.push(cur);
+  const shown = lines.slice(0, 2).map((l, i, arr) => {
+    const isLast = i === arr.length - 1;
+    // Two ways a label can lose text: words that didn't fit on either line,
+    // or a single word longer than one line. Both must show the ellipsis —
+    // silently clipping to 18 characters is how "Starch unit Maintenance"
+    // became "Starch unit M" and read as a different fault.
+    const wordsDropped = isLast && label.length > arr.join(" ").length;
+    const clipped = l.length > TICK_LINE_MAX ? l.slice(0, TICK_LINE_MAX) : l;
+    return wordsDropped || clipped.length < l.length ? `${clipped}…` : clipped;
+  });
+  return (
+    <g transform={`translate(${x},${y})`}>
+      {shown.map((line, i) => (
+        <text
+          key={i}
+          x={0}
+          y={12 + i * 12}
+          textAnchor="middle"
+          fontSize={10.5}
+          fill="var(--color-foreground)"
+        >
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
 export function DowntimeSection({ entries, downtimes }: Props) {
   const isMobile = useIsMobile();
   // Mobile-only "Show all N causes" toggle for the horizontal-bar list below
   // (see the md:hidden block) — collapsed to the top 6 by default.
   const [showAllCauses, setShowAllCauses] = useState(false);
+  const [expandedChip, setExpandedChip] = useState<string | null>(null);
   const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
   // Summed from the same combined downtimes array (entry_downtimes +
   // maintenance_events, see maintenanceEventsAsDowntimes) that feeds the
@@ -78,7 +130,9 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   }
   const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
   const sorted = allReasons.slice(0, 12);
-  const nameMaxLen = isMobile ? 8 : 24;
+  // Desktop no longer rotates the labels (see WrappedTick below), so it can
+  // carry a much longer name across two lines before truncating.
+  const nameMaxLen = isMobile ? 8 : 40;
   const chartData = sorted.map((r) => ({
     name: r.reason.length > nameMaxLen ? r.reason.slice(0, nameMaxLen) + "…" : r.reason,
     fullName: r.reason,
@@ -159,20 +213,83 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             className="p-3 md:p-5"
           />
         </div>
-        {dayDowntimes.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {dayDowntimes.map((d) => (
-              <span
-                key={d.id}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs"
-              >
-                <span className="font-medium">{d.reason_name}</span>
-                <span className="text-muted-foreground">· {d.area}</span>
-                <span className="font-semibold tabular-nums">{fmt(Number(d.minutes))}m</span>
-              </span>
-            ))}
-          </div>
-        )}
+        {dayDowntimes.length > 0 &&
+          (() => {
+            // Was a loose row of chips floating above the chart with no heading
+            // and no container — they read as leftovers from the card above,
+            // and a long reason name silently pushed the chart down by a
+            // variable amount. Now: a titled box that states what the row is
+            // and totals itself, sorted longest-first, tinted by share.
+            const sorted = [...dayDowntimes].sort((a, b) => Number(b.minutes) - Number(a.minutes));
+            const dayTotal = sorted.reduce((s, d) => s + Number(d.minutes), 0);
+            return (
+              <div className="mt-3 rounded-xl border border-border bg-muted/25 p-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    {last ? `Last recorded day · ${last.entry_date}` : "Last recorded day"}
+                  </span>
+                  {/* Announced as one atomic status when the filter changes,
+                      rather than a bare number. */}
+                  <span
+                    role="status"
+                    aria-atomic="true"
+                    className="rounded-full border border-primary/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary"
+                  >
+                    {sorted.length} {sorted.length === 1 ? "stoppage" : "stoppages"} ·{" "}
+                    {fmt(Math.round(dayTotal))} min
+                  </span>
+                  <span className="ml-auto text-[11px] font-semibold text-muted-foreground">
+                    Sorted by duration
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {sorted.map((d) => {
+                    const share = dayTotal > 0 ? Number(d.minutes) / dayTotal : 0;
+                    const open = expandedChip === d.id;
+                    return (
+                      // A real button, not a title-only tooltip: hover text is
+                      // unreachable on touch and by keyboard, so the full label
+                      // is revealed by an operable control instead.
+                      <button
+                        key={d.id}
+                        type="button"
+                        aria-expanded={open}
+                        onClick={() => setExpandedChip(open ? null : d.id)}
+                        className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-left text-xs transition-colors ${
+                          share >= 0.3
+                            ? "border-destructive/35 bg-destructive/[0.07]"
+                            : share >= 0.15
+                              ? "border-warning/45 bg-warning/[0.08]"
+                              : "border-border bg-card"
+                        }`}
+                      >
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{
+                            background:
+                              share >= 0.3
+                                ? "var(--color-destructive)"
+                                : share >= 0.15
+                                  ? "var(--color-warning)"
+                                  : "var(--color-muted-foreground)",
+                          }}
+                        />
+                        <span
+                          className={`min-w-0 font-medium ${open ? "" : "max-w-[220px] truncate"}`}
+                        >
+                          {d.reason_name}
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">· {d.area}</span>
+                        <span className="shrink-0 font-semibold tabular-nums">
+                          {fmt(Number(d.minutes))}m
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
       </div>
 
       {/* Mobile height reduced to 160px per user request (2026-08-12) — was
@@ -228,66 +345,73 @@ export function DowntimeSection({ entries, downtimes }: Props) {
           </div>
 
           <div className="hidden md:block">
-        <div className={isMobile ? "h-[160px] w-full" : "h-96 w-full"}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chartData}
-              margin={{ top: 24, right: 20, left: isMobile ? 12 : 0, bottom: isMobile ? 80 : 70 }}
-            >
-              <defs>
-                {chartData.map((_, i) => {
-                  const hue = 260 - i * 8;
-                  return (
-                    <linearGradient key={i} id={`dt3d-${i}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={`oklch(0.75 0.18 ${hue})`} />
-                      <stop offset="50%" stopColor={`oklch(0.6 0.18 ${hue})`} />
-                      <stop offset="100%" stopColor={`oklch(0.4 0.16 ${hue})`} />
-                    </linearGradient>
-                  );
-                })}
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-              <XAxis
-                dataKey="name"
-                interval={0}
-                angle={isMobile ? -45 : -30}
-                textAnchor="end"
-                height={isMobile ? 80 : 70}
-                tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-              />
-              <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-              <Tooltip
-                contentStyle={{
-                  background: "var(--color-popover)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                formatter={(value: number, _name, props) => [
-                  `${fmt(value)} min · ${props.payload.pct}%`,
-                  props.payload.area,
-                ]}
-                labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-              />
-              <Bar
-                dataKey="minutes"
-                radius={[6, 6, 0, 0]}
-                stroke="rgba(0,0,0,0.15)"
-                strokeWidth={1}
-              >
-                {chartData.map((_, i) => (
-                  <Cell key={i} fill={`url(#dt3d-${i})`} />
-                ))}
-                <LabelList
-                  dataKey="pct"
-                  position="top"
-                  formatter={(v: number) => `${v}%`}
-                  style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
-                />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+            <div className={isMobile ? "h-[160px] w-full" : "h-96 w-full"}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 54 }}>
+                  <defs>
+                    {chartData.map((_, i) => {
+                      const hue = 260 - i * 8;
+                      return (
+                        <linearGradient key={i} id={`dt3d-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={`oklch(0.75 0.18 ${hue})`} />
+                          <stop offset="50%" stopColor={`oklch(0.6 0.18 ${hue})`} />
+                          <stop offset="100%" stopColor={`oklch(0.4 0.16 ${hue})`} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--color-border)"
+                    vertical={false}
+                  />
+                  {/* This chart only ever renders at md+ (the parent is
+                  `hidden md:block`; mobile gets the horizontal list above), so
+                  the axis is tuned for desktop only.
+                  Rotated -30° labels truncated at 24 chars produced stubs no
+                  one could identify — "Change Over Product shap…", "Starch unit
+                  M". A category axis whose categories can't be read is not a
+                  Pareto. Labels are now horizontal and wrap onto two lines. */}
+                  <XAxis
+                    dataKey="name"
+                    interval={0}
+                    height={54}
+                    tickMargin={6}
+                    tick={<WrappedTick />}
+                  />
+                  <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--color-popover)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                    formatter={(value: number, _name, props) => [
+                      `${fmt(value)} min · ${props.payload.pct}%`,
+                      props.payload.area,
+                    ]}
+                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                  />
+                  <Bar
+                    dataKey="minutes"
+                    radius={[6, 6, 0, 0]}
+                    stroke="rgba(0,0,0,0.15)"
+                    strokeWidth={1}
+                  >
+                    {chartData.map((_, i) => (
+                      <Cell key={i} fill={`url(#dt3d-${i})`} />
+                    ))}
+                    <LabelList
+                      dataKey="pct"
+                      position="top"
+                      formatter={(v: number) => `${v}%`}
+                      style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </>
       )}

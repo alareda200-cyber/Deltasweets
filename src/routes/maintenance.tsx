@@ -2,7 +2,17 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  LabelList,
+} from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -424,48 +434,60 @@ function MaintenanceFilters({
   return (
     <Card className="mb-6">
       <CardContent className="pt-6">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <Select value={lineId || "all"} onValueChange={(v) => setLineId(v === "all" ? "" : v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="All Lines" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Lines</SelectItem>
-              {lines.map((l) => (
-                <SelectItem key={l.id} value={l.id}>
-                  {l.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={type || "all"}
-            onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All Types" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="mechanical">Mechanical</SelectItem>
-              <SelectItem value="electrical">Electrical</SelectItem>
-              <SelectItem value="preventive">Preventive Maintenance</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select
-            value={status || "all"}
-            onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All Statuses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="in_progress">In Progress</SelectItem>
-              <SelectItem value="resolved">Resolved</SelectItem>
-            </SelectContent>
-          </Select>
+        {/* Every control carries a visible label. Previously the three
+            Selects had none while From/To did, so the labels sat above nothing
+            and the five controls never shared a baseline. */}
+        <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <Label className="text-xs">Line</Label>
+            <Select value={lineId || "all"} onValueChange={(v) => setLineId(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All Lines" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Lines</SelectItem>
+                {lines.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Type</Label>
+            <Select
+              value={type || "all"}
+              onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All Types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="mechanical">Mechanical</SelectItem>
+                <SelectItem value="electrical">Electrical</SelectItem>
+                <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Status</Label>
+            <Select
+              value={status || "all"}
+              onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All Statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="open">Open</SelectItem>
+                <SelectItem value="in_progress">In Progress</SelectItem>
+                <SelectItem value="resolved">Resolved</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label className="text-xs">From</Label>
             <Input
@@ -480,25 +502,45 @@ function MaintenanceFilters({
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" />
           </div>
         </div>
-        {hasAny && (
-          <div className="mt-3 flex justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setLineId("");
-                setType("");
-                setStatus("");
-                setFrom("");
-                setTo("");
-              }}
-            >
-              Clear filters
-            </Button>
-          </div>
-        )}
+        {/* Always present, disabled when nothing is set — it used to appear
+            only once a filter was applied, so the bar changed height under the
+            cursor. The summary states the active scope in words. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Showing
+          </span>
+          <FilterChip>
+            {lineId ? (lines.find((l) => l.id === lineId)?.name ?? "Line") : "All lines"}
+          </FilterChip>
+          <FilterChip>{type ? TYPE_LABELS[type] : "All types"}</FilterChip>
+          <FilterChip>{status ? STATUS_LABELS[status] : "All statuses"}</FilterChip>
+          <FilterChip>{from || to ? `${from || "…"} → ${to || "…"}` : "All dates"}</FilterChip>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            disabled={!hasAny}
+            onClick={() => {
+              setLineId("");
+              setType("");
+              setStatus("");
+              setFrom("");
+              setTo("");
+            }}
+          >
+            Clear filters
+          </Button>
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function FilterChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-foreground">
+      {children}
+    </span>
   );
 }
 
@@ -861,12 +903,17 @@ function MaintenancePage() {
     () => [...failureTitleAggregates].sort((a, b) => b.count - a.count).slice(0, 8),
     [failureTitleAggregates],
   );
+  // Preventive-excluded: the card is titled "per Fault", and a scheduled PM
+  // visit is not a fault. It was previously fed from titleAggregates, which
+  // let "Preventive Maintenance" head the list with the longest mean of all —
+  // contradicting the same rule this file applies to MTBF, MTTR, event counts
+  // and Top Losses by Frequency.
   const meanDowntimePerFault = useMemo(
     () =>
-      titleAggregates
+      failureTitleAggregates
         .map((t) => ({ ...t, meanMinutes: t.totalMinutes / t.count }))
         .sort((a, b) => b.meanMinutes - a.meanMinutes),
-    [titleAggregates],
+    [failureTitleAggregates],
   );
   // Two independent axes, not one boolean. Frequency: does this title recur more than
   // the median title? Duration: is a single occurrence longer than the overall MTTR?
@@ -898,7 +945,12 @@ function MaintenancePage() {
           : long
             ? "sporadic"
             : "minor";
-        return { ...t, meanMinutes, category, chronic: category === "critical" || category === "chronic" };
+        return {
+          ...t,
+          meanMinutes,
+          category,
+          chronic: category === "critical" || category === "chronic",
+        };
       })
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
   }, [failureTitleAggregates, reliabilitySummary.mttrHours]);
@@ -1035,7 +1087,9 @@ function MaintenancePage() {
         status,
         totalEvents: events.length,
         openCount: events.filter((e) => e.type !== "preventive" && e.status !== "resolved").length,
-        openPreventiveCount: events.filter((e) => e.type === "preventive" && e.status !== "resolved").length,
+        openPreventiveCount: events.filter(
+          (e) => e.type === "preventive" && e.status !== "resolved",
+        ).length,
         mtbfMechanicalHours: localMtbfHours(events.filter((e) => e.type === "mechanical")),
         mttrMechanicalHours: localMttrHours(events.filter((e) => e.type === "mechanical")),
         mtbfElectricalHours: localMtbfHours(events.filter((e) => e.type === "electrical")),
@@ -1817,10 +1871,17 @@ function TopLossesGrid({
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; category: FaultCategory; chronic: boolean })[];
+  chronicVsSporadic: (TitleAggregate & {
+    meanMinutes: number;
+    category: FaultCategory;
+    chronic: boolean;
+  })[];
 }) {
   const isMobile = useIsMobile();
-  const nameMaxLen = isMobile ? 10 : 20;
+  // 20 was cutting "Preventive Maintenance" (22 chars) to
+  // "Preventive Maintenan…" even after the y-axis was widened to 150px — the
+  // truncation happens here, in the data, not in the axis.
+  const nameMaxLen = isMobile ? 10 : 28;
 
   const downtimeChartData = topLossesByDowntime.map((t) => ({
     name: t.title.length > nameMaxLen ? `${t.title.slice(0, nameMaxLen)}…` : t.title,
@@ -1848,13 +1909,29 @@ function TopLossesGrid({
                 <BarChart
                   data={downtimeChartData}
                   layout="vertical"
-                  margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                  margin={{ top: 4, right: 58, left: 4, bottom: 4 }}
                 >
                   <CartesianGrid
                     strokeDasharray="3 3"
                     stroke="var(--color-border)"
                     horizontal={false}
                   />
+                  {/* The app's signature three-stop gradient, walking one hue
+                      with rank — replaces a flat hard-coded #ef4444 that sat
+                      outside the token set and read as "danger" on every bar
+                      equally, including the smallest. */}
+                  <defs>
+                    {downtimeChartData.map((_, i) => {
+                      const hue = 260 - i * 6;
+                      return (
+                        <linearGradient key={i} id={`loss-dt-${i}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor={`oklch(0.78 0.18 ${hue})`} />
+                          <stop offset="55%" stopColor={`oklch(0.6 0.18 ${hue})`} />
+                          <stop offset="100%" stopColor={`oklch(0.42 0.16 ${hue})`} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
                   <XAxis
                     type="number"
                     tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
@@ -1862,7 +1939,7 @@ function TopLossesGrid({
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={isMobile ? 70 : 120}
+                    width={isMobile ? 78 : 150}
                     tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
                   />
                   <Tooltip
@@ -1875,7 +1952,17 @@ function TopLossesGrid({
                     formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
                     labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
                   />
-                  <Bar dataKey="minutes" radius={[0, 6, 6, 0]} fill="#ef4444" />
+                  <Bar dataKey="minutes" radius={[0, 6, 6, 0]}>
+                    {downtimeChartData.map((_, i) => (
+                      <Cell key={i} fill={`url(#loss-dt-${i})`} />
+                    ))}
+                    <LabelList
+                      dataKey="minutes"
+                      position="right"
+                      formatter={(v: number) => formatDuration(v * 60_000)}
+                      style={{ fontSize: 10.5, fill: "var(--color-foreground)", fontWeight: 600 }}
+                    />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1896,13 +1983,25 @@ function TopLossesGrid({
                 <BarChart
                   data={frequencyChartData}
                   layout="vertical"
-                  margin={{ top: 4, right: 24, left: 4, bottom: 4 }}
+                  margin={{ top: 4, right: 58, left: 4, bottom: 4 }}
                 >
                   <CartesianGrid
                     strokeDasharray="3 3"
                     stroke="var(--color-border)"
                     horizontal={false}
                   />
+                  <defs>
+                    {frequencyChartData.map((_, i) => {
+                      const hue = 260 - i * 6;
+                      return (
+                        <linearGradient key={i} id={`loss-fq-${i}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor={`oklch(0.78 0.18 ${hue})`} />
+                          <stop offset="55%" stopColor={`oklch(0.6 0.18 ${hue})`} />
+                          <stop offset="100%" stopColor={`oklch(0.42 0.16 ${hue})`} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
                   <XAxis
                     type="number"
                     allowDecimals={false}
@@ -1911,7 +2010,7 @@ function TopLossesGrid({
                   <YAxis
                     type="category"
                     dataKey="name"
-                    width={isMobile ? 70 : 120}
+                    width={isMobile ? 78 : 150}
                     tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
                   />
                   <Tooltip
@@ -1927,7 +2026,17 @@ function TopLossesGrid({
                     ]}
                     labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
                   />
-                  <Bar dataKey="count" radius={[0, 6, 6, 0]} fill="#3b82f6" />
+                  <Bar dataKey="count" radius={[0, 6, 6, 0]}>
+                    {frequencyChartData.map((_, i) => (
+                      <Cell key={i} fill={`url(#loss-fq-${i})`} />
+                    ))}
+                    <LabelList
+                      dataKey="count"
+                      position="right"
+                      formatter={(v: number) => `${v}x`}
+                      style={{ fontSize: 10.5, fill: "var(--color-foreground)", fontWeight: 600 }}
+                    />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1938,24 +2047,46 @@ function TopLossesGrid({
       <Card>
         <CardHeader>
           <h3 className="text-sm font-semibold">Mean Downtime per Fault</h3>
+          <p className="text-xs text-muted-foreground">
+            Average minutes per occurrence — corrective only, preventive excluded.
+          </p>
         </CardHeader>
         <CardContent>
           {meanDowntimePerFault.length === 0 ? (
             <EmptyMiniState />
           ) : (
-            <ul className="space-y-2">
-              {meanDowntimePerFault.slice(0, 10).map((t) => (
-                <li
-                  key={t.title}
-                  className="flex items-center justify-between gap-3 border-b border-border/50 pb-2 text-sm last:border-0 last:pb-0"
-                >
-                  <span className="truncate">{t.title}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatDuration(t.meanMinutes * 60_000)} avg · {t.count}x
-                  </span>
-                </li>
-              ))}
-            </ul>
+            (() => {
+              // A magnitude bar behind each row: ten rows of identical visual
+              // weight forced you to read every number to find the big one.
+              const rows = meanDowntimePerFault.slice(0, 10);
+              const maxMean = Math.max(...rows.map((t) => t.meanMinutes), 1);
+              return (
+                <ul className="space-y-2">
+                  {rows.map((t, i) => {
+                    const hue = 260 - i * 5;
+                    return (
+                      <li key={t.title} className="flex items-center gap-2.5 text-sm">
+                        <span className="w-[86px] shrink-0 truncate text-xs md:w-[120px] md:text-sm">
+                          {t.title}
+                        </span>
+                        <span className="h-[15px] min-w-0 flex-1 overflow-hidden rounded-md bg-muted">
+                          <span
+                            className="block h-full rounded-md"
+                            style={{
+                              width: `${Math.max(3, (t.meanMinutes / maxMean) * 100)}%`,
+                              background: `linear-gradient(to right, oklch(0.78 0.18 ${hue}), oklch(0.55 0.18 ${hue}))`,
+                            }}
+                          />
+                        </span>
+                        <span className="w-[92px] shrink-0 text-right text-xs tabular-nums text-muted-foreground md:w-[104px]">
+                          {formatDuration(t.meanMinutes * 60_000)} · {t.count}x
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()
           )}
         </CardContent>
       </Card>
@@ -2066,7 +2197,11 @@ function ReliabilityAnalyticsSection({
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
-  chronicVsSporadic: (TitleAggregate & { meanMinutes: number; category: FaultCategory; chronic: boolean })[];
+  chronicVsSporadic: (TitleAggregate & {
+    meanMinutes: number;
+    category: FaultCategory;
+    chronic: boolean;
+  })[];
   reliabilityByLine: LineReliability[];
 }) {
   return (
