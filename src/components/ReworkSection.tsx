@@ -1,18 +1,7 @@
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  LabelList,
-} from "recharts";
 import type { DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt } from "@/lib/date-utils";
-import { RotateCcw, Percent } from "lucide-react";
+import { Percent } from "lucide-react";
 
 interface Props {
   entries: DailyEntry[];
@@ -58,23 +47,64 @@ export function ReworkSection({ entries }: Props) {
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-primary">
           Month to Date
         </p>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-5">
-          <KpiCard label="Cooking (kg)" value={fmt(cooking)} variant="primary" className="p-3 md:p-5" />
-          <KpiCard label="Making (kg)" value={fmt(making)} variant="primary" className="p-3 md:p-5" />
-          <KpiCard label="Packing (kg)" value={fmt(packing)} variant="primary" className="p-3 md:p-5" />
-          <KpiCard
-            label="Total (kg)"
-            value={fmt(total)}
-            icon={RotateCcw}
-            variant="primary"
-            className="p-3 md:p-5"
-          />
+        {/* Cooking, Making and Packing are three slices of Total. Putting
+            Total in a fourth identical box asked the reader to do the
+            addition and then check it. One bar says "Cooking is about half
+            of rework" at a glance, and the three numbers are still printed.
+            % of Output is the only figure here that judges anything, so it
+            is the one that keeps a card. */}
+        <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Rework by stage
+              </p>
+              <p className="font-mono text-lg font-medium tracking-[-0.045em] tabular-nums">
+                {fmt(total)} <span className="text-xs text-muted-foreground">kg total</span>
+              </p>
+            </div>
+            {total > 0 ? (
+              <>
+                <div className="mt-3 flex h-6 overflow-hidden rounded-lg">
+                  {data.map((d) => (
+                    <div
+                      key={d.area}
+                      style={{
+                        width: `${(d.kg / total) * 100}%`,
+                        background: `oklch(0.62 0.18 ${d.hue})`,
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+                  {data.map((d) => (
+                    <span key={d.area} className="inline-flex items-center gap-1.5 text-xs">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                        style={{ background: `oklch(0.62 0.18 ${d.hue})` }}
+                      />
+                      <span className="text-muted-foreground">{d.area}</span>
+                      <span className="font-mono font-semibold tabular-nums">{fmt(d.kg)}</span>
+                      <span className="text-muted-foreground">
+                        ({total > 0 ? ((d.kg / total) * 100).toFixed(1) : "0.0"}%)
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-muted-foreground">No rework logged in this period.</p>
+            )}
+          </div>
           <KpiCard
             label="% of Output"
-            value={`${reworkPct.toFixed(1)}%`}
+            value={`${reworkPct.toFixed(2)}%`}
             icon={Percent}
-            variant={reworkPct < 5 ? "success" : reworkPct < 15 ? "warning" : "danger"}
-            className="p-3 md:p-5"
+            variant={reworkPct < 1 ? "success" : reworkPct < 3 ? "warning" : "danger"}
+            // Scaled to 5% full-scale, not 100% — at a 100% scale a 1.13%
+            // rework rate would be an invisible sliver.
+            meter={Math.min(1, reworkPct / 5)}
+            meterLabel={`${fmt(total)} kg of ${fmt(actual)} produced`}
           />
         </div>
       </div>
@@ -96,45 +126,6 @@ export function ReworkSection({ entries }: Props) {
             className="p-3 md:p-5"
           />
         </div>
-      </div>
-
-      <div className="h-[200px] w-full md:h-72">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 24, right: 8, bottom: 0, left: -8 }}>
-            <defs>
-              {data.map((d, i) => (
-                <linearGradient key={i} id={`rw3d-${i}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={`oklch(0.78 0.17 ${d.hue})`} />
-                  <stop offset="50%" stopColor={`oklch(0.62 0.18 ${d.hue})`} />
-                  <stop offset="100%" stopColor={`oklch(0.42 0.16 ${d.hue})`} />
-                </linearGradient>
-              ))}
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-            <XAxis dataKey="area" tick={{ fontSize: 12, fill: "var(--color-foreground)" }} />
-            <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-            <Tooltip
-              contentStyle={{
-                background: "var(--color-popover)",
-                border: "1px solid var(--color-border)",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-              formatter={(v: number) => [`${fmt(v)} kg`, "Rework"]}
-            />
-            <Bar dataKey="kg" radius={[8, 8, 0, 0]} stroke="rgba(0,0,0,0.15)" strokeWidth={1}>
-              {data.map((_, i) => (
-                <Cell key={i} fill={`url(#rw3d-${i})`} />
-              ))}
-              <LabelList
-                dataKey="kg"
-                position="top"
-                formatter={(v: number) => fmt(v)}
-                style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
       </div>
     </section>
   );

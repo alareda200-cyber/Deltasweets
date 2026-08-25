@@ -10,8 +10,7 @@ import {
   LabelList,
 } from "recharts";
 import type { ProductionArea, AreaOwner, EntryAreaOwner } from "@/lib/queries";
-import { KpiCard } from "./KpiCard";
-import { Award, User, Percent, Hash } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface Props {
   productionAreas: ProductionArea[];
@@ -68,35 +67,53 @@ export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwner
         </div>
       ) : (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
-            <KpiCard
-              label="Best Area Owner"
-              value={best.owner?.name ?? "Unassigned"}
-              icon={User}
-              variant="primary"
-              className="p-3 md:p-5"
-            />
-            <KpiCard
-              label="Production Area"
-              value={best.area.name}
-              icon={Award}
-              variant="primary"
-              className="p-3 md:p-5"
-            />
-            <KpiCard
-              label="Average Performance %"
-              value={`${best.avg.toFixed(2)}%`}
-              icon={Percent}
-              variant={best.avg >= 95 ? "success" : best.avg >= 85 ? "warning" : "danger"}
-              className="p-3 md:p-5"
-            />
-            <KpiCard
-              label="Number of Entries"
-              value={String(best.count)}
-              icon={Hash}
-              variant="default"
-              className="p-3 md:p-5"
-            />
+          {/* Four identical boxes held four unrelated things: a person, a place,
+              a percentage and a count. They are not four KPIs — they are one
+              fact split across four containers that all shout equally. And
+              "best" means nothing without the field, which the ranked chart
+              below already shows, so the boxes were competing with it. */}
+          <div className="mb-6 rounded-xl border border-border bg-gradient-to-br from-primary/10 to-primary/[0.02] p-4 md:p-5">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Best area owner
+            </p>
+            <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xl font-bold tracking-tight md:text-2xl">
+                  {best.owner?.name ?? "Unassigned"}
+                </p>
+                <p className="mt-1 truncate text-sm text-muted-foreground">
+                  {best.area.name} · <span className="font-mono tabular-nums">{best.count}</span>{" "}
+                  {best.count === 1 ? "entry" : "entries"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p
+                  className={cn(
+                    "font-mono text-3xl font-medium tracking-[-0.045em] tabular-nums md:text-4xl",
+                    best.avg >= 95
+                      ? "text-success"
+                      : best.avg >= 85
+                        ? "text-warning"
+                        : "text-destructive",
+                  )}
+                >
+                  {best.avg.toFixed(2)}%
+                </p>
+                <p className="text-[11px] text-muted-foreground">average performance</p>
+              </div>
+            </div>
+            {ranked.length > 1 && (
+              // The count is not a KPI — it is how much evidence this average
+              // rests on. The gap to second place is the part that is actually
+              // interesting, and it had nowhere to live before.
+              <p className="mt-3 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                Leads by{" "}
+                <span className="font-mono font-semibold tabular-nums text-foreground">
+                  {(best.avg - ranked[1].avg).toFixed(2)} pt
+                </span>{" "}
+                over {ranked[1].owner?.name ?? "Unassigned"} · {ranked.length} owners ranked
+              </p>
+            )}
           </div>
 
           <div className="h-[200px] w-full md:h-64">
