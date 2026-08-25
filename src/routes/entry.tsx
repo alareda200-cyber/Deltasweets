@@ -73,7 +73,7 @@ interface DtRow {
 // which would mislabel a low-loss day as "red".
 function adherenceColor(pct: number | null) {
   if (pct === null) return "text-muted-foreground";
-  return pct >= 90 ? "text-success" : pct >= 70 ? "text-warning" : "text-destructive";
+  return pct >= 90 ? "text-success-strong" : pct >= 70 ? "text-warning-strong" : "text-destructive-strong";
 }
 function adherenceBarColor(pct: number | null) {
   if (pct === null) return "bg-muted-foreground/40";
@@ -81,7 +81,7 @@ function adherenceBarColor(pct: number | null) {
 }
 function lossColor(pct: number | null) {
   if (pct === null) return "text-muted-foreground";
-  return pct < 10 ? "text-success" : pct < 25 ? "text-warning" : "text-destructive";
+  return pct < 10 ? "text-success-strong" : pct < 25 ? "text-warning-strong" : "text-destructive-strong";
 }
 function lossBarColor(pct: number | null) {
   if (pct === null) return "bg-muted-foreground/40";

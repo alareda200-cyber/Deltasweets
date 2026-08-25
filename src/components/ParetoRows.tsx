@@ -34,7 +34,17 @@ export function ParetoRows({ rows }: { rows: ParetoRow[] }) {
   const max = rows[0]?.minutes ?? 1;
   let cum = 0;
   let cutPlaced = false;
-  const cols = "grid grid-cols-[minmax(160px,1.1fr)_3fr_72px_56px_60px] items-center gap-3";
+  // Every track is a minmax, not a fixed width. The old template asked for
+  // 160px + 72 + 56 + 60 + gaps + padding = 412px of hard minimum before the
+  // 3fr bar column got a single pixel, so at 390px the bar collapsed to 0 and
+  // the row STILL overflowed into a horizontal scrollbar. Both call sites
+  // happen to wrap this in `hidden md:block`, which hid the bug rather than
+  // fixing it — and the PDF export path deliberately forces that wrapper
+  // visible, so the wrapper is not a guarantee. Floors now total 286px
+  // (+32 gap +16 padding = 334), which fits 390px with room for the bar,
+  // while the ceilings keep the wide layout pixel-identical to before.
+  const cols =
+    "grid grid-cols-[minmax(96px,1.1fr)_minmax(40px,3fr)_minmax(54px,72px)_minmax(46px,56px)_minmax(50px,60px)] items-center gap-2";
   return (
     <div className="mt-2">
       <div
@@ -52,18 +62,20 @@ export function ParetoRows({ rows }: { rows: ParetoRow[] }) {
         if (cut) cutPlaced = true;
         return (
           <div key={r.key}>
-            <div
-              className={`${cols} rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50`}
-              title={r.hint ? `${r.label} · ${r.hint}` : r.label}
-            >
-              <span
-                className={
-                  i === 0
-                    ? "truncate text-xs font-semibold"
-                    : "truncate text-xs text-muted-foreground"
-                }
-              >
-                {r.label}
+            <div className={`${cols} rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50`}>
+              {/* The name wraps rather than truncating, and the area prints as
+                  its own line instead of hiding in a `title` — hover text is
+                  unreachable on touch and by keyboard, and this card's mobile
+                  sibling had already been fixed the same way. Rows exist here
+                  precisely so a cause name can be read whole; clipping it
+                  would give back the thing the column chart was replaced for. */}
+              <span className="min-w-0 text-xs leading-snug">
+                <span className={i === 0 ? "font-semibold" : "text-muted-foreground"}>
+                  {r.label}
+                </span>
+                {r.hint && (
+                  <span className="block text-[10px] text-muted-foreground">{r.hint}</span>
+                )}
               </span>
               <span className="block h-4 overflow-hidden rounded-r-md bg-muted">
                 <span

@@ -56,9 +56,9 @@ export function KpiCard({
   const accent = {
     default: "text-foreground",
     primary: "text-primary",
-    success: "text-success",
-    warning: "text-warning",
-    danger: "text-destructive",
+    success: "text-success-strong",
+    warning: "text-warning-strong",
+    danger: "text-destructive-strong",
   }[variant];
 
   return (
@@ -91,9 +91,9 @@ export function KpiCard({
               className={cn(
                 "rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold",
                 deltaTone === "good"
-                  ? "bg-success/15 text-success"
+                  ? "bg-success/15 text-success-strong"
                   : deltaTone === "bad"
-                    ? "bg-destructive/15 text-destructive"
+                    ? "bg-destructive/15 text-destructive-strong"
                     : "bg-muted text-muted-foreground",
               )}
             >
@@ -119,17 +119,31 @@ export function KpiCard({
       {typeof meter === "number" && (
         <div className="mt-2.5">
           {/* Unfilled track is a lighter step of the SAME hue as the fill, not grey,
-              so the state reads across the whole bar, not just the filled part. */}
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+              so the state reads across the whole bar, not just the filled part.
+              Track and fill therefore have to move together per variant — a fixed
+              primary track under an amber fill measured 1.56:1, i.e. the filled
+              length was unreadable on the very cards that most need to be read. */}
+          <div
+            className={cn(
+              "h-1.5 w-full overflow-hidden rounded-full",
+              {
+                default: "bg-primary/15",
+                primary: "bg-primary/15",
+                success: "bg-success/15",
+                warning: "bg-warning/15",
+                danger: "bg-destructive/15",
+              }[variant],
+            )}
+          >
             <div
               className={cn(
                 "h-full rounded-full",
                 {
                   default: "bg-primary",
                   primary: "bg-primary",
-                  success: "bg-success",
-                  warning: "bg-warning",
-                  danger: "bg-destructive",
+                  success: "bg-success-strong",
+                  warning: "bg-warning-strong",
+                  danger: "bg-destructive-strong",
                 }[variant],
               )}
               style={{ width: `${Math.max(0, Math.min(1, meter)) * 100}%` }}

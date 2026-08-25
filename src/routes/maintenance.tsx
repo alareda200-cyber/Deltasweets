@@ -241,9 +241,9 @@ function MiniKpiCard({
   const accent = {
     default: "text-foreground",
     primary: "text-primary",
-    success: "text-success",
-    warning: "text-warning",
-    danger: "text-destructive",
+    success: "text-success-strong",
+    warning: "text-warning-strong",
+    danger: "text-destructive-strong",
   }[variant];
 
   return (

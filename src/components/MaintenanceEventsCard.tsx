@@ -93,7 +93,7 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
         <h2 className="text-lg font-semibold">Maintenance</h2>
         <p className="text-sm text-muted-foreground">Open events for the selected line.</p>
         {hasStaleOpen && (
-          <p className="mt-1 text-xs font-medium text-destructive">
+          <p className="mt-1 text-xs font-medium text-destructive-strong">
             An open event has been unresolved for over {STALE_OPEN_HOURS} hours.
           </p>
         )}
@@ -166,7 +166,11 @@ function TrendStat({
   const good = delta === null || delta === 0 ? null : higherIsBetter ? delta > 0 : delta < 0;
   const Icon = direction === "up" ? ArrowUp : direction === "down" ? ArrowDown : Minus;
   const colorClass =
-    good === null ? "text-muted-foreground" : good ? "text-success" : "text-destructive";
+    good === null
+      ? "text-muted-foreground"
+      : good
+        ? "text-success-strong"
+        : "text-destructive-strong";
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-2.5">

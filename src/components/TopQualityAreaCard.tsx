@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import type { ProductionArea, AreaOwner, EntryAreaOwner } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 
 interface Props {
   productionAreas: ProductionArea[];
@@ -23,6 +24,7 @@ interface Props {
 // derived percentage of any kind is used here; this card only averages
 // numbers a person already typed in.
 export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwners }: Props) {
+  const reducedMotion = usePrefersReducedMotion();
   const scored = entryAreaOwners.filter((o) => o.performance_score != null);
 
   const ranked = (() => {
@@ -91,10 +93,10 @@ export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwner
                   className={cn(
                     "font-mono text-3xl font-medium tracking-[-0.045em] tabular-nums md:text-4xl",
                     best.avg >= 95
-                      ? "text-success"
+                      ? "text-success-strong"
                       : best.avg >= 85
-                        ? "text-warning"
-                        : "text-destructive",
+                        ? "text-warning-strong"
+                        : "text-destructive-strong",
                   )}
                 >
                   {best.avg.toFixed(2)}%
@@ -148,7 +150,12 @@ export function TopQualityAreaCard({ productionAreas, areaOwners, entryAreaOwner
                   }}
                   formatter={(v: number) => [`${v}%`, "Avg. Performance"]}
                 />
-                <Bar dataKey="score" radius={[0, 6, 6, 0]} fill="var(--color-success)">
+                <Bar
+                  isAnimationActive={!reducedMotion}
+                  dataKey="score"
+                  radius={[0, 6, 6, 0]}
+                  fill="var(--color-success)"
+                >
                   <LabelList
                     dataKey="score"
                     position="right"

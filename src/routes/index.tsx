@@ -443,9 +443,9 @@ function DashboardBody({
   const totalDown = downtimes.reduce((s, d) => s + Number(d.minutes), 0);
   const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
   const adhColor = (v: number) =>
-    v >= 0.9 ? "text-success" : v >= 0.7 ? "text-warning" : "text-destructive";
+    v >= 0.9 ? "text-success-strong" : v >= 0.7 ? "text-warning-strong" : "text-destructive-strong";
   const lossColor =
-    lossPct < 10 ? "text-success" : lossPct < 25 ? "text-warning" : "text-destructive";
+    lossPct < 10 ? "text-success-strong" : lossPct < 25 ? "text-warning-strong" : "text-destructive-strong";
 
   return (
     <>

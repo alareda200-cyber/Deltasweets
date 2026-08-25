@@ -26,10 +26,13 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-strong: var(--destructive-strong);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-success-strong: var(--success-strong);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-strong: var(--warning-strong);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -64,6 +67,21 @@
   --warning-foreground: oklch(0.2 0.05 60);
   --destructive: oklch(0.6 0.22 25);
   --destructive-foreground: oklch(1 0 0);
+
+  /* Ink versions of the status hues. --success/--warning/--destructive are
+     tuned as FILLS — as small text on white they measure 3.00 / 2.05 / 4.41,
+     all under 4.5, and amber can never reach 3:1 against any tint of itself
+     no matter the alpha, so a lighter track cannot rescue a --warning meter.
+     These darker steps are what status *text*, and any meter fill sitting on
+     a /15 tint of its own hue, must use. Measured on white / on the /15 chip:
+       success     #007c36  5.33 / 4.52
+       warning     #aa5900  5.07 / 4.54
+       destructive #d00021  5.67 / 4.52
+     In dark mode the base tokens already clear 4.5 on the card, so -strong
+     stays equal to the base there (destructive alone needs a nudge). */
+  --success-strong: oklch(0.5 0.16 155);
+  --warning-strong: oklch(0.545 0.18 75);
+  --destructive-strong: oklch(0.54 0.22 25);
   --border: oklch(0.9 0.01 240);
   --input: oklch(0.92 0.01 240);
   --ring: oklch(0.42 0.18 260);
@@ -100,6 +118,11 @@
   --warning-foreground: oklch(0.16 0.025 255);
   --destructive: oklch(0.65 0.24 25);
   --destructive-foreground: oklch(1 0 0);
+  /* On the dark card the base hues already read: 5.66 / 7.23 on their own /15
+     chip. Only destructive fell short (4.27), so it alone is lifted. */
+  --success-strong: oklch(0.7 0.18 155);
+  --warning-strong: oklch(0.82 0.18 75);
+  --destructive-strong: oklch(0.695 0.24 25);
   --border: oklch(0.3 0.03 255);
   --input: oklch(0.3 0.03 255);
   --ring: oklch(0.7 0.18 260);
@@ -111,11 +134,13 @@
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
+  * {
+    border-color: var(--color-border);
+  }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
-    font-feature-settings: "cv02","cv03","cv04","cv11";
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   body {
@@ -129,10 +154,18 @@
      source — see the build check in this task. */
 }
 
-@utility gradient-hero { background: var(--gradient-hero); }
-@utility gradient-accent { background: var(--gradient-accent); }
-@utility shadow-card { box-shadow: var(--shadow-card); }
-@utility shadow-elevated { box-shadow: var(--shadow-elevated); }
+@utility gradient-hero {
+  background: var(--gradient-hero);
+}
+@utility gradient-accent {
+  background: var(--gradient-accent);
+}
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+@utility shadow-elevated {
+  box-shadow: var(--shadow-elevated);
+}
 
 /* Hides the scrollbar on an overflow-x-auto container (e.g. the mobile nav
    strip in AppShell) while keeping it scrollable — used where a visible
@@ -140,5 +173,26 @@
 @utility scrollbar-hide {
   scrollbar-width: none;
   -ms-overflow-style: none;
-  &::-webkit-scrollbar { display: none; }
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Nothing on this dashboard animates to convey meaning — every transition is
+   decoration: card hover lifts, skeleton pulses, Radix dialog/dropdown
+   enter-exit, Recharts mount tweens. So an OS-level "reduce motion" can be
+   honoured globally rather than component by component, and there was no
+   honouring of it anywhere before this. Motion is collapsed to ~0 instead of
+   removed outright: `animation: none` cancels JS-observable animationend
+   handlers that Radix and tw-animate-css rely on to unmount, which would
+   leave a closed dialog on screen. A 0.01ms run fires the same events. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

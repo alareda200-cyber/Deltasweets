@@ -418,7 +418,7 @@ export function MaintenanceDowntimeCard({
                   Production stoppages) + a compact horizontal-bar top-4 causes
                   list, instead of the angled 12-label Pareto (which stays
                   desktop-only, unchanged, below). */}
-              <div className="md:hidden">
+              <div className="md:hidden" data-pdf-variant="mobile">
                 <div className="flex items-center gap-4">
                   <div className="relative h-24 w-24 shrink-0">
                     <svg viewBox="0 0 42 42" className="h-24 w-24 -rotate-90">
@@ -498,7 +498,7 @@ export function MaintenanceDowntimeCard({
                   <button
                     type="button"
                     onClick={() => setShowAllCauses((v) => !v)}
-                    className="mt-3 text-xs font-medium text-primary"
+                    className="mt-1 inline-flex min-h-11 items-center px-2 text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   >
                     {showAllCauses
                       ? "Show fewer causes ↑"
@@ -507,7 +507,7 @@ export function MaintenanceDowntimeCard({
                 )}
               </div>
 
-              <div className="hidden md:block">
+              <div className="hidden md:block" data-pdf-variant="desktop">
                 <ParetoRows
                   rows={chartData.map((r) => ({
                     key: r.fullName,

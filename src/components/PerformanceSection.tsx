@@ -14,6 +14,7 @@ import { KpiCard } from "./KpiCard";
 import { fmt, pct } from "@/lib/date-utils";
 import { TrendingUp, TrendingDown, Target, Percent } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 
 interface Props {
   title: string;
@@ -32,6 +33,9 @@ function adhDotColor(adh: number) {
 }
 
 export function PerformanceSection({ title, subtitle, entries, field, accentColor }: Props) {
+  // Recharts tweens in JS, so the global prefers-reduced-motion rule in
+  // styles.css cannot reach it — the chart has to be told.
+  const reducedMotion = usePrefersReducedMotion();
   const isMobile = useIsMobile();
   const planKey = field === "making" ? "making_plan" : "packing_plan";
   const actualKey = field === "making" ? "making_actual" : "packing_actual";
@@ -230,6 +234,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                   legend is suppressed on mobile (above), so line style is the
                   only cue a phone user gets. */}
               <Line
+                isAnimationActive={!reducedMotion}
                 type="linear"
                 dataKey="Plan"
                 stroke="var(--color-muted-foreground)"
@@ -242,6 +247,7 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 activeDot={{ r: 4, strokeDasharray: "none" }}
               />
               <Line
+                isAnimationActive={!reducedMotion}
                 type="linear"
                 dataKey="Actual"
                 stroke={accentColor}

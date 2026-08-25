@@ -262,7 +262,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
           {/* Mobile: horizontal-bar top-6 causes list. Same ranked chartData
               and the same two fills as the desktop rows below — one colour
               language at every width. */}
-          <div className="md:hidden">
+          <div className="md:hidden" data-pdf-variant="mobile">
             <div className="space-y-2">
               {(showAllCauses ? chartData : chartData.slice(0, 6)).map((d, i) => {
                 const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
@@ -292,14 +292,14 @@ export function DowntimeSection({ entries, downtimes }: Props) {
               <button
                 type="button"
                 onClick={() => setShowAllCauses((v) => !v)}
-                className="mt-3 text-xs font-medium text-primary"
+                className="mt-1 inline-flex min-h-11 items-center px-2 text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 {showAllCauses ? "Show fewer causes ↑" : `Show all ${allReasons.length} causes ↓`}
               </button>
             )}
           </div>
 
-          <div className="hidden md:block">
+          <div className="hidden md:block" data-pdf-variant="desktop">
             <ParetoRows
               rows={chartData.map((r) => ({
                 key: `${r.fullName}|${r.area}`,

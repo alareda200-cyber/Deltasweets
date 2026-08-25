@@ -164,6 +164,19 @@ export async function exportDashboardToPdf({
     if (getComputedStyle(el).display === "none") el.style.display = "block";
   }
 
+  // The loop above only reaches the marker element itself. Responsive variants
+  // live one or more levels DEEPER — e.g. the Pareto rows are `hidden md:block`
+  // inside a section whose own display is `block` at every width. So exporting
+  // from a phone used to capture the mobile variant stretched to 1280px while
+  // the desktop variant it was standing in for stayed display:none. Any pair of
+  // variants that must swap for the capture is tagged, and the swap is explicit
+  // rather than inferred from computed style.
+  const variantEls = Array.from(container.querySelectorAll<HTMLElement>("[data-pdf-variant]"));
+  const originalVariantDisplays = variantEls.map((el) => el.style.display);
+  for (const el of variantEls) {
+    el.style.display = el.dataset.pdfVariant === "mobile" ? "none" : "block";
+  }
+
   try {
     const backgroundColor = getComputedStyle(document.body).backgroundColor || "#ffffff";
     const captured: HTMLImageElement[] = [];
@@ -240,6 +253,9 @@ export async function exportDashboardToPdf({
     container.style.maxWidth = originalMaxWidth;
     sectionEls.forEach((el, i) => {
       el.style.display = originalDisplays[i];
+    });
+    variantEls.forEach((el, i) => {
+      el.style.display = originalVariantDisplays[i];
     });
   }
 }

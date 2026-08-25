@@ -130,9 +130,9 @@ function roleColorClass(role: string) {
     case "admin":
       return "text-accent";
     case "maintenance":
-      return "text-warning";
+      return "text-warning-strong";
     case "production":
-      return "text-success";
+      return "text-success-strong";
     default:
       return "text-muted-foreground"; // viewer, quality
   }
@@ -144,7 +144,7 @@ function roleColorClass(role: string) {
 function presenceOf(lastSeenAt: string | null): { dot: string; label: string; tone: string } {
   if (!lastSeenAt) return { dot: "bg-muted-foreground/40", label: "Never seen", tone: "text-muted-foreground" };
   const mins = Math.floor((Date.now() - new Date(lastSeenAt).getTime()) / 60000);
-  if (mins < 5) return { dot: "bg-success", label: "Online now", tone: "text-success" };
+  if (mins < 5) return { dot: "bg-success", label: "Online now", tone: "text-success-strong" };
   if (mins < 60) return { dot: "bg-warning", label: `${mins}m ago`, tone: "text-muted-foreground" };
   const hours = Math.floor(mins / 60);
   if (hours < 24) return { dot: "bg-muted-foreground", label: `${hours}h ago`, tone: "text-muted-foreground" };
