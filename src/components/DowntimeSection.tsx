@@ -1,79 +1,16 @@
 import { useState } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  LabelList,
-} from "recharts";
 import type { EntryDowntime, DailyEntry } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { fmt } from "@/lib/date-utils";
 import { Clock, AlertOctagon, Activity } from "lucide-react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { ParetoRows, PARETO_FILL, PARETO_FILL_PM } from "./ParetoRows";
 
 interface Props {
   entries: DailyEntry[];
   downtimes: EntryDowntime[];
 }
 
-// Recharts renders X-axis ticks as a single <text> node, so a long category
-// name can only be rotated or clipped. This splits the label on spaces into at
-// most two lines of ~18 characters each, drawn horizontally, and only then
-// truncates. Two lines at 10.5px occupy less vertical space than the 70px the
-// -30° rotation reserved, and stay readable.
-const TICK_LINE_MAX = 18;
-function WrappedTick(props: { x?: number; y?: number; payload?: { value?: string } }) {
-  const { x = 0, y = 0, payload } = props;
-  const label = String(payload?.value ?? "");
-  const words = label.split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const next = cur ? `${cur} ${w}` : w;
-    if (next.length > TICK_LINE_MAX && cur) {
-      lines.push(cur);
-      cur = w;
-      if (lines.length === 2) break;
-    } else {
-      cur = next;
-    }
-  }
-  if (lines.length < 2 && cur) lines.push(cur);
-  const shown = lines.slice(0, 2).map((l, i, arr) => {
-    const isLast = i === arr.length - 1;
-    // Two ways a label can lose text: words that didn't fit on either line,
-    // or a single word longer than one line. Both must show the ellipsis —
-    // silently clipping to 18 characters is how "Starch unit Maintenance"
-    // became "Starch unit M" and read as a different fault.
-    const wordsDropped = isLast && label.length > arr.join(" ").length;
-    const clipped = l.length > TICK_LINE_MAX ? l.slice(0, TICK_LINE_MAX) : l;
-    return wordsDropped || clipped.length < l.length ? `${clipped}…` : clipped;
-  });
-  return (
-    <g transform={`translate(${x},${y})`}>
-      {shown.map((line, i) => (
-        <text
-          key={i}
-          x={0}
-          y={12 + i * 12}
-          textAnchor="middle"
-          fontSize={10.5}
-          fill="var(--color-foreground)"
-        >
-          {line}
-        </text>
-      ))}
-    </g>
-  );
-}
-
 export function DowntimeSection({ entries, downtimes }: Props) {
-  const isMobile = useIsMobile();
   // Mobile-only "Show all N causes" toggle for the horizontal-bar list below
   // (see the md:hidden block) — collapsed to the top 6 by default.
   const [showAllCauses, setShowAllCauses] = useState(false);
@@ -120,21 +57,33 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   // electrical) fault rolls into a single bar here — the per-event detail
   // (Servo 1004, Servo 1002, ...) still shows separately in
   // MaintenanceDowntimeCard, which groups by reason_name, not this.
-  const byReason = new Map<string, { reason: string; area: string; minutes: number }>();
+  const byReason = new Map<
+    string,
+    { reason: string; area: string; minutes: number; preventive: boolean }
+  >();
   for (const d of downtimes) {
     const reason = d.pareto_reason_name ?? d.reason_name;
+    // Same test MaintenanceDowntimeCard uses, on the same field.
+    const isPreventive = d.pareto_reason_name === "Preventive Maintenance";
     const key = `${reason} | ${d.area}`;
     const cur = byReason.get(key);
-    if (cur) cur.minutes += Number(d.minutes);
-    else byReason.set(key, { reason, area: d.area, minutes: Number(d.minutes) });
+    if (cur) {
+      cur.minutes += Number(d.minutes);
+      cur.preventive = cur.preventive && isPreventive;
+    } else {
+      byReason.set(key, {
+        reason,
+        area: d.area,
+        minutes: Number(d.minutes),
+        preventive: isPreventive,
+      });
+    }
   }
   const allReasons = Array.from(byReason.values()).sort((a, b) => b.minutes - a.minutes);
   const sorted = allReasons.slice(0, 12);
-  // Desktop no longer rotates the labels (see WrappedTick below), so it can
-  // carry a much longer name across two lines before truncating.
-  const nameMaxLen = isMobile ? 8 : 40;
+  // No truncated `name` any more: both the mobile list and the desktop rows
+  // print `fullName` and let CSS handle overflow, so nothing is cut in the data.
   const chartData = sorted.map((r) => ({
-    name: r.reason.length > nameMaxLen ? r.reason.slice(0, nameMaxLen) + "…" : r.reason,
     fullName: r.reason,
     area: r.area,
     minutes: r.minutes,
@@ -143,6 +92,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
     // sum to 100% even when more than 12 distinct reasons exist, disagreeing
     // with the Total Downtime KPI above.
     pct: totalDown > 0 ? Math.round((r.minutes / totalDown) * 1000) / 10 : 0,
+    preventive: r.preventive,
   }));
 
   return (
@@ -292,25 +242,19 @@ export function DowntimeSection({ entries, downtimes }: Props) {
           })()}
       </div>
 
-      {/* Mobile height reduced to 160px per user request (2026-08-12) — was
-          220px, deliberately taller than the 180px used elsewhere because the
-          rotated (-45°) X-axis labels reserve 80px at the bottom (see the
-          isMobile-driven margin/height below). Desktop (md:h-96) is untouched. */}
       {chartData.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
           No downtime reasons logged in this period.
         </div>
       ) : (
         <>
-          {/* Mobile: horizontal-bar top-6 causes list — same ranked chartData
-              (and gradient) as the full chart below, just laid out so the
-              name/%/minutes are all readable instead of the angled 12-label
-              Pareto (which stays desktop-only, unchanged, below). */}
+          {/* Mobile: horizontal-bar top-6 causes list. Same ranked chartData
+              and the same two fills as the desktop rows below — one colour
+              language at every width. */}
           <div className="md:hidden">
             <div className="space-y-2">
               {(showAllCauses ? chartData : chartData.slice(0, 6)).map((d, i) => {
                 const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
-                const hue = 260 - i * 4;
                 return (
                   <div key={d.fullName} className="flex items-center gap-2">
                     <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
@@ -321,7 +265,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
                         className="h-full rounded-full"
                         style={{
                           width: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%`,
-                          background: `linear-gradient(to right, oklch(0.75 0.18 ${hue}), oklch(0.55 0.18 ${hue}))`,
+                          background: d.preventive ? PARETO_FILL_PM : PARETO_FILL,
                         }}
                       />
                     </div>
@@ -345,77 +289,16 @@ export function DowntimeSection({ entries, downtimes }: Props) {
           </div>
 
           <div className="hidden md:block">
-            <div className={isMobile ? "h-[160px] w-full" : "h-96 w-full"}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 54 }}>
-                  <defs>
-                    {chartData.map((_, i) => {
-                      // 4° per rank, not 8°: with up to 12 bars an 8° step ran the ramp from
-                      // blue into teal-green by the tail, and green reads as "fine" on a plant
-                      // board — these are all faults. Same step MaintenanceDowntimeCard uses,
-                      // so the two cards on this dashboard speak one colour language.
-                      const hue = 260 - i * 4;
-                      return (
-                        <linearGradient key={i} id={`dt3d-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={`oklch(0.75 0.18 ${hue})`} />
-                          <stop offset="50%" stopColor={`oklch(0.6 0.18 ${hue})`} />
-                          <stop offset="100%" stopColor={`oklch(0.4 0.16 ${hue})`} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="var(--color-border)"
-                    vertical={false}
-                  />
-                  {/* This chart only ever renders at md+ (the parent is
-                  `hidden md:block`; mobile gets the horizontal list above), so
-                  the axis is tuned for desktop only.
-                  Rotated -30° labels truncated at 24 chars produced stubs no
-                  one could identify — "Change Over Product shap…", "Starch unit
-                  M". A category axis whose categories can't be read is not a
-                  Pareto. Labels are now horizontal and wrap onto two lines. */}
-                  <XAxis
-                    dataKey="name"
-                    interval={0}
-                    height={54}
-                    tickMargin={6}
-                    tick={<WrappedTick />}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--color-popover)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    formatter={(value: number, _name, props) => [
-                      `${fmt(value)} min · ${props.payload.pct}%`,
-                      props.payload.area,
-                    ]}
-                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                  />
-                  <Bar
-                    dataKey="minutes"
-                    radius={[6, 6, 0, 0]}
-                    stroke="rgba(0,0,0,0.15)"
-                    strokeWidth={1}
-                  >
-                    {chartData.map((_, i) => (
-                      <Cell key={i} fill={`url(#dt3d-${i})`} />
-                    ))}
-                    <LabelList
-                      dataKey="pct"
-                      position="top"
-                      formatter={(v: number) => `${v}%`}
-                      style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <ParetoRows
+              rows={chartData.map((r) => ({
+                key: `${r.fullName}|${r.area}`,
+                label: r.fullName,
+                hint: r.area,
+                minutes: r.minutes,
+                pct: r.pct,
+                preventive: r.preventive,
+              }))}
+            />
           </div>
         </>
       )}

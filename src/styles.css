@@ -38,6 +38,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 :root {
@@ -115,6 +117,16 @@
     color: var(--color-foreground);
     font-feature-settings: "cv02","cv03","cv04","cv11";
   }
+
+  body {
+    font-family: var(--font-sans);
+  }
+
+  /* `@theme inline` resolves theme values into utilities instead of emitting
+     them as custom properties, so Preflight's html font-family may never pick
+     up the --font-sans override. Setting it on body explicitly is what
+     actually applies the typeface. Verified against the built CSS, not the
+     source — see the build check in this task. */
 }
 
 @utility gradient-hero { background: var(--gradient-hero); }

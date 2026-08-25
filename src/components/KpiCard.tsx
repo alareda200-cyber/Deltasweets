@@ -20,6 +20,14 @@ interface Props {
   // every other caller of this shared component).
   mobileLabel?: string;
   mobileIcon?: LucideIcon;
+  /** Signed change vs a named comparison, e.g. "-10.7%". Rendered as a chip. */
+  delta?: string;
+  /** What the delta means. "good"/"bad" colour it; "neutral" is the default. */
+  deltaTone?: "good" | "bad" | "neutral";
+  /** 0..1. Draws a meter under the value — for values that have a target. */
+  meter?: number;
+  /** Caption under the meter, e.g. "target 90.0%". */
+  meterLabel?: string;
 }
 
 export function KpiCard({
@@ -31,6 +39,10 @@ export function KpiCard({
   className,
   mobileLabel,
   mobileIcon: MobileIcon,
+  delta,
+  deltaTone,
+  meter,
+  meterLabel,
 }: Props) {
   const hasMobileLabel = !!mobileLabel;
   const tone = {
@@ -73,17 +85,59 @@ export function KpiCard({
             {label}
           </p>
         )}
-        {Icon && <Icon className={cn("h-4 w-4 shrink-0", accent)} />}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {delta && (
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold",
+                deltaTone === "good"
+                  ? "bg-success/15 text-success"
+                  : deltaTone === "bad"
+                    ? "bg-destructive/15 text-destructive"
+                    : "bg-muted text-muted-foreground",
+              )}
+            >
+              {delta}
+            </span>
+          )}
+          {Icon && <Icon className={cn("h-4 w-4 shrink-0", accent)} />}
+        </div>
       </div>
+      {/* Mono figures, deliberately. A monospace digit is as wide as a zero, so at
+          24px+ the number goes gappy — weight 500 (not 700) and -0.045em tracking
+          pull it back together. Any figure >= 20px elsewhere gets the same
+          treatment, so a number keeps one shape wherever it appears. */}
       <p
         className={cn(
-          "mt-2 text-2xl font-bold tracking-tight tabular-nums md:text-3xl",
+          "mt-2 font-mono text-2xl font-medium tracking-[-0.045em] tabular-nums md:text-3xl",
           hasMobileLabel ? "whitespace-nowrap md:truncate" : "truncate",
           accent,
         )}
       >
         {value}
       </p>
+      {typeof meter === "number" && (
+        <div className="mt-2.5">
+          {/* Unfilled track is a lighter step of the SAME hue as the fill, not grey,
+              so the state reads across the whole bar, not just the filled part. */}
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+            <div
+              className={cn(
+                "h-full rounded-full",
+                {
+                  default: "bg-primary",
+                  primary: "bg-primary",
+                  success: "bg-success",
+                  warning: "bg-warning",
+                  danger: "bg-destructive",
+                }[variant],
+              )}
+              style={{ width: `${Math.max(0, Math.min(1, meter)) * 100}%` }}
+            />
+          </div>
+          {meterLabel && <p className="mt-1 text-[10px] text-muted-foreground">{meterLabel}</p>}
+        </div>
+      )}
       {sub && (
         <p
           className={cn(

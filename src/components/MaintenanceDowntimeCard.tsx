@@ -1,17 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  LabelList,
-  ReferenceArea,
-} from "recharts";
+import { ParetoRows, PARETO_FILL, PARETO_FILL_PM } from "./ParetoRows";
 import {
   maintenanceEventsQuery,
   type EntryDowntime,
@@ -67,32 +56,6 @@ function eventDurationMinutes(e: MaintenanceEvent): number {
   const startedMs = new Date(e.started_at).getTime();
   const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
   return Math.max(0, (endMs - startedMs) / 60_000);
-}
-
-// Bar colour encodes RANK, nothing else. The previous ramp walked
-// `hue = 25 + i * 20` — red → orange → yellow → green → blue across twelve
-// bars — which in a plant dashboard reads as a severity scale: the
-// tenth-worst cause rendered green ("fine") and Preventive, which is planned
-// work, rendered bright red ("worst problem in the factory"). A single-hue
-// ramp keeps colour from carrying a verdict, and matches DowntimeSection,
-// which already uses one. The step is 4° (not the 8° used there) because this
-// chart shows up to 12 bars — at 8° the tail lands in teal again.
-// Preventive gets the warning hue and is pinned to the end of the ranking.
-const PREVENTIVE_HUE = 75;
-function rampStops(rank: number, preventive: boolean) {
-  if (preventive) {
-    return {
-      from: `oklch(0.86 0.16 ${PREVENTIVE_HUE})`,
-      mid: `oklch(0.72 0.16 ${PREVENTIVE_HUE})`,
-      to: `oklch(0.55 0.14 ${PREVENTIVE_HUE})`,
-    };
-  }
-  const hue = 260 - rank * 4;
-  return {
-    from: `oklch(0.75 0.18 ${hue})`,
-    mid: `oklch(0.6 0.18 ${hue})`,
-    to: `oklch(0.4 0.16 ${hue})`,
-  };
 }
 
 // This card is driven by master data — it never hardcodes a department name
@@ -247,15 +210,11 @@ export function MaintenanceDowntimeCard({
     Math.max(1, CHART_MAX - shownPreventive.length),
   );
   const sortedReasons = [...shownCorrective, ...shownPreventive];
+  // No truncated `name` and no "drop the trailing Maintenance" trick any more:
+  // both were there to squeeze a label into a 65px column tick. The rows print
+  // `fullName` in full, so the data carries the real reason text.
   const chartData = sortedReasons.map((r) => {
-    // A preventive bar sits behind its own divider under a "scheduled work"
-    // caption, so repeating "Maintenance" in the tick only costs the
-    // characters that then get truncated away — "Preventive Mainten…". Drop a
-    // trailing "Maintenance" from preventive labels and the name fits whole.
-    // A preventive job with any other title ("Weekly greasing") is untouched.
-    const label = r.preventive ? r.reason.replace(/\s*maintenance\s*$/i, "") : r.reason;
     return {
-      name: label.length > 18 ? `${label.slice(0, 18)}…` : label,
       fullName: r.reason,
       minutes: r.minutes,
       preventive: r.preventive,
@@ -442,7 +401,7 @@ export function MaintenanceDowntimeCard({
                 <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     className="inline-block h-[9px] w-[9px] shrink-0 rounded-sm"
-                    style={{ background: `oklch(0.72 0.16 ${PREVENTIVE_HUE})` }}
+                    style={{ background: "oklch(0.70 0.15 75)" }}
                   />
                   Preventive maintenance is scheduled work — shown last, outside the fault ranking.
                 </p>
@@ -504,9 +463,8 @@ export function MaintenanceDowntimeCard({
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  {(showAllCauses ? chartData : chartData.slice(0, 4)).map((d, i) => {
+                  {(showAllCauses ? chartData : chartData.slice(0, 4)).map((d) => {
                     const maxMinutes = Math.max(...chartData.map((x) => x.minutes), 1);
-                    const stops = rampStops(i, d.preventive);
                     return (
                       <div key={d.fullName} className="flex items-center gap-2">
                         <span className="w-[78px] shrink-0 truncate text-xs text-muted-foreground">
@@ -517,7 +475,7 @@ export function MaintenanceDowntimeCard({
                             className="h-full rounded-full"
                             style={{
                               width: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%`,
-                              background: `linear-gradient(to right, ${stops.from}, ${stops.mid})`,
+                              background: d.preventive ? PARETO_FILL_PM : PARETO_FILL,
                             }}
                           />
                         </div>
@@ -542,82 +500,16 @@ export function MaintenanceDowntimeCard({
                 )}
               </div>
 
-              <div className="hidden h-80 w-full md:block">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 24, right: 20, left: 0, bottom: 60 }}>
-                    <defs>
-                      {chartData.map((d, i) => {
-                        const stops = rampStops(i, d.preventive);
-                        return (
-                          <linearGradient key={i} id={`maint-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={stops.from} />
-                            <stop offset="50%" stopColor={stops.mid} />
-                            <stop offset="100%" stopColor={stops.to} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="var(--color-border)"
-                      vertical={false}
-                    />
-                    {/* Recharts can't draw a rule *between* two categories on a
-                        band axis, so this is a band behind the preventive
-                        bars, not a divider line — declared before <Bar> so it
-                        renders underneath them. */}
-                    {chartData.some((d) => d.preventive) && (
-                      <ReferenceArea
-                        x1={chartData.find((d) => d.preventive)?.name}
-                        x2={chartData[chartData.length - 1]?.name}
-                        fill={`oklch(0.86 0.16 ${PREVENTIVE_HUE})`}
-                        fillOpacity={0.16}
-                        stroke={`oklch(0.72 0.16 ${PREVENTIVE_HUE})`}
-                        strokeOpacity={0.45}
-                        strokeDasharray="4 4"
-                        ifOverflow="extendDomain"
-                      />
-                    )}
-                    <XAxis
-                      dataKey="name"
-                      interval={0}
-                      angle={-30}
-                      textAnchor="end"
-                      height={70}
-                      tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-                    />
-                    <YAxis tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} />
-                    <Tooltip
-                      contentStyle={{
-                        background: "var(--color-popover)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(value: number, _name, props): [string, string] => [
-                        `${fmt(value)} min · ${props.payload.pct}%`,
-                        "Downtime",
-                      ]}
-                      labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                    />
-                    <Bar
-                      dataKey="minutes"
-                      radius={[6, 6, 0, 0]}
-                      stroke="rgba(0,0,0,0.15)"
-                      strokeWidth={1}
-                    >
-                      {chartData.map((_, i) => (
-                        <Cell key={i} fill={`url(#maint-${i})`} />
-                      ))}
-                      <LabelList
-                        dataKey="pct"
-                        position="top"
-                        formatter={(v: number) => `${v}%`}
-                        style={{ fontSize: 11, fill: "var(--color-foreground)", fontWeight: 600 }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="hidden md:block">
+                <ParetoRows
+                  rows={chartData.map((r) => ({
+                    key: r.fullName,
+                    label: r.fullName,
+                    minutes: r.minutes,
+                    pct: r.pct,
+                    preventive: r.preventive,
+                  }))}
+                />
               </div>
             </div>
           )}

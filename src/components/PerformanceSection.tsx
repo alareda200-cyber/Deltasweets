@@ -121,6 +121,8 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
             icon={monthVar >= 0 ? TrendingUp : TrendingDown}
             variant={monthVar >= 0 ? "success" : "danger"}
             className="p-3 md:p-5"
+            delta={monthPlan > 0 ? `${((monthVar / monthPlan) * 100).toFixed(1)}%` : undefined}
+            deltaTone={monthVar >= 0 ? "good" : "bad"}
           />
           <KpiCard
             label="Adherence"
@@ -128,6 +130,8 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
             icon={Percent}
             variant={monthAdh >= 0.9 ? "success" : monthAdh >= 0.7 ? "warning" : "danger"}
             className="p-3 md:p-5"
+            meter={monthAdh}
+            meterLabel="target 90.0%"
           />
         </div>
       </div>
@@ -165,7 +169,9 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
         <div className="h-[200px] w-full md:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+              {/* Solid hairline, not dashed. The dashed Plan line is carrying meaning;
+                  a dashed grid competes with it for the same visual language. */}
+              <CartesianGrid stroke="var(--color-border)" />
               <XAxis
                 dataKey="date"
                 tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
@@ -242,7 +248,12 @@ export function PerformanceSection({ title, subtitle, entries, field, accentColo
                 strokeWidth={2.5}
                 // Colour alone can't carry this (colour-blind users, greyscale PDF
                 // export), so best/worst also get a bigger radius and a ring.
-                dot={(props: { cx?: number; cy?: number; index?: number; payload?: { adh: number } }) => {
+                dot={(props: {
+                  cx?: number;
+                  cy?: number;
+                  index?: number;
+                  payload?: { adh: number };
+                }) => {
                   const { cx, cy, index = 0, payload } = props;
                   if (cx == null || cy == null || !payload) return <g key={index} />;
                   const extreme = index === worstIdx || index === bestIdx;
