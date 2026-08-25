@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { cn } from "@/lib/utils";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useState, useMemo, useRef, lazy, Suspense } from "react";
 import { toast } from "sonner";
@@ -115,7 +116,13 @@ function Dashboard() {
   // Same "open" predicate MaintenanceEventsCard uses for its OPEN MECHANICAL/
   // OPEN ELECTRICAL KPIs — reused here only to light the mobile header's bell
   // dot, not a new source of truth.
-  const hasOpenFaults = maintenanceEvents.some((e) => e.status !== "resolved");
+  // A count, not a boolean. The hero is the largest element on the page and
+  // said nothing measurable; the number of open faults is the one figure that
+  // is already in scope here, so it is the one the hero can honestly carry.
+  // (Adherence and Loss % are computed inside DashboardBody, a different
+  // component — putting those in the hero would mean lifting queries, which is
+  // a structural change, not a design one.)
+  const openFaultCount = maintenanceEvents.filter((e) => e.status !== "resolved").length;
 
   async function handleExportPdf() {
     if (!activeLine || !exportRef.current) return;
@@ -152,7 +159,7 @@ function Dashboard() {
         <EmptyState onCreate={() => navigate({ to: "/settings" })} />
       ) : (
         <div ref={exportRef}>
-          <HeroHeader line={activeLine} from={from} to={to} hasOpenFaults={hasOpenFaults} />
+          <HeroHeader line={activeLine} from={from} to={to} openFaultCount={openFaultCount} />
 
           <div
             data-pdf-exclude="true"
@@ -266,13 +273,14 @@ function HeroHeader({
   line,
   from,
   to,
-  hasOpenFaults,
+  openFaultCount,
 }: {
   line: { name: string; color: string } | undefined;
   from: string;
   to: string;
-  hasOpenFaults: boolean;
+  openFaultCount: number;
 }) {
+  const hasOpenFaults = openFaultCount > 0;
   return (
     <>
       {/* Mobile-only compact replacement for the full hero below — brand mark
@@ -315,9 +323,35 @@ function HeroHeader({
           {line?.name ?? "—"} <span className="opacity-70">Production Line</span>
         </h1>
         <p className="mt-2 text-sm opacity-90">Making → Packing · Plant Performance Overview</p>
-        <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur">
-          Reporting period · {from} → {to}
-        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur">
+            Reporting period · {from} → {to}
+          </span>
+          {/* Not colour alone: the wording changes too ("N open faults" vs
+              "No open faults"), so the state survives greyscale and the PDF
+              export. */}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium backdrop-blur",
+              hasOpenFaults ? "bg-destructive/80" : "bg-white/15",
+            )}
+          >
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                hasOpenFaults ? "bg-white" : "bg-white/70",
+              )}
+            />
+            {hasOpenFaults ? (
+              <>
+                <span className="font-mono tabular-nums">{openFaultCount}</span> open{" "}
+                {openFaultCount === 1 ? "fault" : "faults"}
+              </>
+            ) : (
+              "No open faults"
+            )}
+          </span>
+        </div>
       </div>
     </>
   );
