@@ -336,6 +336,7 @@ export function MaintenanceDowntimeCard({
             <KpiCard
               label="Events"
               value={String(eventCount)}
+              sub="preventive excluded"
               icon={AlertOctagon}
               variant="default"
               className="p-3 md:p-5"
@@ -343,8 +344,14 @@ export function MaintenanceDowntimeCard({
             <KpiCard
               label="Critical Minutes"
               value={fmt(criticalMinutes)}
+              sub={
+                totalMinutes > 0
+                  ? `${((criticalMinutes / totalMinutes) * 100).toFixed(1)}% of maintenance time`
+                  : undefined
+              }
               icon={Activity}
               variant={criticalMinutes > 0 ? "danger" : "success"}
+              meter={totalMinutes > 0 ? criticalMinutes / totalMinutes : 0}
               className="p-3 md:p-5"
             />
           </div>

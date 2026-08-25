@@ -36,10 +36,30 @@ function monthStats(events: MaintenanceEvent[], monthsAgo: number) {
 
   const durations = inMonth
     .filter((e) => e.status === "resolved" && e.resolved_at)
-    .map((e) => (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) / 3_600_000);
-  const mttrHours = durations.length > 0 ? durations.reduce((s, v) => s + v, 0) / durations.length : null;
+    .map(
+      (e) =>
+        (new Date(e.resolved_at as string).getTime() - new Date(e.started_at).getTime()) /
+        3_600_000,
+    );
+  const mttrHours =
+    durations.length > 0 ? durations.reduce((s, v) => s + v, 0) / durations.length : null;
 
   return { eventCount: inMonth.length, mtbfHours, mttrHours };
+}
+
+// "Open: 4" doesn't say whether to worry — four faults opened this morning
+// and four open for a week are the same number and completely different
+// situations. The age of the oldest one is what makes the count actionable.
+// The card already turns its border red past STALE_OPEN_HOURS; this puts
+// the same fact on the card that caused it.
+function oldestOpenLabel(list: MaintenanceEvent[], now: number): string | undefined {
+  if (list.length === 0) return undefined;
+  const oldest = Math.min(...list.map((e) => new Date(e.started_at).getTime()));
+  const hours = (now - oldest) / 3_600_000;
+  if (!Number.isFinite(hours) || hours < 0) return undefined;
+  if (hours < 1) return "oldest under an hour";
+  if (hours < 48) return `oldest ${Math.round(hours)}h`;
+  return `oldest ${Math.round(hours / 24)} days`;
 }
 
 // Scoped to the Dashboard's selected line (the `events` prop is already
@@ -82,12 +102,14 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
         <KpiCard
           label="Open Mechanical"
           value={String(openMechanical.length)}
+          sub={oldestOpenLabel(openMechanical, now)}
           icon={Wrench}
           variant={openMechanical.length > 0 ? "danger" : "success"}
         />
         <KpiCard
           label="Open Electrical"
           value={String(openElectrical.length)}
+          sub={oldestOpenLabel(openElectrical, now)}
           icon={Zap}
           variant={openElectrical.length > 0 ? "danger" : "success"}
         />
@@ -143,12 +165,21 @@ function TrendStat({
   const direction = delta === null || delta === 0 ? "flat" : delta > 0 ? "up" : "down";
   const good = delta === null || delta === 0 ? null : higherIsBetter ? delta > 0 : delta < 0;
   const Icon = direction === "up" ? ArrowUp : direction === "down" ? ArrowDown : Minus;
-  const colorClass = good === null ? "text-muted-foreground" : good ? "text-success" : "text-destructive";
+  const colorClass =
+    good === null ? "text-muted-foreground" : good ? "text-success" : "text-destructive";
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-lg font-bold tabular-nums">{current === null ? "—" : format(current)}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </p>
+      {/* Same numeral treatment as KpiCard: mono at weight 500 with tighter
+          tracking. These three sit directly under two KpiCards in the same
+          card, so a different typeface here reads as a different kind of
+          number when it is exactly the same kind. */}
+      <p className="mt-0.5 font-mono text-lg font-medium tracking-[-0.045em] tabular-nums">
+        {current === null ? "—" : format(current)}
+      </p>
       <p className={cn("mt-0.5 flex items-center gap-1 text-[11px] font-medium", colorClass)}>
         {hasComparison && <Icon className="h-3 w-3 shrink-0" />}
         <span className="truncate">{hasComparison ? "vs last month" : "vs last month: —"}</span>

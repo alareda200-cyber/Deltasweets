@@ -25,6 +25,12 @@ export function DowntimeSection({ entries, downtimes }: Props) {
   // source of truth for both.
   const totalDown = downtimes.reduce((s, d) => s + Number(d.minutes), 0);
   const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
+  // Preventive is scheduled work. It belongs in the downtime total — the line
+  // really was stopped — but a total that doesn't say how much of it was
+  // planned reads as a worse month than it was.
+  const plannedDown = downtimes
+    .filter((d) => d.pareto_reason_name === "Preventive Maintenance")
+    .reduce((s, d) => s + Number(d.minutes), 0);
 
   // Last day
   const last = entries[entries.length - 1];
@@ -129,6 +135,7 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             mobileLabel="Downtime (min)"
             mobileIcon={AlertOctagon}
             value={fmt(totalDown)}
+            sub={plannedDown > 0 ? `${fmt(Math.round(plannedDown))} planned` : undefined}
             icon={AlertOctagon}
             variant="warning"
             className="p-3 md:p-5"
@@ -138,6 +145,8 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             value={`${lossPct.toFixed(1)}%`}
             icon={Activity}
             variant={lossPct < 10 ? "success" : lossPct < 25 ? "warning" : "danger"}
+            meter={Math.min(1, lossPct / 100)}
+            meterLabel="of available time"
             className="p-3 md:p-5"
           />
         </div>
@@ -160,6 +169,8 @@ export function DowntimeSection({ entries, downtimes }: Props) {
             label="Loss %"
             value={`${dayLossPct.toFixed(1)}%`}
             variant={dayLossPct < 10 ? "success" : dayLossPct < 25 ? "warning" : "danger"}
+            meter={Math.min(1, dayLossPct / 100)}
+            meterLabel="of available time"
             className="p-3 md:p-5"
           />
         </div>
