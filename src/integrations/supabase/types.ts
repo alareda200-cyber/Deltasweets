@@ -683,6 +683,48 @@ export type Database = {
           },
         ]
       }
+      non_production_days: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          day: string
+          id: string
+          line_id: string | null
+          reason: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          day: string
+          id?: string
+          line_id?: string | null
+          reason?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          day?: string
+          id?: string
+          line_id?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "non_production_days_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "non_production_days_line_id_fkey"
+            columns: ["line_id"]
+            isOneToOne: false
+            referencedRelation: "production_lines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       production_areas: {
         Row: {
           code: string | null

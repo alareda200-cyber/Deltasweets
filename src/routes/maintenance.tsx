@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -79,6 +79,7 @@ import {
   ChartScatter,
   Inbox,
   type LucideIcon,
+  CalendarOff,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -97,7 +98,12 @@ import {
   formatHours,
   sortByWorstMtbf,
   toDatetimeLocalValue,
+  eventDowntimeMinutes,
+  eventElapsedMinutes,
+  openEventCount,
+  nonProductionDayLookup,
 } from "@/lib/maintenance-format";
+import type { ClosedDays } from "@/lib/maintenance-format";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import {
   linesQuery,
@@ -117,7 +123,9 @@ import {
   type MaintenanceMetric,
   type MaintenanceStoppage,
   type StoppageMemberEvent,
+  nonProductionDaysQuery,
 } from "@/lib/queries";
+import type { NonProductionDay } from "@/lib/queries";
 
 export const Route = createFileRoute("/maintenance")({
   head: () => ({ meta: [{ title: "Maintenance · Production Scorecard" }] }),
@@ -139,9 +147,7 @@ function truncateNote(text: string, max = 50): string {
 // severity. Shared by the always-visible "Open events" list and the
 // (collapsible) full events list below, so both render identically.
 function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onClick: () => void }) {
-  const durationMs =
-    (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
-    new Date(e.started_at).getTime();
+  const durationMs = eventElapsedMinutes(e) * 60_000;
   const borderColor =
     e.type === "mechanical"
       ? "border-l-destructive"
@@ -400,6 +406,125 @@ function MaintenanceKpiGrid({
   );
 }
 
+// Non-production days: the calendar the downtime maths reads.
+//
+// A row here states that a line was not scheduled to run on a day, so time an
+// event spends there is not lost production (see eventDowntimeMinutes). This
+// exists as an explicit record because it cannot be inferred: a day with no
+// daily entry might be a holiday, or might be a day whose paperwork is not in
+// yet, and treating the second as the first would erase real faults.
+function NonProductionDaysSection({
+  rows,
+  lines,
+  canEdit,
+  canDelete,
+  onAdd,
+  onDelete,
+}: {
+  rows: NonProductionDay[];
+  lines: { id: string; name: string }[];
+  canEdit: boolean;
+  canDelete: boolean;
+  onAdd: (day: string, lineId: string | null, reason: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [day, setDay] = useState("");
+  const [lineId, setLineId] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!day) return;
+    setBusy(true);
+    try {
+      await onAdd(day, lineId || null, reason.trim());
+      setDay("");
+      setReason("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Non-production days</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Days a line was not scheduled to run. Downtime is not counted against them. A day that is
+          not listed here counts in full — nothing is assumed.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {canEdit && (
+          <div className="grid gap-2 sm:grid-cols-[150px_1fr_1fr_auto]">
+            <Input
+              type="date"
+              value={day}
+              onChange={(e) => setDay(e.target.value)}
+              aria-label="Date"
+            />
+            <select
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              value={lineId}
+              onChange={(e) => setLineId(e.target.value)}
+              aria-label="Line"
+            >
+              <option value="">All lines</option>
+              {lines.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <Input
+              placeholder="Reason (holiday, no orders, shutdown…)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              aria-label="Reason"
+            />
+            <Button onClick={submit} disabled={!day || busy}>
+              Add
+            </Button>
+          </div>
+        )}
+
+        {rows.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+            No non-production days recorded. Every day counts in full until one is added.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm"
+              >
+                <span className="font-mono tabular-nums">{r.day}</span>
+                <Badge variant={r.line_id ? "secondary" : "outline"}>
+                  {r.production_lines?.name ?? "All lines"}
+                </Badge>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  {r.reason || "—"}
+                </span>
+                {canDelete && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete ${r.day}`}
+                    onClick={() => onDelete(r.id)}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // Filter bar — lifted to page scope (rendered once, above both the mobile
 // stack and the desktop sidebar+content grid) so it stays visible no matter
 // which section (Events, Stoppages, Reliability, Top losses, MTBF / MTTR) is
@@ -651,9 +776,7 @@ function EventsListCard({
                 </TableRow>
               )}
               {pageRows.map((e) => {
-                const durationMs =
-                  (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) -
-                  new Date(e.started_at).getTime();
+                const durationMs = eventElapsedMinutes(e) * 60_000;
                 const firstNote = e.maintenance_notes[0]?.note;
                 return (
                   <TableRow
@@ -871,16 +994,61 @@ function MaintenancePage() {
   // already-fetched `events` (same line/type/date filters as the table
   // above), never a new query, per the maintenance-manager brief this was
   // built against.
+  // Days this plant/line was not scheduled to run. Every downtime figure below
+  // subtracts them; see eventDowntimeMinutes in maintenance-format.ts.
+  const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
+  const closedDays = useMemo(() => nonProductionDayLookup(nonProductionDays), [nonProductionDays]);
+
+  async function handleAddNonProductionDay(day: string, npLineId: string | null, reason: string) {
+    const { error } = await supabase.from("non_production_days").insert({
+      day,
+      line_id: npLineId,
+      reason: reason || null,
+      created_by: user?.id ?? null,
+    });
+    if (error) {
+      // 23505 = one of the two partial unique indexes. Saying which day is
+      // already recorded is more use than the raw constraint name.
+      toast.error(
+        error.code === "23505" ? "This day is already recorded for that line." : error.message,
+      );
+      return;
+    }
+    toast.success("Non-production day added");
+    qc.invalidateQueries({ queryKey: ["non-production-days"] });
+  }
+
+  async function handleDeleteNonProductionDay(id: string) {
+    const { error } = await supabase.from("non_production_days").delete().eq("id", id);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Non-production day removed");
+    qc.invalidateQueries({ queryKey: ["non-production-days"] });
+  }
+
   const reliabilitySummary = useMemo(() => {
-    const totalDowntimeMinutes = totalDowntimeMinutesOf(collapsedEvents);
+    const totalDowntimeMinutes = totalDowntimeMinutesOf(collapsedEvents, closedDays);
+    const openCount = openEventCount(collapsedEvents);
     const repeatFailureRatePct = repeatFailureRateOf(events);
     const mtbfHours = localMtbfHours(events);
     const mttrHours = localMttrHours(events);
     const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
-    return { totalDowntimeMinutes, repeatFailureRatePct, mtbfHours, mttrHours, availabilityPct };
-  }, [events, collapsedEvents]);
+    return {
+      totalDowntimeMinutes,
+      openCount,
+      repeatFailureRatePct,
+      mtbfHours,
+      mttrHours,
+      availabilityPct,
+    };
+  }, [events, collapsedEvents, closedDays]);
 
-  const titleAggregates = useMemo(() => aggregateByTitle(collapsedEvents), [collapsedEvents]);
+  const titleAggregates = useMemo(
+    () => aggregateByTitle(collapsedEvents, closedDays),
+    [collapsedEvents, closedDays],
+  );
   // Preventive-excluded counterpart of titleAggregates — feeds every
   // "how often does this recur" failure-analysis view below (Top Losses by
   // Frequency, Chronic vs Sporadic), same reasoning as
@@ -891,8 +1059,12 @@ function MaintenancePage() {
   // views (Top Losses by Downtime, Mean Downtime per Fault) — preventive
   // still stops the line, so it's still real downtime there.
   const failureTitleAggregates = useMemo(
-    () => aggregateByTitle(collapsedEvents.filter((e) => e.type !== "preventive")),
-    [collapsedEvents],
+    () =>
+      aggregateByTitle(
+        collapsedEvents.filter((e) => e.type !== "preventive"),
+        closedDays,
+      ),
+    [collapsedEvents, closedDays],
   );
 
   const topLossesByDowntime = useMemo(
@@ -1076,6 +1248,7 @@ function MaintenancePage() {
     try {
       const { exportMaintenanceReportToPdf } = await import("@/lib/maintenance-report");
       await exportMaintenanceReportToPdf({
+        closedDays,
         lineName,
         from: from || null,
         to: to || null,
@@ -1346,9 +1519,23 @@ function MaintenancePage() {
         </MobileCollapsibleSection>
 
         <div className="mt-6 md:mt-0">
+          <MobileCollapsibleSection title="Non-production days" count={nonProductionDays.length}>
+            <NonProductionDaysSection
+              rows={nonProductionDays}
+              lines={lines}
+              canEdit={canEdit}
+              canDelete={canDelete}
+              onAdd={handleAddNonProductionDay}
+              onDelete={handleDeleteNonProductionDay}
+            />
+          </MobileCollapsibleSection>
+        </div>
+
+        <div className="mt-6 md:mt-0">
           <MobileCollapsibleSection title="Reliability Analytics">
             <ReliabilityAnalyticsSection
               totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+              openCount={reliabilitySummary.openCount}
               repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
               availabilityPct={reliabilitySummary.availabilityPct}
               topLossesByDowntime={topLossesByDowntime}
@@ -1379,6 +1566,12 @@ function MaintenancePage() {
                   label: "Stoppages",
                   icon: Layers,
                   count: allStoppageRows.length,
+                },
+                {
+                  id: "nonProduction",
+                  label: "Non-production days",
+                  icon: CalendarOff,
+                  count: nonProductionDays.length,
                 },
               ],
             },
@@ -1433,9 +1626,21 @@ function MaintenancePage() {
               onDelete={handleDeleteStoppage}
             />
           )}
+          {activeSection === "nonProduction" && (
+            <NonProductionDaysSection
+              rows={nonProductionDays}
+              lines={lines}
+              canEdit={canEdit}
+              canDelete={canDelete}
+              onAdd={handleAddNonProductionDay}
+              onDelete={handleDeleteNonProductionDay}
+            />
+          )}
+
           {activeSection === "reliability" && (
             <ReliabilityHeadlineCards
               totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+              openCount={reliabilitySummary.openCount}
               repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
               availabilityPct={reliabilitySummary.availabilityPct}
             />
@@ -1503,17 +1708,11 @@ function weightedAverage(
   return totalValue / totalWeight;
 }
 
-// Matches the duration math already used per-row in the events table above
-// (line ~236) — resolved events use resolved_at, still-open events run the
-// clock to now.
-function eventDurationMinutes(e: MaintenanceEvent): number {
-  const startedMs = new Date(e.started_at).getTime();
-  const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
-  return Math.max(0, (endMs - startedMs) / 60_000);
-}
-
-function totalDowntimeMinutesOf(events: MaintenanceEvent[]): number {
-  return events.reduce((s, e) => s + eventDurationMinutes(e), 0);
+// Downtime, not elapsed: an open event adds nothing to the total until it is
+// resolved and its real window is known. See the note above the two functions
+// in maintenance-format.ts for why these are separate.
+function totalDowntimeMinutesOf(events: MaintenanceEvent[], closed: ClosedDays): number {
+  return events.reduce((s, e) => s + eventDowntimeMinutes(e, closed), 0);
 }
 
 // Repeat = any event whose title (trimmed, case-insensitive) occurs more
@@ -1624,11 +1823,13 @@ const faultCategoryBadgeVariant: Record<
 
 // Groups events by title (trimmed, case-insensitive) — the display title
 // keeps the first occurrence's original casing/spacing.
-function aggregateByTitle(events: MaintenanceEvent[]): TitleAggregate[] {
+function aggregateByTitle(events: MaintenanceEvent[], closed: ClosedDays): TitleAggregate[] {
   const map = new Map<string, TitleAggregate>();
   for (const e of events) {
     const key = e.title.trim().toLowerCase();
-    const minutes = eventDurationMinutes(e);
+    // Top Losses ranks causes by production time lost, so this is downtime,
+    // not elapsed — an open event contributes 0 until its window is known.
+    const minutes = eventDowntimeMinutes(e, closed);
     const cur = map.get(key);
     if (cur) {
       cur.totalMinutes += minutes;
@@ -1780,13 +1981,22 @@ function EmptyMiniState() {
 // can render just these, independent of Top Losses / Reliability by Line.
 function ReliabilityHeadlineCards({
   totalDowntimeMinutes,
+  openCount,
   repeatFailureRatePct,
   availabilityPct,
 }: {
   totalDowntimeMinutes: number;
+  openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
 }) {
+  // An open event's cost is unknown, so it is not in the total above. Saying so
+  // is not optional: a total that quietly omits an unresolved 41-hour fault is
+  // as misleading as one that quietly counts a holiday as lost production.
+  const downtimeSub =
+    openCount > 0
+      ? `from /maintenance records only · ${openCount} open event${openCount === 1 ? "" : "s"} not counted yet`
+      : "from /maintenance records only, filtered by page filters";
   // Shared between the mobile MiniKpiCard row and the desktop KpiCard row
   // below, so both always agree on color/threshold.
   const repeatVariant =
@@ -1812,7 +2022,7 @@ function ReliabilityHeadlineCards({
         <MiniKpiCard
           label="Maintenance events downtime"
           value={`${(totalDowntimeMinutes / 60).toFixed(1)}h`}
-          sub="from /maintenance records only, filtered by page filters"
+          sub={downtimeSub}
           variant="warning"
         />
         <MiniKpiCard
@@ -1833,7 +2043,7 @@ function ReliabilityHeadlineCards({
         <KpiCard
           label="Maintenance events downtime"
           value={formatDuration(totalDowntimeMinutes * 60_000)}
-          sub="from /maintenance records only, filtered by page filters"
+          sub={downtimeSub}
           icon={Timer}
           variant="warning"
         />
@@ -2183,6 +2393,7 @@ function ReliabilityByLineTable({ reliabilityByLine }: { reliabilityByLine: Line
 // section.
 function ReliabilityAnalyticsSection({
   totalDowntimeMinutes,
+  openCount,
   repeatFailureRatePct,
   availabilityPct,
   topLossesByDowntime,
@@ -2192,6 +2403,7 @@ function ReliabilityAnalyticsSection({
   reliabilityByLine,
 }: {
   totalDowntimeMinutes: number;
+  openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
   topLossesByDowntime: TitleAggregate[];
@@ -2214,6 +2426,7 @@ function ReliabilityAnalyticsSection({
       </div>
       <ReliabilityHeadlineCards
         totalDowntimeMinutes={totalDowntimeMinutes}
+        openCount={openCount}
         repeatFailureRatePct={repeatFailureRatePct}
         availabilityPct={availabilityPct}
       />

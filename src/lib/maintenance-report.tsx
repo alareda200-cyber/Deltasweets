@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 import type { MaintenanceEvent, MaintenanceMetric, MaintenanceType, MaintenanceStatus } from "@/lib/queries";
-import { TYPE_LABELS, STATUS_LABELS, formatDuration, formatHours, sortByWorstMtbf } from "@/lib/maintenance-format";
+import { TYPE_LABELS, STATUS_LABELS, formatDuration, formatHours, sortByWorstMtbf, eventDowntimeMinutes, eventElapsedMinutes } from "@/lib/maintenance-format";
+import type { ClosedDays } from "@/lib/maintenance-format";
 
 const LOGO_MAX_HEIGHT = 36; // pt
 const PAGE_MARGIN = 24; // pt
@@ -111,6 +112,11 @@ export interface MaintenanceReportOptions {
     resolvedAt: string | null;
     durationMinutes: number;
   }[];
+  // Days a line was not scheduled to run. Passed in rather than queried here
+  // so this module stays a pure presenter, same as every other prop above —
+  // it is mounted outside the app tree by the PDF renderer and has no query
+  // client of its own.
+  closedDays: ClosedDays;
   onProgress?: (message: string) => void;
 }
 
@@ -196,12 +202,6 @@ function drawOversizedSection(
     remainingPx -= slicePx;
     firstSlice = false;
   }
-}
-
-function eventDurationMinutes(e: MaintenanceEvent): number {
-  const start = new Date(e.started_at).getTime();
-  const end = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
-  return Math.max(0, (end - start) / 60_000);
 }
 
 function personLabel(p: { display_name: string | null; email: string } | null): string {
@@ -298,6 +298,7 @@ function FrequencyBar({ label, count, pct, color }: { label: string; count: numb
 function ReportLayout({
   events,
   collapsedEvents,
+  closedDays,
   metrics,
   totalEvents,
   openCount,
@@ -348,15 +349,16 @@ function ReportLayout({
   | "chronicVsSporadic"
   | "reliabilityByLine"
   | "stoppagesSummary"
+  | "closedDays"
 >) {
   // Downtime-by-Type reads collapsedEvents (one row per stoppage), not the
   // raw `events` the table below lists — otherwise a multi-event stoppage's
   // window gets summed once per member instead of once per stoppage, and
   // this chart's total silently drifts from totalDowntimeMinutes/
   // topLossesByDowntime (both already collapsedEvents-based).
-  const mechMinutes = collapsedEvents.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDurationMinutes(e), 0);
-  const elecMinutes = collapsedEvents.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDurationMinutes(e), 0);
-  const prevMinutes = collapsedEvents.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDurationMinutes(e), 0);
+  const mechMinutes = collapsedEvents.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
+  const elecMinutes = collapsedEvents.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
+  const prevMinutes = collapsedEvents.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
   const totalMinutes = mechMinutes + elecMinutes + prevMinutes;
   const mechPct = totalMinutes > 0 ? (mechMinutes / totalMinutes) * 100 : 0;
   const elecPct = totalMinutes > 0 ? (elecMinutes / totalMinutes) * 100 : 0;
@@ -485,9 +487,8 @@ function ReportLayout({
                   <td style={td}>{STATUS_LABELS[e.status]}</td>
                   <td style={td}>{new Date(e.started_at).toLocaleString()}</td>
                   <td style={td}>
-                    {formatDuration(
-                      (e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now()) - new Date(e.started_at).getTime(),
-                    )}
+                    {formatDuration(eventElapsedMinutes(e) * 60_000)}
+                    {!e.resolved_at && <span style={{ color: "#64748b" }}> · open</span>}
                   </td>
                   <td style={td}>{e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}</td>
                   <td style={td}>{e.status === "resolved" ? personLabel(e.resolved_by_profile) : "—"}</td>
@@ -751,6 +752,7 @@ export async function exportMaintenanceReportToPdf({
   generatedBy,
   events,
   collapsedEvents,
+  closedDays,
   metrics,
   totalEvents,
   openCount,
@@ -794,6 +796,7 @@ export async function exportMaintenanceReportToPdf({
         <ReportLayout
           events={events}
           collapsedEvents={collapsedEvents}
+          closedDays={closedDays}
           metrics={metrics}
           totalEvents={totalEvents}
           openCount={openCount}

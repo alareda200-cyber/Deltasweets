@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ParetoRows, PARETO_FILL, PARETO_FILL_PM } from "./ParetoRows";
 import {
@@ -10,6 +10,7 @@ import {
   type SeverityLevel,
   type MaintenanceEvent,
   type DailyEntry,
+  nonProductionDaysQuery,
 } from "@/lib/queries";
 import { KpiCard } from "./KpiCard";
 import { EventDetailDialog } from "./EventDetailDialog";
@@ -31,6 +32,9 @@ import {
   typeBadgeVariant,
   statusBadgeVariant,
   formatDuration,
+  eventDowntimeMinutes,
+  eventElapsedMinutes,
+  nonProductionDayLookup,
 } from "@/lib/maintenance-format";
 import { Wrench, AlertOctagon, Activity, TimerOff } from "lucide-react";
 
@@ -47,15 +51,6 @@ interface Props {
   // entries' most recent entry_date.
   entries: DailyEntry[];
   maintenanceEvents: MaintenanceEvent[];
-}
-
-// Matches the duration math used elsewhere for maintenance_events (see
-// src/routes/maintenance.tsx and src/lib/maintenance-report.tsx): resolved
-// events use resolved_at, still-open events run the clock to now.
-function eventDurationMinutes(e: MaintenanceEvent): number {
-  const startedMs = new Date(e.started_at).getTime();
-  const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
-  return Math.max(0, (endMs - startedMs) / 60_000);
 }
 
 // This card is driven by master data — it never hardcodes a department name
@@ -93,6 +88,10 @@ export function MaintenanceDowntimeCard({
     ...maintenanceEventsQuery(null, null, null, null, null),
     enabled: canSeeOpenEvents,
   });
+  // Same rule as the Maintenance page: time on a day this line was not
+  // scheduled to run is not lost production.
+  const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
+  const closedDays = useMemo(() => nonProductionDayLookup(nonProductionDays), [nonProductionDays]);
   const openEvents = allMaintenanceEvents.filter(
     (e) => e.status === "open" || e.status === "in_progress",
   );
@@ -113,8 +112,9 @@ export function MaintenanceDowntimeCard({
   const lastDayMaintenanceEvents = lastEntryDate
     ? maintenanceEvents.filter((e) => iso(new Date(e.started_at)) === lastEntryDate)
     : [];
+  // Downtime, not elapsed — an unresolved event contributes 0 here.
   const lastDayMaintenanceMinutes = lastDayMaintenanceEvents.reduce(
-    (s, e) => s + eventDurationMinutes(e),
+    (s, e) => s + eventDowntimeMinutes(e, closedDays),
     0,
   );
 
@@ -384,7 +384,7 @@ export function MaintenanceDowntimeCard({
                     <span className="font-medium">{e.title}</span>
                     <span className="text-muted-foreground">· {TYPE_LABELS[e.type]}</span>
                     <span className="font-semibold tabular-nums">
-                      {fmt(Math.round(eventDurationMinutes(e)))}m
+                      {fmt(Math.round(eventElapsedMinutes(e)))}m
                     </span>
                   </span>
                 ))}
@@ -571,7 +571,7 @@ export function MaintenanceDowntimeCard({
                 </TableHeader>
                 <TableBody>
                   {openEvents.map((e) => {
-                    const durationMs = Date.now() - new Date(e.started_at).getTime();
+                    const durationMs = eventElapsedMinutes(e) * 60_000;
                     return (
                       <TableRow
                         key={e.id}

@@ -940,6 +940,37 @@ export interface MaintenanceMetric {
 // Downtime/Availability elsewhere (see totalDowntimeMinutesOf in
 // src/routes/maintenance.tsx), just not this reliability-by-failure-type
 // table.
+export interface NonProductionDay {
+  id: string;
+  /** null = every line. */
+  line_id: string | null;
+  /** Local calendar date, "YYYY-MM-DD". */
+  day: string;
+  reason: string | null;
+  created_at: string;
+  production_lines: { name: string } | null;
+}
+
+// Days a line was not scheduled to run. Explicitly recorded, never inferred —
+// see the note on eventDowntimeMinutes in maintenance-format.ts for why a day
+// with no record must count in full rather than be assumed closed.
+//
+// No date filter: the list is small (a handful of rows a year) and every
+// downtime figure on the page needs the whole set anyway, since an event can
+// span a closure that started before the current filter window.
+export const nonProductionDaysQuery = () =>
+  queryOptions({
+    queryKey: ["non-production-days"],
+    queryFn: async (): Promise<NonProductionDay[]> => {
+      const { data, error } = await supabase
+        .from("non_production_days")
+        .select("*, production_lines(name)")
+        .order("day", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as unknown as NonProductionDay[];
+    },
+  });
+
 export const maintenanceMetricsQuery = () =>
   queryOptions({
     queryKey: ["maintenance-metrics"],

@@ -10,7 +10,11 @@ export const TYPE_LABELS: Record<MaintenanceType, string> = {
   electrical: "Electrical",
   preventive: "Preventive Maintenance",
 };
-export const STATUS_LABELS: Record<MaintenanceStatus, string> = { open: "Open", in_progress: "In Progress", resolved: "Resolved" };
+export const STATUS_LABELS: Record<MaintenanceStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+};
 
 export function typeBadgeVariant(t: MaintenanceType) {
   if (t === "mechanical") return "secondary";
@@ -18,7 +22,9 @@ export function typeBadgeVariant(t: MaintenanceType) {
   return "outline";
 }
 
-export function statusBadgeVariant(s: MaintenanceStatus): "default" | "secondary" | "destructive" | "outline" {
+export function statusBadgeVariant(
+  s: MaintenanceStatus,
+): "default" | "secondary" | "destructive" | "outline" {
   if (s === "open") return "destructive";
   if (s === "in_progress") return "secondary";
   return "default";
@@ -36,7 +42,9 @@ export const SEVERITY_LABEL_OPTIONS = ["Critical", "Major", "Minor", "Low"] as c
 // rows) or maintenance_events.severity_label (free text, constrained to
 // SEVERITY_LABEL_OPTIONS by the UI). Unrecognized/missing name (including
 // "Unclassified") gets the same neutral treatment as no severity at all.
-export function severityBadgeVariant(name: string | null | undefined): "default" | "secondary" | "destructive" | "outline" {
+export function severityBadgeVariant(
+  name: string | null | undefined,
+): "default" | "secondary" | "destructive" | "outline" {
   const n = (name ?? "").trim().toLowerCase();
   if (n === "critical") return "destructive";
   if (n === "major") return "secondary";
@@ -65,6 +73,122 @@ export function formatHours(h: number | null): string {
   if (h === null) return "—";
   if (h < 24) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
+}
+
+// ---------------------------------------------------------------------------
+// Event duration: two questions, two functions, on purpose.
+//
+// These were one function, copy-pasted into four files, and that is what let a
+// fault reported at 04:25 on a Thursday read as 41 hours of "downtime" by the
+// Friday — the plant was on holiday for most of it and never scheduled to run.
+//
+//   elapsed  — how long has this been broken? Wall clock, still running while
+//              the event is open. Honest as a status line ("open 41h, nobody
+//              has closed it"), meaningless as lost production: it counts
+//              holidays, night hours and closed shifts.
+//
+//   downtime — how much production time did this cost? An open event
+//              contributes NOTHING. Not because zero is true, but because the
+//              cost is UNKNOWN until it is resolved, and letting the clock run
+//              silently invents minutes the plant never lost. Every caller
+//              showing a downtime total must also show how many open events
+//              were excluded (openEventCount) — quietly dropping time is the
+//              same class of error as quietly inventing it.
+//
+// This does NOT make downtime correct yet: a resolved event's window still
+// spans any non-working hours inside it. Fixing that needs a production
+// calendar — an explicit record of when the plant is scheduled to run.
+// Absence of a daily entry cannot substitute for one: it cannot tell "closed
+// today" from "not filled in yet", and guessing wrong erases real faults.
+// ---------------------------------------------------------------------------
+
+/** Wall-clock time since the event started. Runs to now while it is open. */
+export function eventElapsedMinutes(e: { started_at: string; resolved_at: string | null }): number {
+  const startedMs = new Date(e.started_at).getTime();
+  const endMs = e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+  return Math.max(0, (endMs - startedMs) / 60_000);
+}
+
+/**
+ * Days the plant was not scheduled to run, keyed by line.
+ * Built by nonProductionDayLookup() from the non_production_days table.
+ */
+export interface ClosedDays {
+  /** dayIso is a LOCAL calendar date (see iso() in date-utils). */
+  isClosed(lineId: string | null, dayIso: string): boolean;
+}
+
+/**
+ * Production time lost.
+ *
+ * 0 while the event is open — the cost is not known until it is resolved, and
+ * running the clock invents minutes the plant never lost.
+ *
+ * Time falling on a day this line was not scheduled to run is excluded. That
+ * exclusion is driven ONLY by explicitly recorded non-production days: a day
+ * nobody recorded counts in full, because "no record" means "unknown", never
+ * "closed". Erring the other way would silently delete real faults reported on
+ * days whose paperwork simply had not been filed yet.
+ *
+ * `closed` is required rather than optional on purpose. This rule used to live
+ * as four copy-pasted functions that drifted apart; an optional argument would
+ * let a call site quietly fall back to the old behaviour and start that again.
+ */
+export function eventDowntimeMinutes(
+  e: { started_at: string; resolved_at: string | null; line_id: string | null },
+  closed: ClosedDays,
+): number {
+  if (!e.resolved_at) return 0;
+  const start = new Date(e.started_at);
+  const end = new Date(e.resolved_at);
+  if (end <= start) return 0;
+
+  // Walk the window one local calendar day at a time: an event can span a
+  // holiday in the middle (broke Thursday, fixed Saturday) and only the
+  // scheduled part of that span is lost production.
+  let total = 0;
+  let cursor = start;
+  while (cursor < end) {
+    const nextMidnight = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+    const sliceEnd = nextMidnight < end ? nextMidnight : end;
+    if (!closed.isClosed(e.line_id, isoLocalDay(cursor))) {
+      total += (sliceEnd.getTime() - cursor.getTime()) / 60_000;
+    }
+    cursor = sliceEnd;
+  }
+  return total;
+}
+
+// Local-calendar date string. Duplicated from date-utils' iso() rather than
+// imported so this module stays dependency-free for the PDF renderer, which
+// mounts it outside the app tree.
+function isoLocalDay(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/** Builds the lookup. An all-lines row (line_id null) closes every line. */
+export function nonProductionDayLookup(
+  rows: { line_id: string | null; day: string }[],
+): ClosedDays {
+  const allLines = new Set<string>();
+  const perLine = new Set<string>();
+  for (const r of rows) {
+    if (r.line_id === null) allLines.add(r.day);
+    else perLine.add(`${r.line_id}::${r.day}`);
+  }
+  return {
+    isClosed(lineId, dayIso) {
+      if (allLines.has(dayIso)) return true;
+      return lineId !== null && perLine.has(`${lineId}::${dayIso}`);
+    },
+  };
+}
+
+/** How many of these are still open — the minutes a downtime total leaves out. */
+export function openEventCount(events: { resolved_at: string | null }[]): number {
+  return events.reduce((n, e) => n + (e.resolved_at ? 0 : 1), 0);
 }
 
 export function formatDuration(ms: number): string {
