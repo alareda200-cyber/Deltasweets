@@ -413,6 +413,16 @@ function MaintenanceKpiGrid({
 // exists as an explicit record because it cannot be inferred: a day with no
 // daily entry might be a holiday, or might be a day whose paperwork is not in
 // yet, and treating the second as the first would erase real faults.
+// "All day" reads better than "00:00 – 24:00" for the common case, and a
+// half-open closure should say which half.
+function closureWindowLabel(from: string | null, to: string | null): string {
+  if (!from && !to) return "All day";
+  const hhmm = (t: string) => t.slice(0, 5);
+  if (from && to) return `${hhmm(from)} – ${hhmm(to)}`;
+  if (from) return `${hhmm(from)} → end of day`;
+  return `start of day → ${hhmm(to as string)}`;
+}
+
 function NonProductionDaysSection({
   rows,
   lines,
@@ -425,20 +435,34 @@ function NonProductionDaysSection({
   lines: { id: string; name: string }[];
   canEdit: boolean;
   canDelete: boolean;
-  onAdd: (day: string, lineId: string | null, reason: string) => Promise<void>;
+  onAdd: (
+    day: string,
+    lineId: string | null,
+    closedFrom: string | null,
+    closedTo: string | null,
+    reason: string,
+  ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [day, setDay] = useState("");
   const [lineId, setLineId] = useState("");
+  const [closedFrom, setClosedFrom] = useState("");
+  const [closedTo, setClosedTo] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Blank both times = the whole day, which is what every row written before
+  // partial closures existed already means.
+  const windowInvalid = Boolean(closedFrom && closedTo && closedFrom >= closedTo);
+
   async function submit() {
-    if (!day) return;
+    if (!day || windowInvalid) return;
     setBusy(true);
     try {
-      await onAdd(day, lineId || null, reason.trim());
+      await onAdd(day, lineId || null, closedFrom || null, closedTo || null, reason.trim());
       setDay("");
+      setClosedFrom("");
+      setClosedTo("");
       setReason("");
     } finally {
       setBusy(false);
@@ -451,12 +475,13 @@ function NonProductionDaysSection({
         <CardTitle className="text-base">Non-production days</CardTitle>
         <p className="text-sm text-muted-foreground">
           Days a line was not scheduled to run. Downtime is not counted against them. A day that is
-          not listed here counts in full — nothing is assumed.
+          not listed here counts in full — nothing is assumed. Leave both times blank for a whole
+          day; fill them in when only part of it was closed (a shift ran, then the plant shut).
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
         {canEdit && (
-          <div className="grid gap-2 sm:grid-cols-[150px_1fr_1fr_auto]">
+          <div className="grid gap-2 sm:grid-cols-[150px_1fr_110px_110px_1fr_auto]">
             <Input
               type="date"
               value={day}
@@ -477,15 +502,32 @@ function NonProductionDaysSection({
               ))}
             </select>
             <Input
+              type="time"
+              value={closedFrom}
+              onChange={(e) => setClosedFrom(e.target.value)}
+              aria-label="Closed from (blank = start of day)"
+              title="Closed from — blank means the start of the day"
+            />
+            <Input
+              type="time"
+              value={closedTo}
+              onChange={(e) => setClosedTo(e.target.value)}
+              aria-label="Closed to (blank = end of day)"
+              title="Closed to — blank means the end of the day"
+            />
+            <Input
               placeholder="Reason (holiday, no orders, shutdown…)"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               aria-label="Reason"
             />
-            <Button onClick={submit} disabled={!day || busy}>
+            <Button onClick={submit} disabled={!day || busy || windowInvalid}>
               Add
             </Button>
           </div>
+        )}
+        {windowInvalid && (
+          <p className="text-xs text-destructive-strong">The closure has to end after it starts.</p>
         )}
 
         {rows.length === 0 ? (
@@ -503,6 +545,9 @@ function NonProductionDaysSection({
                 <Badge variant={r.line_id ? "secondary" : "outline"}>
                   {r.production_lines?.name ?? "All lines"}
                 </Badge>
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                  {closureWindowLabel(r.closed_from, r.closed_to)}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">
                   {r.reason || "—"}
                 </span>
@@ -999,10 +1044,18 @@ function MaintenancePage() {
   const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
   const closedDays = useMemo(() => nonProductionDayLookup(nonProductionDays), [nonProductionDays]);
 
-  async function handleAddNonProductionDay(day: string, npLineId: string | null, reason: string) {
+  async function handleAddNonProductionDay(
+    day: string,
+    npLineId: string | null,
+    closedFrom: string | null,
+    closedTo: string | null,
+    reason: string,
+  ) {
     const { error } = await supabase.from("non_production_days").insert({
       day,
       line_id: npLineId,
+      closed_from: closedFrom,
+      closed_to: closedTo,
       reason: reason || null,
       created_by: user?.id ?? null,
     });

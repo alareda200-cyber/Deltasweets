@@ -946,6 +946,10 @@ export interface NonProductionDay {
   line_id: string | null;
   /** Local calendar date, "YYYY-MM-DD". */
   day: string;
+  /** Local "HH:MM:SS". null = from the start of the day. */
+  closed_from: string | null;
+  /** Local "HH:MM:SS". null = until the end of the day. */
+  closed_to: string | null;
   reason: string | null;
   created_at: string;
   production_lines: { name: string } | null;

@@ -114,8 +114,15 @@ export function eventElapsedMinutes(e: { started_at: string; resolved_at: string
  * Built by nonProductionDayLookup() from the non_production_days table.
  */
 export interface ClosedDays {
-  /** dayIso is a LOCAL calendar date (see iso() in date-utils). */
-  isClosed(lineId: string | null, dayIso: string): boolean;
+  /**
+   * Minutes of [from, to) that fall inside a recorded closure for this line.
+   * `from`/`to` are within a single local calendar day.
+   *
+   * Returns minutes rather than a boolean because a closure can be partial:
+   * 27/8 ran its night shift and only closed at 08:00. A whole-day answer
+   * would have to either delete that shift or keep counting the holiday.
+   */
+  closedMinutes(lineId: string | null, from: Date, to: Date): number;
 }
 
 /**
@@ -151,9 +158,8 @@ export function eventDowntimeMinutes(
   while (cursor < end) {
     const nextMidnight = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
     const sliceEnd = nextMidnight < end ? nextMidnight : end;
-    if (!closed.isClosed(e.line_id, isoLocalDay(cursor))) {
-      total += (sliceEnd.getTime() - cursor.getTime()) / 60_000;
-    }
+    const sliceMinutes = (sliceEnd.getTime() - cursor.getTime()) / 60_000;
+    total += sliceMinutes - closed.closedMinutes(e.line_id, cursor, sliceEnd);
     cursor = sliceEnd;
   }
   return total;
@@ -168,20 +174,63 @@ function isoLocalDay(d: Date): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Builds the lookup. An all-lines row (line_id null) closes every line. */
-export function nonProductionDayLookup(
-  rows: { line_id: string | null; day: string }[],
-): ClosedDays {
-  const allLines = new Set<string>();
-  const perLine = new Set<string>();
+export interface NonProductionRow {
+  line_id: string | null;
+  /** Local calendar date, "YYYY-MM-DD". */
+  day: string;
+  /** Local "HH:MM[:SS]". null = from the start of the day. */
+  closed_from: string | null;
+  /** Local "HH:MM[:SS]". null = until the end of the day. */
+  closed_to: string | null;
+}
+
+/** Minutes from local midnight, or a default when the time is absent. */
+function minutesOfDay(t: string | null, fallback: number): number {
+  if (!t) return fallback;
+  const [h, m] = t.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+/**
+ * Builds the lookup. An all-lines row (line_id null) closes every line, and a
+ * line can be closed by an all-lines row and its own row on the same date, so
+ * every matching row is considered and the widest closure wins.
+ */
+export function nonProductionDayLookup(rows: NonProductionRow[]): ClosedDays {
+  const byDay = new Map<string, NonProductionRow[]>();
   for (const r of rows) {
-    if (r.line_id === null) allLines.add(r.day);
-    else perLine.add(`${r.line_id}::${r.day}`);
+    const list = byDay.get(r.day);
+    if (list) list.push(r);
+    else byDay.set(r.day, [r]);
   }
   return {
-    isClosed(lineId, dayIso) {
-      if (allLines.has(dayIso)) return true;
-      return lineId !== null && perLine.has(`${lineId}::${dayIso}`);
+    closedMinutes(lineId, from, to) {
+      const day = isoLocalDay(from);
+      const rowsForDay = byDay.get(day);
+      if (!rowsForDay) return 0;
+
+      const dayStart = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+      const sliceFrom = (from.getTime() - dayStart.getTime()) / 60_000;
+      const sliceTo = (to.getTime() - dayStart.getTime()) / 60_000;
+
+      // Overlapping closures are unioned, not summed — an all-lines holiday and
+      // a line-specific shutdown on the same date must not subtract the same
+      // minute twice and drive the result negative.
+      let covered = 0;
+      let cursor = sliceFrom;
+      const windows = rowsForDay
+        .filter((r) => r.line_id === null || r.line_id === lineId)
+        .map((r) => [minutesOfDay(r.closed_from, 0), minutesOfDay(r.closed_to, 1440)] as const)
+        .sort((a, b) => a[0] - b[0]);
+      for (const [wStart, wEnd] of windows) {
+        const start = Math.max(wStart, cursor, sliceFrom);
+        const end = Math.min(wEnd, sliceTo);
+        if (end > start) {
+          covered += end - start;
+          cursor = end;
+        }
+      }
+      return covered;
     },
   };
 }

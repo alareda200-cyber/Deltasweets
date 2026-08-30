@@ -685,6 +685,8 @@ export type Database = {
       }
       non_production_days: {
         Row: {
+          closed_from: string | null
+          closed_to: string | null
           created_at: string
           created_by: string | null
           day: string
@@ -693,6 +695,8 @@ export type Database = {
           reason: string | null
         }
         Insert: {
+          closed_from?: string | null
+          closed_to?: string | null
           created_at?: string
           created_by?: string | null
           day: string
@@ -701,6 +705,8 @@ export type Database = {
           reason?: string | null
         }
         Update: {
+          closed_from?: string | null
+          closed_to?: string | null
           created_at?: string
           created_by?: string | null
           day?: string
