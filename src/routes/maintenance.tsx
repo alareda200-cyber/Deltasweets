@@ -501,20 +501,31 @@ function NonProductionDaysSection({
                 </option>
               ))}
             </select>
-            <Input
-              type="time"
-              value={closedFrom}
-              onChange={(e) => setClosedFrom(e.target.value)}
-              aria-label="Closed from (blank = start of day)"
-              title="Closed from — blank means the start of the day"
-            />
-            <Input
-              type="time"
-              value={closedTo}
-              onChange={(e) => setClosedTo(e.target.value)}
-              aria-label="Closed to (blank = end of day)"
-              title="Closed to — blank means the end of the day"
-            />
+            <div>
+              <Input
+                type="time"
+                value={closedFrom}
+                onChange={(e) => setClosedFrom(e.target.value)}
+                aria-label="Closed from (blank = start of day)"
+              />
+              <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                from · blank = 00:00
+              </p>
+            </div>
+            <div>
+              <Input
+                type="time"
+                value={closedTo}
+                onChange={(e) => setClosedTo(e.target.value)}
+                aria-label="Closed to (blank = end of day)"
+              />
+              {/* An empty time field reads as "not filled in yet", not as "runs
+                  to the end of the day" — and getting it wrong reopens the rest
+                  of the day to downtime without any visible sign. */}
+              <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                to · blank = end of day
+              </p>
+            </div>
             <Input
               placeholder="Reason (holiday, no orders, shutdown…)"
               value={reason}
@@ -1238,6 +1249,7 @@ function MaintenancePage() {
     title: string;
     description: string;
     startedAt: string;
+    stopsLine: boolean;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -1252,6 +1264,7 @@ function MaintenancePage() {
         started_at: data.startedAt,
         severity_label: data.severityLabel.trim() || null,
         technician_ids: data.technicianIds,
+        stops_line: data.stopsLine,
         created_by: user?.id ?? null,
         stoppage_id: data.stoppageId,
       })
@@ -1285,6 +1298,7 @@ function MaintenancePage() {
     title: string;
     description: string;
     startedAt: string;
+    stopsLine: boolean;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -2765,6 +2779,7 @@ function CreateEventDialog({
     title: string;
     description: string;
     startedAt: string;
+    stopsLine: boolean;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -2782,6 +2797,9 @@ function CreateEventDialog({
   const [description, setDescription] = useState("");
   const [startedAt, setStartedAt] = useState(() => toDatetimeLocalValue(new Date()));
   const [severityLabel, setSeverityLabel] = useState("");
+  // Defaults to true: a fault is presumed to have cost production time, and the
+  // exception — work done while the line kept running — is what gets recorded.
+  const [stopsLine, setStopsLine] = useState(true);
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const { data: technicians = [] } = useQuery(techniciansQuery);
@@ -2837,6 +2855,7 @@ function CreateEventDialog({
     setDescription("");
     setStartedAt(toDatetimeLocalValue(new Date()));
     setSeverityLabel("");
+    setStopsLine(true);
     setTechnicianIds([]);
   }
 
@@ -2858,6 +2877,7 @@ function CreateEventDialog({
         title,
         description,
         startedAt: new Date(startedAt).toISOString(),
+        stopsLine,
         severityLabel,
         technicianIds,
         stoppageId: stoppage?.id ?? null,
@@ -2915,6 +2935,27 @@ function CreateEventDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div>
+            <Label>Production impact</Label>
+            <Select
+              value={stopsLine ? "stop" : "run"}
+              onValueChange={(v) => setStopsLine(v === "stop")}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="stop">The line stopped — counts as downtime</SelectItem>
+                <SelectItem value="run">The line kept running — no downtime</SelectItem>
+              </SelectContent>
+            </Select>
+            {!stopsLine && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Still counted as an event: it shows in MTBF, repeat-failure rate and how often this
+                machine fails. Only the minutes are left out.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -3052,6 +3093,7 @@ function StoppageDialog({
     title: string;
     description: string;
     startedAt: string;
+    stopsLine: boolean;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;

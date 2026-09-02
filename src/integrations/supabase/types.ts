@@ -526,6 +526,7 @@ export type Database = {
           started_at: string
           status: string
           stoppage_id: string | null
+          stops_line: boolean
           technician: string | null
           technician_ids: string[]
           title: string
@@ -543,6 +544,7 @@ export type Database = {
           started_at?: string
           status?: string
           stoppage_id?: string | null
+          stops_line?: boolean
           technician?: string | null
           technician_ids?: string[]
           title: string
@@ -560,6 +562,7 @@ export type Database = {
           started_at?: string
           status?: string
           stoppage_id?: string | null
+          stops_line?: boolean
           technician?: string | null
           technician_ids?: string[]
           title?: string

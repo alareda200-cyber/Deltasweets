@@ -129,7 +129,8 @@ export interface ClosedDays {
  * Production time lost.
  *
  * 0 while the event is open — the cost is not known until it is resolved, and
- * running the clock invents minutes the plant never lost.
+ * running the clock invents minutes the plant never lost. 0 too when
+ * stops_line is false: the line never stopped, so nothing was lost.
  *
  * Time falling on a day this line was not scheduled to run is excluded. That
  * exclusion is driven ONLY by explicitly recorded non-production days: a day
@@ -142,9 +143,18 @@ export interface ClosedDays {
  * let a call site quietly fall back to the old behaviour and start that again.
  */
 export function eventDowntimeMinutes(
-  e: { started_at: string; resolved_at: string | null; line_id: string | null },
+  e: {
+    started_at: string;
+    resolved_at: string | null;
+    line_id: string | null;
+    stops_line: boolean;
+  },
   closed: ClosedDays,
 ): number {
+  // The fault happened, but the line kept producing — so it cost no production
+  // time. It still counts as an event everywhere else (MTBF, repeat-failure,
+  // frequency), which is the whole reason this is a flag and not a deletion.
+  if (!e.stops_line) return 0;
   if (!e.resolved_at) return 0;
   const start = new Date(e.started_at);
   const end = new Date(e.resolved_at);

@@ -416,6 +416,11 @@ export interface MaintenanceEvent {
   resolved_by: string | null;
   created_by: string | null;
   created_at: string;
+  // False = the fault happened but the line kept producing (work done in
+  // parallel, or a jam cleared by hand without stopping the run). Excluded
+  // from downtime totals; still counted in event counts, MTBF and
+  // repeat-failure rate — see 20260901100000_maintenance_events_stops_line.sql.
+  stops_line: boolean;
   // Free text, no master-data list — see
   // 20260804220000_maintenance_events_severity.sql.
   severity_label: string | null;

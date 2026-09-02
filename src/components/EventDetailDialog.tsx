@@ -6,11 +6,30 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogAction, AlertDialogCancel,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { Trash2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,14 +37,35 @@ import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
-import { maintenanceNotesQuery, techniciansQuery, syncStoppageAggregate, type MaintenanceEvent, type MaintenanceStatus } from "@/lib/queries";
-import { TYPE_LABELS, STATUS_LABELS, SEVERITY_LABEL_OPTIONS, typeBadgeVariant, statusBadgeVariant, severityBadgeVariant, formatDuration, toDatetimeLocalValue } from "@/lib/maintenance-format";
+import {
+  maintenanceNotesQuery,
+  techniciansQuery,
+  syncStoppageAggregate,
+  type MaintenanceEvent,
+  type MaintenanceStatus,
+} from "@/lib/queries";
+import {
+  TYPE_LABELS,
+  STATUS_LABELS,
+  SEVERITY_LABEL_OPTIONS,
+  typeBadgeVariant,
+  statusBadgeVariant,
+  severityBadgeVariant,
+  formatDuration,
+  toDatetimeLocalValue,
+} from "@/lib/maintenance-format";
 
 // Shared between src/routes/maintenance.tsx (clicking a row in the full
 // events table) and src/components/MaintenanceDowntimeCard.tsx (clicking a
 // row in the Dashboard's "Open Maintenance Events" list) — one dialog, one
 // place to fix bugs, both callers see identical edit/notes/delete behavior.
-export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChanged }: {
+export function EventDetailDialog({
+  event,
+  canEdit,
+  userId,
+  onOpenChange,
+  onChanged,
+}: {
   event: MaintenanceEvent | null;
   canEdit: boolean;
   userId: string | null;
@@ -38,6 +78,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   const [startedAt, setStartedAt] = useState("");
   const [resolvedAt, setResolvedAt] = useState("");
   const [severityLabel, setSeverityLabel] = useState("");
+  const [stopsLine, setStopsLine] = useState(true);
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -46,7 +87,9 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
   const [addingNote, setAddingNote] = useState(false);
   const { role } = useAuth();
   const canDelete = can(role, "maintenance.delete");
-  const { data: notes = [], refetch: refetchNotes } = useQuery(maintenanceNotesQuery(event?.id ?? null));
+  const { data: notes = [], refetch: refetchNotes } = useQuery(
+    maintenanceNotesQuery(event?.id ?? null),
+  );
   const { data: technicians = [] } = useQuery(techniciansQuery);
   // Keep whoever is already assigned selectable even if they've since gone
   // inactive (dropping them from technicianIds just because the roster
@@ -67,6 +110,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       setStartedAt(toDatetimeLocalValue(new Date(event.started_at)));
       setResolvedAt(event.resolved_at ? toDatetimeLocalValue(new Date(event.resolved_at)) : "");
       setSeverityLabel(event.severity_label ?? "");
+      setStopsLine(event.stops_line);
       setTechnicianIds(event.technician_ids);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -105,6 +149,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
         resolved_by?: string | null;
         severity_label: string | null;
         technician_ids: string[];
+        stops_line: boolean;
       } = {
         title: title.trim(),
         description: description.trim() || null,
@@ -113,6 +158,7 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
         resolved_at: status === "resolved" ? new Date(resolvedAt).toISOString() : null,
         severity_label: severityLabel.trim() || null,
         technician_ids: technicianIds,
+        stops_line: stopsLine,
       };
       if (becomingResolved) {
         // Attribute the resolution to whoever is saving it right now — only
@@ -123,10 +169,18 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       } else if (status !== "resolved") {
         updatePayload.resolved_by = null;
       }
-      const { error } = await supabase.from("maintenance_events").update(updatePayload).eq("id", event.id);
+      const { error } = await supabase
+        .from("maintenance_events")
+        .update(updatePayload)
+        .eq("id", event.id);
       if (error) throw error;
       toast.success("Event updated");
-      void logAudit("maintenance.update_event", "maintenance_event", event.id, { title, status, startedAt, resolvedAt });
+      void logAudit("maintenance.update_event", "maintenance_event", event.id, {
+        title,
+        status,
+        startedAt,
+        resolvedAt,
+      });
       if (event.stoppage_id) {
         // This event's status/resolved_at may have just changed — the
         // parent stoppage's own status/resolved_at (all-members-resolved,
@@ -154,7 +208,9 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
       const { error } = await supabase.from("maintenance_events").delete().eq("id", event.id);
       if (error) throw error;
       toast.success("Maintenance event deleted");
-      void logAudit("maintenance.delete_event", "maintenance_event", event.id, { title: event.title });
+      void logAudit("maintenance.delete_event", "maintenance_event", event.id, {
+        title: event.title,
+      });
       if (event.stoppage_id) {
         // This was a member of a stoppage — recompute now that it's gone
         // (the stoppage may go back to open/in_progress, or lose its
@@ -197,7 +253,9 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
 
   const startedDate = startedAt ? new Date(startedAt) : null;
   const resolvedDate = status === "resolved" && resolvedAt ? new Date(resolvedAt) : null;
-  const durationMs = startedDate ? (resolvedDate ? resolvedDate.getTime() : Date.now()) - startedDate.getTime() : null;
+  const durationMs = startedDate
+    ? (resolvedDate ? resolvedDate.getTime() : Date.now()) - startedDate.getTime()
+    : null;
 
   return (
     <>
@@ -250,8 +308,13 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
               <div className="col-span-2">
                 <Label className="text-xs">Status</Label>
                 {canEdit ? (
-                  <Select value={status} onValueChange={(v) => handleStatusChange(v as MaintenanceStatus)}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <Select
+                    value={status}
+                    onValueChange={(v) => handleStatusChange(v as MaintenanceStatus)}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="open">Open</SelectItem>
                       <SelectItem value="in_progress">In Progress</SelectItem>
@@ -259,22 +322,65 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                     </SelectContent>
                   </Select>
                 ) : (
-                  <p className="mt-1"><Badge variant={statusBadgeVariant(status)}>{STATUS_LABELS[status]}</Badge></p>
+                  <p className="mt-1">
+                    <Badge variant={statusBadgeVariant(status)}>{STATUS_LABELS[status]}</Badge>
+                  </p>
                 )}
               </div>
               <div>
                 <Label className="text-xs">Severity</Label>
                 {canEdit ? (
-                  <Select value={severityLabel || "none"} onValueChange={(v) => setSeverityLabel(v === "none" ? "" : v)}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select severity" /></SelectTrigger>
+                  <Select
+                    value={severityLabel || "none"}
+                    onValueChange={(v) => setSeverityLabel(v === "none" ? "" : v)}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select severity" />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Unclassified</SelectItem>
-                      {SEVERITY_LABEL_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      {SEVERITY_LABEL_OPTIONS.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 ) : (
                   <p className="mt-1">
-                    {severityLabel ? <Badge variant={severityBadgeVariant(severityLabel)}>{severityLabel}</Badge> : <span className="text-muted-foreground">Unclassified</span>}
+                    {severityLabel ? (
+                      <Badge variant={severityBadgeVariant(severityLabel)}>{severityLabel}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">Unclassified</span>
+                    )}
+                  </p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Production impact</Label>
+                {canEdit ? (
+                  <Select
+                    value={stopsLine ? "stop" : "run"}
+                    onValueChange={(v) => setStopsLine(v === "stop")}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="stop">The line stopped — counts as downtime</SelectItem>
+                      <SelectItem value="run">The line kept running — no downtime</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="mt-1">
+                    <Badge variant={stopsLine ? "destructive" : "secondary"}>
+                      {stopsLine ? "Line stopped" : "Line kept running"}
+                    </Badge>
+                  </p>
+                )}
+                {!stopsLine && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Still counted as an event — only its minutes are left out of downtime.
                   </p>
                 )}
               </div>
@@ -289,13 +395,21 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                     />
                   </div>
                 ) : (
-                  <p className="mt-1">{event.technician_names.length > 0 ? event.technician_names.join(", ") : "—"}</p>
+                  <p className="mt-1">
+                    {event.technician_names.length > 0 ? event.technician_names.join(", ") : "—"}
+                  </p>
                 )}
               </div>
               <div>
                 <Label className="text-xs">Started At</Label>
                 {canEdit ? (
-                  <Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} required className="mt-1" />
+                  <Input
+                    type="datetime-local"
+                    value={startedAt}
+                    onChange={(e) => setStartedAt(e.target.value)}
+                    required
+                    className="mt-1"
+                  />
                 ) : (
                   <p className="mt-1">{startedDate ? startedDate.toLocaleString() : "—"}</p>
                 )}
@@ -304,7 +418,13 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                 <div>
                   <Label className="text-xs">Resolved At</Label>
                   {canEdit ? (
-                    <Input type="datetime-local" value={resolvedAt} onChange={(e) => setResolvedAt(e.target.value)} required className="mt-1" />
+                    <Input
+                      type="datetime-local"
+                      value={resolvedAt}
+                      onChange={(e) => setResolvedAt(e.target.value)}
+                      required
+                      className="mt-1"
+                    />
                   ) : (
                     <p className="mt-1">{resolvedDate ? resolvedDate.toLocaleString() : "—"}</p>
                   )}
@@ -313,12 +433,18 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
               {status === "resolved" && (
                 <div>
                   <Label className="text-xs">Closed by</Label>
-                  <p className="mt-1">{event.resolved_by_profile?.display_name || event.resolved_by_profile?.email || "—"}</p>
+                  <p className="mt-1">
+                    {event.resolved_by_profile?.display_name ||
+                      event.resolved_by_profile?.email ||
+                      "—"}
+                  </p>
                 </div>
               )}
               <div className="col-span-2">
                 <Label className="text-xs">Duration</Label>
-                <p className="mt-1 font-medium tabular-nums">{durationMs !== null ? formatDuration(durationMs) : "—"}</p>
+                <p className="mt-1 font-medium tabular-nums">
+                  {durationMs !== null ? formatDuration(durationMs) : "—"}
+                </p>
               </div>
             </div>
 
@@ -330,7 +456,12 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                   </Button>
                 )}
                 {canDelete && (
-                  <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteOpen(true)} aria-label="Delete event">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setConfirmDeleteOpen(true)}
+                    aria-label="Delete event"
+                  >
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 )}
@@ -339,13 +470,17 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
           </div>
 
           <div className="mt-2 border-t border-border pt-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Notes</p>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Notes
+            </p>
             <div className="max-h-48 space-y-2 overflow-y-auto">
               {notes.length === 0 && <p className="text-xs text-muted-foreground">No notes yet.</p>}
               {notes.map((n) => (
                 <div key={n.id} className="rounded-md border border-border p-2">
                   <p className="text-sm">{n.note}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{new Date(n.created_at).toLocaleString()}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {new Date(n.created_at).toLocaleString()}
+                  </p>
                 </div>
               ))}
             </div>
@@ -355,9 +490,16 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
                   placeholder="Add a note…"
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddNote(); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleAddNote();
+                    }
+                  }}
                 />
-                <Button size="sm" onClick={handleAddNote} disabled={addingNote || !noteText.trim()}>Add</Button>
+                <Button size="sm" onClick={handleAddNote} disabled={addingNote || !noteText.trim()}>
+                  Add
+                </Button>
               </div>
             )}
           </div>
@@ -369,7 +511,8 @@ export function EventDetailDialog({ event, canEdit, userId, onOpenChange, onChan
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this maintenance event?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{event.title}" and all of its notes will be permanently deleted. This cannot be undone.
+              "{event.title}" and all of its notes will be permanently deleted. This cannot be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
