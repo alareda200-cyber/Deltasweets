@@ -80,6 +80,7 @@ import {
   Inbox,
   type LucideIcon,
   CalendarOff,
+  Snowflake,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -322,7 +323,7 @@ function MaintenanceSidebar({
   );
 }
 
-// The 7 headline KPI cards — extracted so both the mobile (always-visible,
+// The 8 headline KPI cards — extracted so both the mobile (always-visible,
 // current position) and desktop (inside the sidebar's Events section)
 // instances call the same JSX instead of duplicating it. `className`
 // controls the grid itself (columns/gap/visibility), everything else is
@@ -335,6 +336,7 @@ function MaintenanceKpiGrid({
   mtbfElectricalHours,
   mttrElectricalHours,
   openPreventive,
+  openRefrigeration,
   className,
 }: {
   openMechanical: number;
@@ -344,6 +346,7 @@ function MaintenanceKpiGrid({
   mtbfElectricalHours: number | null;
   mttrElectricalHours: number | null;
   openPreventive: number;
+  openRefrigeration: number;
   className: string;
 }) {
   return (
@@ -400,6 +403,14 @@ function MaintenanceKpiGrid({
         sub="Scheduled maintenance, not counted in MTBF"
         icon={CalendarCheck}
         variant={openPreventive > 0 ? "danger" : "success"}
+        className="p-3 md:p-5"
+      />
+      <KpiCard
+        label="Open Refrigeration"
+        value={String(openRefrigeration)}
+        sub="External contractor — counted in MTBF/MTTR"
+        icon={Snowflake}
+        variant={openRefrigeration > 0 ? "danger" : "success"}
         className="p-3 md:p-5"
       />
     </div>
@@ -995,6 +1006,9 @@ function MaintenancePage() {
   const openPreventive = allEvents.filter(
     (e) => e.type === "preventive" && e.status !== "resolved",
   ).length;
+  const openRefrigeration = allEvents.filter(
+    (e) => e.type === "refrigeration" && e.status !== "resolved",
+  ).length;
   // Mobile-only "stays visible, never collapses" list — same open predicate
   // and plant-wide (allEvents, not the filtered `events`) scope as the
   // Open Mechanical/Electrical/Preventive KPI cards above, most-recent first.
@@ -1339,7 +1353,7 @@ function MaintenancePage() {
         mtbfElectricalHours: localMtbfHours(events.filter((e) => e.type === "electrical")),
         mttrElectricalHours: localMttrHours(events.filter((e) => e.type === "electrical")),
         lifetimeTotalEvents: allEvents.length,
-        lifetimeOpenCount: openMechanical + openElectrical,
+        lifetimeOpenCount: openMechanical + openElectrical + openRefrigeration,
         lifetimeOpenPreventiveCount: openPreventive,
         lifetimeMtbfMechanicalHours: mtbfMechanicalHours,
         lifetimeMttrMechanicalHours: mttrMechanicalHours,
@@ -1522,6 +1536,7 @@ function MaintenancePage() {
         mtbfElectricalHours={mtbfElectricalHours}
         mttrElectricalHours={mttrElectricalHours}
         openPreventive={openPreventive}
+        openRefrigeration={openRefrigeration}
         className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 md:hidden"
       />
 
@@ -1669,6 +1684,7 @@ function MaintenancePage() {
                 mtbfElectricalHours={mtbfElectricalHours}
                 mttrElectricalHours={mttrElectricalHours}
                 openPreventive={openPreventive}
+                openRefrigeration={openRefrigeration}
                 className="grid grid-cols-3 gap-4"
               />
               <EventsListCard
