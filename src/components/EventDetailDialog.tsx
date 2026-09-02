@@ -43,6 +43,7 @@ import {
   syncStoppageAggregate,
   type MaintenanceEvent,
   type MaintenanceStatus,
+  type MaintenanceType,
 } from "@/lib/queries";
 import {
   TYPE_LABELS,
@@ -78,6 +79,7 @@ export function EventDetailDialog({
   const [startedAt, setStartedAt] = useState("");
   const [resolvedAt, setResolvedAt] = useState("");
   const [severityLabel, setSeverityLabel] = useState("");
+  const [type, setType] = useState<MaintenanceType>("mechanical");
   const [stopsLine, setStopsLine] = useState(true);
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -110,6 +112,7 @@ export function EventDetailDialog({
       setStartedAt(toDatetimeLocalValue(new Date(event.started_at)));
       setResolvedAt(event.resolved_at ? toDatetimeLocalValue(new Date(event.resolved_at)) : "");
       setSeverityLabel(event.severity_label ?? "");
+      setType(event.type);
       setStopsLine(event.stops_line);
       setTechnicianIds(event.technician_ids);
     }
@@ -150,6 +153,7 @@ export function EventDetailDialog({
         severity_label: string | null;
         technician_ids: string[];
         stops_line: boolean;
+        type: MaintenanceType;
       } = {
         title: title.trim(),
         description: description.trim() || null,
@@ -159,6 +163,7 @@ export function EventDetailDialog({
         severity_label: severityLabel.trim() || null,
         technician_ids: technicianIds,
         stops_line: stopsLine,
+        type,
       };
       if (becomingResolved) {
         // Attribute the resolution to whoever is saving it right now — only
@@ -180,6 +185,7 @@ export function EventDetailDialog({
         status,
         startedAt,
         resolvedAt,
+        type,
       });
       if (event.stoppage_id) {
         // This event's status/resolved_at may have just changed — the
@@ -286,7 +292,9 @@ export function EventDetailDialog({
 
           <div className="space-y-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={typeBadgeVariant(event.type)}>{TYPE_LABELS[event.type]}</Badge>
+              {!canEdit && (
+                <Badge variant={typeBadgeVariant(event.type)}>{TYPE_LABELS[event.type]}</Badge>
+              )}
               {event.stoppage_id && <Badge variant="outline">Part of Stoppage</Badge>}
             </div>
             {canEdit ? (
@@ -325,6 +333,24 @@ export function EventDetailDialog({
                   <p className="mt-1">
                     <Badge variant={statusBadgeVariant(status)}>{STATUS_LABELS[status]}</Badge>
                   </p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Type</Label>
+                {canEdit ? (
+                  <Select value={type} onValueChange={(v) => setType(v as MaintenanceType)}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mechanical">Mechanical</SelectItem>
+                      <SelectItem value="electrical">Electrical</SelectItem>
+                      <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                      <SelectItem value="refrigeration">Refrigeration</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="mt-1">{TYPE_LABELS[event.type]}</p>
                 )}
               </div>
               <div>
