@@ -259,6 +259,14 @@ export function MaintenanceDowntimeCard({
         .reduce((s, d) => s + Number(d.minutes), 0),
     },
     {
+      key: "refrigeration",
+      label: "Refrigeration",
+      color: "var(--color-accent)",
+      minutes: scoped
+        .filter((d) => d.pareto_reason_name === "Refrigeration Maintenance")
+        .reduce((s, d) => s + Number(d.minutes), 0),
+    },
+    {
       key: "production",
       label: "Production stoppages",
       color: "var(--color-accent)",

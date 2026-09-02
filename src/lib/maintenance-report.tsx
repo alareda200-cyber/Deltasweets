@@ -359,10 +359,12 @@ function ReportLayout({
   const mechMinutes = collapsedEvents.filter((e) => e.type === "mechanical").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
   const elecMinutes = collapsedEvents.filter((e) => e.type === "electrical").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
   const prevMinutes = collapsedEvents.filter((e) => e.type === "preventive").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
-  const totalMinutes = mechMinutes + elecMinutes + prevMinutes;
+  const refrigMinutes = collapsedEvents.filter((e) => e.type === "refrigeration").reduce((s, e) => s + eventDowntimeMinutes(e, closedDays), 0);
+  const totalMinutes = mechMinutes + elecMinutes + prevMinutes + refrigMinutes;
   const mechPct = totalMinutes > 0 ? (mechMinutes / totalMinutes) * 100 : 0;
   const elecPct = totalMinutes > 0 ? (elecMinutes / totalMinutes) * 100 : 0;
   const prevPct = totalMinutes > 0 ? (prevMinutes / totalMinutes) * 100 : 0;
+  const refrigPct = totalMinutes > 0 ? (refrigMinutes / totalMinutes) * 100 : 0;
   const sortedMetrics = sortByWorstMtbf(metrics);
 
   const top5Downtime = topLossesByDowntime.slice(0, 5);
@@ -438,7 +440,7 @@ function ReportLayout({
         data-pdf-section="chart"
         style={{ margin: "16px 20px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
       >
-        <p style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 800 }}>Downtime by Type — Mechanical vs Electrical vs Preventive</p>
+        <p style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 800 }}>Downtime by Type — Mechanical vs Electrical vs Preventive vs Refrigeration</p>
         {totalMinutes === 0 ? (
           <p style={{ fontSize: 12, color: "#64748b" }}>No downtime in the exported events.</p>
         ) : (
@@ -446,6 +448,7 @@ function ReportLayout({
             <DowntimeBar label="Mechanical" minutes={mechMinutes} pct={mechPct} color="#4f46e5" />
             <DowntimeBar label="Electrical" minutes={elecMinutes} pct={elecPct} color="#f59e0b" />
             <DowntimeBar label="Preventive" minutes={prevMinutes} pct={prevPct} color="#16a34a" />
+            <DowntimeBar label="Refrigeration" minutes={refrigMinutes} pct={refrigPct} color="#06b6d4" />
           </>
         )}
       </div>

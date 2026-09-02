@@ -401,7 +401,7 @@ export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
     },
   });
 
-export type MaintenanceType = "mechanical" | "electrical" | "preventive";
+export type MaintenanceType = "mechanical" | "electrical" | "preventive" | "refrigeration";
 export type MaintenanceStatus = "open" | "in_progress" | "resolved";
 
 export interface MaintenanceEvent {
@@ -653,10 +653,10 @@ export async function syncStoppageAggregate(stoppageId: string): Promise<void> {
 // default to mechanical (checked first below), including the
 // all-equal-counts case.
 export function majorityMaintenanceType(events: { type: MaintenanceType }[]): MaintenanceType {
-  const counts: Record<MaintenanceType, number> = { mechanical: 0, electrical: 0, preventive: 0 };
+  const counts: Record<MaintenanceType, number> = { mechanical: 0, electrical: 0, preventive: 0, refrigeration: 0 };
   for (const e of events) counts[e.type]++;
   let winner: MaintenanceType = "mechanical";
-  for (const t of ["electrical", "preventive"] as const) {
+  for (const t of ["electrical", "preventive", "refrigeration"] as const) {
     if (counts[t] > counts[winner]) winner = t;
   }
   return winner;
@@ -810,6 +810,11 @@ export function maintenanceEventsAsDowntimes(
   // same fallback behavior mechanical/electrical had before their
   // departments were seeded.
   const preventiveDeptId = departments.find((d) => d.name.trim().toLowerCase() === "preventive maintenance")?.id ?? null;
+  // Refrigeration faults are handled by an external contractor and are
+  // unplanned failures (not scheduled maintenance), so they're classified
+  // like mechanical/electrical below — same "Unclassified if the
+  // master-data row is missing" fallback as the other department lookups.
+  const refrigerationDeptId = departments.find((d) => d.name.trim().toLowerCase() === "refrigeration maintenance")?.id ?? null;
   // Mechanical/electrical events are unplanned equipment failures/repairs;
   // preventive events are scheduled maintenance by definition, so they're
   // classified as Planned downtime instead — same "Unclassified if the
@@ -820,6 +825,8 @@ export function maintenanceEventsAsDowntimes(
   function typeMeta(type: MaintenanceType): { paretoReasonName: string; departmentId: string | null; downtimeTypeId: string | null } {
     if (type === "mechanical") return { paretoReasonName: "Mechanical Maintenance", departmentId: mechanicalDeptId, downtimeTypeId: unplannedTypeId };
     if (type === "electrical") return { paretoReasonName: "Electrical Maintenance", departmentId: electricalDeptId, downtimeTypeId: unplannedTypeId };
+    if (type === "preventive") return { paretoReasonName: "Preventive Maintenance", departmentId: preventiveDeptId, downtimeTypeId: plannedTypeId };
+    if (type === "refrigeration") return { paretoReasonName: "Refrigeration Maintenance", departmentId: refrigerationDeptId, downtimeTypeId: unplannedTypeId };
     return { paretoReasonName: "Preventive Maintenance", departmentId: preventiveDeptId, downtimeTypeId: plannedTypeId };
   }
 

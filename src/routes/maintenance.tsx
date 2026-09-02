@@ -649,6 +649,7 @@ function MaintenanceFilters({
                 <SelectItem value="mechanical">Mechanical</SelectItem>
                 <SelectItem value="electrical">Electrical</SelectItem>
                 <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                <SelectItem value="refrigeration">Refrigeration</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1021,15 +1022,18 @@ function MaintenancePage() {
     () => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"),
     [metrics],
   );
-  // Mechanical + electrical pooled — same weighted-average formula as
-  // weightedAverage() above, just spanning both types at once instead of
-  // one, for the mobile-only combined MTBF/MTTR mini KPIs.
+  // Mechanical + electrical + refrigeration pooled — same weighted-average
+  // formula as weightedAverage() above, just spanning all three unplanned
+  // types at once instead of one, for the mobile-only combined MTBF/MTTR
+  // mini KPIs. Refrigeration counts here because it's unplanned downtime
+  // (external contractor faults), same as mechanical/electrical — unlike
+  // preventive, which is scheduled and excluded from MTBF/MTTR entirely.
   const mtbfCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical"], "mtbf_hours", "mtbf_gap_count"),
+    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mtbf_hours", "mtbf_gap_count"),
     [metrics],
   );
   const mttrCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical"], "mttr_hours", "mttr_sample_count"),
+    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mttr_hours", "mttr_sample_count"),
     [metrics],
   );
 
@@ -2932,6 +2936,7 @@ function CreateEventDialog({
                   <SelectItem value="mechanical">Mechanical</SelectItem>
                   <SelectItem value="electrical">Electrical</SelectItem>
                   <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                  <SelectItem value="refrigeration">Refrigeration</SelectItem>
                 </SelectContent>
               </Select>
             </div>

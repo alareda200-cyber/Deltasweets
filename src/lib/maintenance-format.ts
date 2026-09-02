@@ -9,6 +9,7 @@ export const TYPE_LABELS: Record<MaintenanceType, string> = {
   mechanical: "Mechanical",
   electrical: "Electrical",
   preventive: "Preventive Maintenance",
+  refrigeration: "Refrigeration",
 };
 export const STATUS_LABELS: Record<MaintenanceStatus, string> = {
   open: "Open",
@@ -19,6 +20,7 @@ export const STATUS_LABELS: Record<MaintenanceStatus, string> = {
 export function typeBadgeVariant(t: MaintenanceType) {
   if (t === "mechanical") return "secondary";
   if (t === "preventive") return "default";
+  if (t === "refrigeration") return "refrigeration";
   return "outline";
 }
 
