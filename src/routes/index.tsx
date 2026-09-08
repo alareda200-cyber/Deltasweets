@@ -23,6 +23,7 @@ import {
   downtimeTypesQuery,
   severityLevelsQuery,
   maintenanceEventsQuery,
+  openMaintenanceEventsQuery,
   maintenanceStoppagesQuery,
 } from "@/lib/queries";
 import { monthRange, pct } from "@/lib/date-utils";
@@ -111,18 +112,19 @@ function Dashboard() {
   const { data: maintenanceEvents = [] } = useQuery(
     maintenanceEventsQuery(lineId, null, null, null, null),
   );
+  // Open-fault count comes from a dedicated status-filtered query rather
+  // than filtering maintenanceEvents, so it can never be lost to a row cap
+  // — see openMaintenanceEventsQuery in src/lib/queries.ts.
+  const { data: openFaults = [] } = useQuery(openMaintenanceEventsQuery(lineId));
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
-  // Same "open" predicate MaintenanceEventsCard uses for its OPEN MECHANICAL/
-  // OPEN ELECTRICAL KPIs — reused here only to light the mobile header's bell
-  // dot, not a new source of truth.
   // A count, not a boolean. The hero is the largest element on the page and
   // said nothing measurable; the number of open faults is the one figure that
   // is already in scope here, so it is the one the hero can honestly carry.
   // (Adherence and Loss % are computed inside DashboardBody, a different
   // component — putting those in the hero would mean lifting queries, which is
   // a structural change, not a design one.)
-  const openFaultCount = maintenanceEvents.filter((e) => e.status !== "resolved").length;
+  const openFaultCount = openFaults.length;
 
   async function handleExportPdf() {
     if (!activeLine || !exportRef.current) return;

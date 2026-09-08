@@ -1,6 +1,28 @@
 import { queryOptions } from "@tanstack/react-query";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { iso } from "@/lib/date-utils";
+
+// PostgREST caps every un-ranged request at the project's db-max-rows and
+// returns the truncated page with no error. Any query over a table that
+// grows without bound must page explicitly, or it silently starts lying
+// once the table crosses the cap — which is how four open faults became
+// "no open faults" on the Dashboard.
+const PAGE = 1000;
+async function selectAllRows<T>(
+  build: () => {
+    range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>;
+  },
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build().range(from, from + PAGE - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    out.push(...page);
+    if (page.length < PAGE) return out;
+  }
+}
 
 export interface ProductionLine {
   id: string;
@@ -377,14 +399,15 @@ export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
       // Resolve each downtime's classification (department/type/severity/production area)
       // through its reason via an embedded select — same single round trip,
       // no separate lookup query, no N+1.
-      const { data, error } = await supabase
-        .from("entry_downtimes")
-        .select(
-          "*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id, is_active)",
-        )
-        .in("entry_id", entryIds);
-      if (error) throw error;
-      return (data ?? []).map((row: any) => ({
+      const data = await selectAllRows(() =>
+        supabase
+          .from("entry_downtimes")
+          .select(
+            "*, downtime_reasons(department_id, downtime_type_id, severity_id, production_area_id, is_active)",
+          )
+          .in("entry_id", entryIds),
+      );
+      return data.map((row: any) => ({
         id: row.id,
         entry_id: row.entry_id,
         reason_id: row.reason_id,
@@ -492,6 +515,36 @@ function localDayEndExclusiveISO(day: string): string {
   return new Date(y, m - 1, d + 1, 0, 0, 0, 0).toISOString();
 }
 
+// Shared base select for both maintenanceEventsQuery and
+// openMaintenanceEventsQuery below, so MaintenanceEvent stays one shape
+// (same columns, same technicians join) instead of the two queries
+// silently drifting apart.
+function maintenanceEventsSelect() {
+  return supabase
+    .from("maintenance_events")
+    .select(
+      "*, production_lines(name), maintenance_notes(note, created_at), resolved_by_profile:profiles!resolved_by(display_name, email)",
+    )
+    .order("started_at", { ascending: false })
+    .order("created_at", { foreignTable: "maintenance_notes", ascending: true });
+}
+
+// Resolves technician_ids against the technicians table client-side —
+// PostgREST can't embed a relation over a uuid[] column. Shared so the join
+// logic exists once regardless of which query fetched the rows.
+function withTechnicianNames(
+  rows: (MaintenanceEvent & { technician_ids: string[] })[],
+  techs: { id: string; name: string }[] | null,
+): MaintenanceEvent[] {
+  const technicianNameById = new Map((techs ?? []).map((t) => [t.id, t.name]));
+  return rows.map((row) => ({
+    ...row,
+    technician_names: row.technician_ids
+      .map((id) => technicianNameById.get(id))
+      .filter((name): name is string => Boolean(name)),
+  }));
+}
+
 export const maintenanceEventsQuery = (
   lineId?: string | null,
   type?: MaintenanceType | null,
@@ -502,35 +555,47 @@ export const maintenanceEventsQuery = (
   queryOptions({
     queryKey: ["maintenance-events", lineId, type, status, from, to],
     queryFn: async (): Promise<MaintenanceEvent[]> => {
-      let query = supabase
-        .from("maintenance_events")
-        .select(
-          "*, production_lines(name), maintenance_notes(note, created_at), resolved_by_profile:profiles!resolved_by(display_name, email)",
-        )
-        .order("started_at", { ascending: false })
-        .order("created_at", { foreignTable: "maintenance_notes", ascending: true });
-      if (lineId) query = query.eq("line_id", lineId);
-      if (type) query = query.eq("type", type);
-      if (status) query = query.eq("status", status);
-      if (from) query = query.gte("started_at", localDayStartISO(from));
-      if (to) query = query.lt("started_at", localDayEndExclusiveISO(to));
+      const buildQuery = () => {
+        let query = maintenanceEventsSelect();
+        if (lineId) query = query.eq("line_id", lineId);
+        if (type) query = query.eq("type", type);
+        if (status) query = query.eq("status", status);
+        if (from) query = query.gte("started_at", localDayStartISO(from));
+        if (to) query = query.lt("started_at", localDayEndExclusiveISO(to));
+        return query;
+      };
       // Run alongside the events query, not after it — the technicians
       // table is tiny and this keeps the roundtrip parallel instead of
       // serial.
-      const [{ data, error }, { data: techs, error: techsError }] = await Promise.all([
-        query,
+      const [data, { data: techs, error: techsError }] = await Promise.all([
+        selectAllRows(buildQuery),
         supabase.from("technicians").select("id, name"),
       ]);
-      if (error) throw error;
       if (techsError) throw techsError;
-      const technicianNameById = new Map((techs ?? []).map((t) => [t.id, t.name]));
-      const rows = (data ?? []) as unknown as (MaintenanceEvent & { technician_ids: string[] })[];
-      return rows.map((row) => ({
-        ...row,
-        technician_names: row.technician_ids
-          .map((id) => technicianNameById.get(id))
-          .filter((name): name is string => Boolean(name)),
-      }));
+      const rows = data as unknown as (MaintenanceEvent & { technician_ids: string[] })[];
+      return withTechnicianNames(rows, techs);
+    },
+  });
+
+// Open faults are what the Dashboard and the KPI cards are FOR, and there
+// are only ever a handful. Asking the server for them directly means they
+// can never be lost to a row cap, whatever happens to the table's size.
+export const openMaintenanceEventsQuery = (lineId?: string | null) =>
+  queryOptions({
+    queryKey: ["maintenance-events-open", lineId],
+    queryFn: async (): Promise<MaintenanceEvent[]> => {
+      const buildQuery = () => {
+        let query = maintenanceEventsSelect().in("status", ["open", "in_progress"]);
+        if (lineId) query = query.eq("line_id", lineId);
+        return query;
+      };
+      const [data, { data: techs, error: techsError }] = await Promise.all([
+        selectAllRows(buildQuery),
+        supabase.from("technicians").select("id, name"),
+      ]);
+      if (techsError) throw techsError;
+      const rows = data as unknown as (MaintenanceEvent & { technician_ids: string[] })[];
+      return withTechnicianNames(rows, techs);
     },
   });
 
@@ -542,14 +607,15 @@ export const maintenanceStoppagesQuery = (lineId?: string | null) =>
   queryOptions({
     queryKey: ["maintenance-stoppages", lineId],
     queryFn: async (): Promise<MaintenanceStoppage[]> => {
-      let query = supabase
-        .from("maintenance_stoppages")
-        .select("*, production_lines(name)")
-        .order("started_at", { ascending: false });
-      if (lineId) query = query.eq("line_id", lineId);
-      const { data, error } = await query;
-      if (error) throw error;
-      return (data ?? []) as unknown as MaintenanceStoppage[];
+      const data = await selectAllRows(() => {
+        let query = supabase
+          .from("maintenance_stoppages")
+          .select("*, production_lines(name)")
+          .order("started_at", { ascending: false });
+        if (lineId) query = query.eq("line_id", lineId);
+        return query;
+      });
+      return data as unknown as MaintenanceStoppage[];
     },
   });
 
@@ -991,11 +1057,12 @@ export const maintenanceMetricsQuery = () =>
   queryOptions({
     queryKey: ["maintenance-metrics"],
     queryFn: async (): Promise<MaintenanceMetric[]> => {
-      const { data, error } = await supabase
-        .from("maintenance_events")
-        .select("line_id, type, started_at, resolved_at, production_lines(name)")
-        .order("started_at");
-      if (error) throw error;
+      const data = await selectAllRows(() =>
+        supabase
+          .from("maintenance_events")
+          .select("line_id, type, started_at, resolved_at, production_lines(name)")
+          .order("started_at"),
+      );
 
       type Row = {
         line_id: string | null;

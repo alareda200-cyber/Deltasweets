@@ -109,6 +109,7 @@ import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import {
   linesQuery,
   maintenanceEventsQuery,
+  openMaintenanceEventsQuery,
   maintenanceMetricsQuery,
   maintenanceStoppagesQuery,
   maintenanceStoppageQuery,
@@ -978,6 +979,10 @@ function MaintenancePage() {
   // the PDF report's Stoppages summary; StoppageDialog fetches its own
   // single-stoppage/member-event queries instead of reading from this list.
   const { data: stoppages = [] } = useQuery(maintenanceStoppagesQuery());
+  // Open-fault counts come from a dedicated status-filtered query rather
+  // than allEvents, so they can never be lost to allEvents' row cap —
+  // see openMaintenanceEventsQuery in src/lib/queries.ts.
+  const { data: openFaults = [] } = useQuery(openMaintenanceEventsQuery(null));
 
   const { data: events = [], isLoading } = useQuery(
     maintenanceEventsQuery(lineId || null, type || null, status || null, from || null, to || null),
@@ -997,18 +1002,10 @@ function MaintenancePage() {
     qc.invalidateQueries({ queryKey: ["maintenance-stoppage-events"] });
   }
 
-  const openMechanical = allEvents.filter(
-    (e) => e.type === "mechanical" && e.status !== "resolved",
-  ).length;
-  const openElectrical = allEvents.filter(
-    (e) => e.type === "electrical" && e.status !== "resolved",
-  ).length;
-  const openPreventive = allEvents.filter(
-    (e) => e.type === "preventive" && e.status !== "resolved",
-  ).length;
-  const openRefrigeration = allEvents.filter(
-    (e) => e.type === "refrigeration" && e.status !== "resolved",
-  ).length;
+  const openMechanical = openFaults.filter((e) => e.type === "mechanical").length;
+  const openElectrical = openFaults.filter((e) => e.type === "electrical").length;
+  const openPreventive = openFaults.filter((e) => e.type === "preventive").length;
+  const openRefrigeration = openFaults.filter((e) => e.type === "refrigeration").length;
   // Mobile-only "stays visible, never collapses" list — same open predicate
   // and plant-wide (allEvents, not the filtered `events`) scope as the
   // Open Mechanical/Electrical/Preventive KPI cards above, most-recent first.
@@ -1646,6 +1643,10 @@ function MaintenancePage() {
             {
               label: "Overview",
               items: [
+                // events.length is a full-table length once unfiltered — it
+                // depends on maintenanceEventsQuery's selectAllRows paging
+                // (src/lib/queries.ts) to be truthful. Don't reintroduce an
+                // un-ranged select there, or this silently caps again.
                 { id: "events", label: "Events", icon: List, count: events.length },
                 {
                   id: "stoppages",

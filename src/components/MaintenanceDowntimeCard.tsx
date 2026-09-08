@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ParetoRows, PARETO_FILL, PARETO_FILL_PM } from "./ParetoRows";
 import {
-  maintenanceEventsQuery,
+  openMaintenanceEventsQuery,
   type EntryDowntime,
   type Department,
   type DepartmentCategory,
@@ -84,17 +84,17 @@ export function MaintenanceDowntimeCard({
   const canSeeOpenEvents = can(role, "maintenance.view");
   const canEdit = can(role, "maintenance.edit");
   const qc = useQueryClient();
-  const { data: allMaintenanceEvents = [] } = useQuery({
-    ...maintenanceEventsQuery(null, null, null, null, null),
+  // Open-fault list comes from a dedicated status-filtered query rather than
+  // the full events table, so it can never be lost to a row cap — see
+  // openMaintenanceEventsQuery in src/lib/queries.ts.
+  const { data: openEvents = [] } = useQuery({
+    ...openMaintenanceEventsQuery(null),
     enabled: canSeeOpenEvents,
   });
   // Same rule as the Maintenance page: time on a day this line was not
   // scheduled to run is not lost production.
   const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
   const closedDays = useMemo(() => nonProductionDayLookup(nonProductionDays), [nonProductionDays]);
-  const openEvents = allMaintenanceEvents.filter(
-    (e) => e.status === "open" || e.status === "in_progress",
-  );
   const [selectedEvent, setSelectedEvent] = useState<MaintenanceEvent | null>(null);
   // Mobile-only "Show all N causes" toggle for the horizontal-bar list below
   // the donut (see the md:hidden block) — collapsed to the top 4 by default.

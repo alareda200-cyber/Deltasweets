@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Wrench, Zap, ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { Wrench, Zap, Snowflake, ArrowUp, ArrowDown, Minus } from "lucide-react";
 import { KpiCard } from "./KpiCard";
 import { cn } from "@/lib/utils";
 import { formatHours } from "@/lib/maintenance-format";
@@ -70,8 +70,11 @@ function oldestOpenLabel(list: MaintenanceEvent[], now: number): string | undefi
 export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }) {
   const openMechanical = events.filter((e) => e.type === "mechanical" && e.status !== "resolved");
   const openElectrical = events.filter((e) => e.type === "electrical" && e.status !== "resolved");
+  const openRefrigeration = events.filter(
+    (e) => e.type === "refrigeration" && e.status !== "resolved",
+  );
   const now = Date.now();
-  const hasStaleOpen = [...openMechanical, ...openElectrical].some(
+  const hasStaleOpen = [...openMechanical, ...openElectrical, ...openRefrigeration].some(
     (e) => now - new Date(e.started_at).getTime() > STALE_OPEN_HOURS * 3_600_000,
   );
 
@@ -98,7 +101,7 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
           </p>
         )}
       </header>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <KpiCard
           label="Open Mechanical"
           value={String(openMechanical.length)}
@@ -112,6 +115,13 @@ export function MaintenanceEventsCard({ events }: { events: MaintenanceEvent[] }
           sub={oldestOpenLabel(openElectrical, now)}
           icon={Zap}
           variant={openElectrical.length > 0 ? "danger" : "success"}
+        />
+        <KpiCard
+          label="Open Refrigeration"
+          value={String(openRefrigeration.length)}
+          sub={oldestOpenLabel(openRefrigeration, now)}
+          icon={Snowflake}
+          variant={openRefrigeration.length > 0 ? "danger" : "success"}
         />
       </div>
 
