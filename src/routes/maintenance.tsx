@@ -1384,6 +1384,7 @@ function MaintenancePage() {
         lifetimeMttrMechanicalHours: mttrMechanicalHours,
         lifetimeMtbfElectricalHours: mtbfElectricalHours,
         lifetimeMttrElectricalHours: mttrElectricalHours,
+        reliabilityStartDate,
         totalDowntimeMinutes: reliabilitySummary.totalDowntimeMinutes,
         repeatFailureRatePct: reliabilitySummary.repeatFailureRatePct,
         availabilityPct: reliabilitySummary.availabilityPct,

@@ -78,6 +78,13 @@ export interface MaintenanceReportOptions {
   lifetimeMttrMechanicalHours: number | null;
   lifetimeMtbfElectricalHours: number | null;
   lifetimeMttrElectricalHours: number | null;
+  // app_settings.reliability_start_date (see appSettingsQuery in
+  // src/lib/queries.ts, already read by the caller). Null = no window
+  // declared, i.e. the four MTBF/MTTR fields above genuinely are lifetime
+  // and the KPI cards/header say so. When set, it's what makes those four
+  // fields NOT lifetime (maintenanceMetricsQuery windows on it) — this
+  // report has to state that instead of silently repeating "Lifetime".
+  reliabilityStartDate: string | null;
   // Reliability Analytics numbers — the exact same values already computed
   // by the live /maintenance page's own useMemo hooks (see
   // src/routes/maintenance.tsx), passed through rather than re-derived here,
@@ -208,6 +215,19 @@ function personLabel(p: { display_name: string | null; email: string } | null): 
   return p?.display_name || p?.email || "—";
 }
 
+// "2026-08-18" -> "18 Aug 2026" — parsed the same way as localDayStartISO in
+// queries.ts (split the "YYYY-MM-DD" string, build a local Date) so the
+// printed day matches the local calendar day reliability_start_date was
+// saved as, not a UTC-shifted one from `new Date("2026-08-18")`.
+function formatReliabilityDate(reliabilityStartDate: string): string {
+  const [y, m, d] = reliabilityStartDate.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 // --- Report content, styled with plain hex colors rather than the app's
 // Tailwind CSS-variable theme (bg-card, text-foreground, etc). This tree is
 // rendered off-screen purely for capture, never shown live, so there's no
@@ -238,6 +258,7 @@ function ReportKpiCard({
   value,
   accent,
   lifetime,
+  secondaryLabel = "Lifetime",
 }: {
   label: string;
   value: string;
@@ -246,6 +267,12 @@ function ReportKpiCard({
   // showing — omitted for cards that were already filter-scoped (Open
   // Stoppages) so they don't grow a redundant/misleading line.
   lifetime?: string;
+  // Defaults to "Lifetime" so the 3 genuinely all-time cards (Total Events,
+  // Open, Open Preventive) need no change. The 4 MTBF/MTTR cards pass
+  // "Since <date>" once app_settings.reliability_start_date is set — those
+  // figures come from maintenanceMetricsQuery, which that date now windows
+  // (see 81eaa07), so this card must stop claiming "Lifetime" for them.
+  secondaryLabel?: string;
 }) {
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: "14px 16px", background: "#ffffff" }}>
@@ -254,7 +281,9 @@ function ReportKpiCard({
       </p>
       <p style={{ margin: "6px 0 0", fontSize: 22, fontWeight: 800, color: accent }}>{value}</p>
       {lifetime !== undefined && (
-        <p style={{ margin: "4px 0 0", fontSize: 10, color: "#94a3b8" }}>Lifetime: {lifetime}</p>
+        <p style={{ margin: "4px 0 0", fontSize: 10, color: "#94a3b8" }}>
+          {secondaryLabel}: {lifetime}
+        </p>
       )}
     </div>
   );
@@ -314,6 +343,7 @@ function ReportLayout({
   lifetimeMttrMechanicalHours,
   lifetimeMtbfElectricalHours,
   lifetimeMttrElectricalHours,
+  reliabilityStartDate,
   totalDowntimeMinutes,
   repeatFailureRatePct,
   availabilityPct,
@@ -341,6 +371,7 @@ function ReportLayout({
   | "lifetimeMttrMechanicalHours"
   | "lifetimeMtbfElectricalHours"
   | "lifetimeMttrElectricalHours"
+  | "reliabilityStartDate"
   | "totalDowntimeMinutes"
   | "repeatFailureRatePct"
   | "availabilityPct"
@@ -385,6 +416,13 @@ function ReportLayout({
 
   const topFaults = [...chronicVsSporadic].sort((a, b) => b.count - a.count).slice(0, 8);
 
+  // Undefined (not null) when unset, so passing it to ReportKpiCard's
+  // secondaryLabel prop below falls through to that prop's own "Lifetime"
+  // default instead of overriding it with undefined-as-a-value.
+  const reliabilityWindowLabel = reliabilityStartDate
+    ? `Since ${formatReliabilityDate(reliabilityStartDate)}`
+    : undefined;
+
   return (
     <div style={{ width: CAPTURE_WIDTH, background: "#ffffff", fontFamily: "Arial, Helvetica, sans-serif", color: "#1e293b" }}>
       <div
@@ -408,24 +446,28 @@ function ReportLayout({
           value={formatHours(mtbfMechanicalHours)}
           accent="#4f46e5"
           lifetime={formatHours(lifetimeMtbfMechanicalHours)}
+          secondaryLabel={reliabilityWindowLabel}
         />
         <ReportKpiCard
           label="MTTR (Mechanical)"
           value={formatHours(mttrMechanicalHours)}
           accent="#4f46e5"
           lifetime={formatHours(lifetimeMttrMechanicalHours)}
+          secondaryLabel={reliabilityWindowLabel}
         />
         <ReportKpiCard
           label="MTBF (Electrical)"
           value={formatHours(mtbfElectricalHours)}
           accent="#f59e0b"
           lifetime={formatHours(lifetimeMtbfElectricalHours)}
+          secondaryLabel={reliabilityWindowLabel}
         />
         <ReportKpiCard
           label="MTTR (Electrical)"
           value={formatHours(mttrElectricalHours)}
           accent="#f59e0b"
           lifetime={formatHours(lifetimeMttrElectricalHours)}
+          secondaryLabel={reliabilityWindowLabel}
         />
         <ReportKpiCard
           label="Open Preventive"
@@ -771,6 +813,7 @@ export async function exportMaintenanceReportToPdf({
   lifetimeMttrMechanicalHours,
   lifetimeMtbfElectricalHours,
   lifetimeMttrElectricalHours,
+  reliabilityStartDate,
   totalDowntimeMinutes,
   repeatFailureRatePct,
   availabilityPct,
@@ -815,6 +858,7 @@ export async function exportMaintenanceReportToPdf({
           lifetimeMttrMechanicalHours={lifetimeMttrMechanicalHours}
           lifetimeMtbfElectricalHours={lifetimeMtbfElectricalHours}
           lifetimeMttrElectricalHours={lifetimeMttrElectricalHours}
+          reliabilityStartDate={reliabilityStartDate}
           totalDowntimeMinutes={totalDowntimeMinutes}
           repeatFailureRatePct={repeatFailureRatePct}
           availabilityPct={availabilityPct}
@@ -868,7 +912,18 @@ export async function exportMaintenanceReportToPdf({
     const statusText = status ? STATUS_LABELS[status] : "All statuses";
     doc.text(`${lineName} · ${typeText} · ${statusText} · ${periodText}`, textX, cursorY + 32);
     doc.text(`Generated ${generatedAt.toLocaleString()} by ${generatedBy}`, textX, cursorY + 46);
-    cursorY += Math.max(logo?.heightPt ?? 0, 50) + 16;
+    // Stated even though nobody asked for it: the MTBF/MTTR figures on this
+    // report are windowed by this date (see the "Since <date>" KPI cards
+    // above) once it's set — a reader who only skims the header shouldn't
+    // have to notice a per-card label to learn that.
+    if (reliabilityStartDate) {
+      doc.text(
+        `Reliability window: from ${formatReliabilityDate(reliabilityStartDate)}`,
+        textX,
+        cursorY + 60,
+      );
+    }
+    cursorY += Math.max(logo?.heightPt ?? 0, reliabilityStartDate ? 64 : 50) + 16;
 
     for (const img of captured) {
       const pxPerPt = img.width / contentWidth;
