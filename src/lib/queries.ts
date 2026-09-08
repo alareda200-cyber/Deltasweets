@@ -1007,8 +1007,10 @@ export interface MaintenanceMetric {
 }
 
 // Computes MTBF/MTTR per line x type from every maintenance_events row (no
-// date filter — these are lifetime reliability metrics, not period metrics).
-// Grouping by line is required before computing gaps: pooling two lines'
+// date-range filter tied to a reporting period — the optional
+// reliabilityStartDate window below is a declared observation-window start,
+// not a period filter; see maintenanceMetricsQuery further down). Grouping
+// by line is required before computing gaps: pooling two lines'
 // started_at values together would produce a meaningless gap between an
 // event on one line and an unrelated event on another.
 //
@@ -1053,16 +1055,54 @@ export const nonProductionDaysQuery = () =>
     },
   });
 
-export const maintenanceMetricsQuery = () =>
+export interface AppSettings {
+  reliability_start_date: string | null;
+}
+
+// The app's single settings row (id is a boolean PK that only accepts `true`
+// — see 20260909100000_app_settings_reliability_start.sql). .maybeSingle()
+// rather than .single(), and errors degrade to "no window declared" rather
+// than throwing: this value only refines a statistic (see
+// maintenanceMetricsQuery below), and a fetch hiccup here must never be the
+// reason /maintenance or /settings fails to load.
+export const appSettingsQuery = () =>
   queryOptions({
-    queryKey: ["maintenance-metrics"],
+    queryKey: ["app-settings"],
+    queryFn: async (): Promise<AppSettings> => {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("reliability_start_date")
+        .eq("id", true)
+        .maybeSingle();
+      if (error || !data) return { reliability_start_date: null };
+      return { reliability_start_date: data.reliability_start_date };
+    },
+  });
+
+// reliabilityStartDate is app_settings.reliability_start_date (see
+// appSettingsQuery above) — a declared observation-window start, not a data
+// filter on what exists. Null/undefined keeps the original lifetime
+// behavior: every event counts. When set, events before that local calendar
+// day are excluded from the MTBF/MTTR math ONLY — this must never be used to
+// filter maintenanceEventsQuery, openMaintenanceEventsQuery,
+// maintenanceStoppagesQuery, or entry_downtimes; those keep showing every
+// real event regardless of this window. See
+// 20260909100000_app_settings_reliability_start.sql for why: a 594-day
+// recording gap was otherwise read as reliability instead of silence.
+export const maintenanceMetricsQuery = (reliabilityStartDate?: string | null) =>
+  queryOptions({
+    queryKey: ["maintenance-metrics", reliabilityStartDate ?? null],
     queryFn: async (): Promise<MaintenanceMetric[]> => {
-      const data = await selectAllRows(() =>
-        supabase
+      const data = await selectAllRows(() => {
+        let query = supabase
           .from("maintenance_events")
           .select("line_id, type, started_at, resolved_at, production_lines(name)")
-          .order("started_at"),
-      );
+          .order("started_at");
+        if (reliabilityStartDate) {
+          query = query.gte("started_at", localDayStartISO(reliabilityStartDate));
+        }
+        return query;
+      });
 
       type Row = {
         line_id: string | null;

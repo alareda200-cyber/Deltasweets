@@ -119,6 +119,7 @@ import {
   stoppageDurationMinutes,
   collapseStoppageEvents,
   techniciansQuery,
+  appSettingsQuery,
   type MaintenanceEvent,
   type MaintenanceType,
   type MaintenanceStatus,
@@ -324,6 +325,26 @@ function MaintenanceSidebar({
   );
 }
 
+// Sub-label for the MTBF/MTTR KPI cards below — reliabilityStartDate is
+// app_settings.reliability_start_date (see appSettingsQuery in
+// src/lib/queries.ts). Null returns null (caller falls back to its own
+// "Lifetime avg. …" copy, unchanged); set returns the actual window so the
+// card never claims "Lifetime" while maintenanceMetricsQuery is quietly
+// excluding everything before this date. Parsed the same way as
+// localDayStartISO in queries.ts (split, build a local Date) so the printed
+// day matches the local calendar day the setting was saved as, not a
+// UTC-shifted one.
+function reliabilityWindowLabel(reliabilityStartDate: string | null): string | null {
+  if (!reliabilityStartDate) return null;
+  const [y, m, d] = reliabilityStartDate.split("-").map(Number);
+  const formatted = new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `Avg. since ${formatted}`;
+}
+
 // The 8 headline KPI cards — extracted so both the mobile (always-visible,
 // current position) and desktop (inside the sidebar's Events section)
 // instances call the same JSX instead of duplicating it. `className`
@@ -338,6 +359,7 @@ function MaintenanceKpiGrid({
   mttrElectricalHours,
   openPreventive,
   openRefrigeration,
+  reliabilityStartDate,
   className,
 }: {
   openMechanical: number;
@@ -348,8 +370,10 @@ function MaintenanceKpiGrid({
   mttrElectricalHours: number | null;
   openPreventive: number;
   openRefrigeration: number;
+  reliabilityStartDate: string | null;
   className: string;
 }) {
+  const windowLabel = reliabilityWindowLabel(reliabilityStartDate);
   return (
     <div className={className}>
       <KpiCard
@@ -362,7 +386,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTBF (Mechanical)"
         value={formatHours(mtbfMechanicalHours)}
-        sub="Lifetime avg. time between failures"
+        sub={windowLabel ?? "Lifetime avg. time between failures"}
         icon={Activity}
         variant="primary"
         className="p-3 md:p-5"
@@ -370,7 +394,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTTR (Mechanical)"
         value={formatHours(mttrMechanicalHours)}
-        sub="Lifetime avg. time to repair"
+        sub={windowLabel ?? "Lifetime avg. time to repair"}
         icon={Timer}
         variant="primary"
         className="p-3 md:p-5"
@@ -385,7 +409,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTBF (Electrical)"
         value={formatHours(mtbfElectricalHours)}
-        sub="Lifetime avg. time between failures"
+        sub={windowLabel ?? "Lifetime avg. time between failures"}
         icon={Activity}
         variant="primary"
         className="p-3 md:p-5"
@@ -393,7 +417,7 @@ function MaintenanceKpiGrid({
       <KpiCard
         label="MTTR (Electrical)"
         value={formatHours(mttrElectricalHours)}
-        sub="Lifetime avg. time to repair"
+        sub={windowLabel ?? "Lifetime avg. time to repair"}
         icon={Timer}
         variant="primary"
         className="p-3 md:p-5"
@@ -973,7 +997,11 @@ function MaintenancePage() {
   // memoized so its reference is stable across renders that don't change
   // allEvents (CreateEventDialog's own useMemos key off this array).
   const allEventTitles = useMemo(() => allEvents.map((e) => e.title), [allEvents]);
-  const { data: metrics = [] } = useQuery(maintenanceMetricsQuery());
+  // Never throws (see appSettingsQuery) — a fetch hiccup here just falls
+  // back to null, i.e. no window declared, i.e. today's lifetime behavior.
+  const { data: appSettings } = useQuery(appSettingsQuery());
+  const reliabilityStartDate = appSettings?.reliability_start_date ?? null;
+  const { data: metrics = [] } = useQuery(maintenanceMetricsQuery(reliabilityStartDate));
   // Global (unfiltered) stoppage list — used to look up each stoppage
   // referenced by `events`/`allEvents` for the "Part of Stoppage" badge and
   // the PDF report's Stoppages summary; StoppageDialog fetches its own
@@ -1534,6 +1562,7 @@ function MaintenancePage() {
         mttrElectricalHours={mttrElectricalHours}
         openPreventive={openPreventive}
         openRefrigeration={openRefrigeration}
+        reliabilityStartDate={reliabilityStartDate}
         className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 md:hidden"
       />
 
@@ -1686,6 +1715,7 @@ function MaintenancePage() {
                 mttrElectricalHours={mttrElectricalHours}
                 openPreventive={openPreventive}
                 openRefrigeration={openRefrigeration}
+                reliabilityStartDate={reliabilityStartDate}
                 className="grid grid-cols-3 gap-4"
               />
               <EventsListCard

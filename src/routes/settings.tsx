@@ -34,6 +34,7 @@ import {
   ChevronRight,
   Tags,
   Merge,
+  Activity,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -55,6 +56,7 @@ import {
   severityLevelsQuery,
   departmentCategoriesQuery,
   techniciansQuery,
+  appSettingsQuery,
   type Technician,
 } from "@/lib/queries";
 
@@ -262,6 +264,10 @@ function SettingsPage() {
         .sort((a, b) => b.count - a.count);
     },
   });
+  // Never throws (see appSettingsQuery) — a fetch hiccup here just falls
+  // back to null, i.e. no window declared, i.e. count everything.
+  const { data: appSettings } = useQuery(appSettingsQuery());
+  const reliabilityStartDate = appSettings?.reliability_start_date ?? null;
   const qc = useQueryClient();
   const [selectedLine, setSelectedLine] = useState(lines[0]?.id ?? "");
   const [activeSection, setActiveSection] = useState("users");
@@ -326,7 +332,10 @@ function SettingsPage() {
     },
     {
       label: "System",
-      items: [{ id: "backup", label: "Backup & Restore", icon: Database }],
+      items: [
+        { id: "backup", label: "Backup & Restore", icon: Database },
+        { id: "reliability", label: "Reliability Window", icon: Activity },
+      ],
     },
   ];
 
@@ -380,6 +389,8 @@ function SettingsPage() {
         return <FaultTitlesCard stats={faultTitleStats} qc={qc} />;
       case "backup":
         return <BackupCard qc={qc} />;
+      case "reliability":
+        return <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} qc={qc} />;
       default:
         return null;
     }
@@ -466,10 +477,14 @@ function SettingsPage() {
           </div>
         </section>
 
-        {/* Data portability, not domain configuration. */}
+        {/* Data portability and reliability-math config, not domain
+            configuration. */}
         <section>
           <GroupHeading>System</GroupHeading>
-          <BackupCard qc={qc} />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <BackupCard qc={qc} />
+            <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} qc={qc} />
+          </div>
         </section>
       </div>
 
@@ -910,6 +925,103 @@ function BackupCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           />
           {importing ? "Importing…" : "Import Settings"}
         </label>
+      </CardContent>
+    </MobileCollapsibleCard>
+  );
+}
+
+// Single-row app_settings.reliability_start_date (see appSettingsQuery in
+// src/lib/queries.ts and 20260909100000_app_settings_reliability_start.sql).
+// This whole route is already gated to admin only (Route.component below
+// requires "settings.manage", which only the admin role has — see
+// src/lib/permissions.ts), so there's no separate admin check to add here;
+// the RLS "admin update app settings" policy is the real enforcement anyway.
+//
+// Editing this date changes MTBF/MTTR math only — it never hides an event,
+// so there's no "are you sure" here the way a delete would need one.
+function ReliabilityWindowCard({
+  reliabilityStartDate,
+  qc,
+}: {
+  reliabilityStartDate: string | null;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const { profile } = useAuth();
+  const [value, setValue] = useState(reliabilityStartDate ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Stay in sync if the row changes from outside this card (another admin,
+  // another tab) instead of freezing on whatever loaded when it mounted.
+  useEffect(() => {
+    setValue(reliabilityStartDate ?? "");
+  }, [reliabilityStartDate]);
+
+  const dirty = value !== (reliabilityStartDate ?? "");
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const nextDate = value || null;
+      const { error } = await supabase
+        .from("app_settings")
+        .update({
+          reliability_start_date: nextDate,
+          updated_by: profile?.id ?? null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", true);
+      if (error) throw error;
+      toast.success("Reliability window saved");
+      void logAudit("settings.update", "app_settings", "true", {
+        reliability_start_date: nextDate,
+      });
+      // Both are needed: app-settings so this card (and /maintenance's own
+      // fetch of the same query) shows the saved value, maintenance-metrics
+      // so every MTBF/MTTR card recomputes against the new window — see
+      // maintenanceMetricsQuery's queryKey in src/lib/queries.ts.
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-metrics"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <MobileCollapsibleCard icon={Activity} iconClassName="bg-accent text-accent-foreground" title="Reliability Window">
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Activity} className="bg-accent text-accent-foreground" />
+          <div>
+            <CardTitle>Reliability Window</CardTitle>
+            <CardDescription>
+              First date on which maintenance recording is complete. MTBF/MTTR ignore events
+              before it. NULL = no window declared, count everything. Never filters what the UI
+              displays.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="reliability-start-date">Reliability start date</Label>
+          <Input
+            id="reliability-start-date"
+            type="date"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-[180px]"
+          />
+        </div>
+        <Button onClick={handleSave} disabled={saving || !dirty}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {value !== "" && (
+          <Button type="button" variant="outline" onClick={() => setValue("")} disabled={saving}>
+            Clear (count everything)
+          </Button>
+        )}
       </CardContent>
     </MobileCollapsibleCard>
   );
