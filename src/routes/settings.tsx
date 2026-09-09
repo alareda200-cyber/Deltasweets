@@ -35,6 +35,7 @@ import {
   Tags,
   Merge,
   Activity,
+  Crosshair,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -57,7 +58,9 @@ import {
   departmentCategoriesQuery,
   techniciansQuery,
   appSettingsQuery,
+  rootCausesQuery,
   type Technician,
+  type RootCause,
 } from "@/lib/queries";
 
 // Shared validation for every master-data add-form (Lines, Areas, Owners, Reasons,
@@ -218,6 +221,7 @@ export const Route = createFileRoute("/settings")({
       context.queryClient.ensureQueryData(severityLevelsQuery),
       context.queryClient.ensureQueryData(departmentCategoriesQuery),
       context.queryClient.ensureQueryData(techniciansQuery),
+      context.queryClient.ensureQueryData(rootCausesQuery()),
     ]),
   component: () => (
     <RequireAuth requirePermission="settings.manage">
@@ -236,6 +240,7 @@ function SettingsPage() {
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const { data: departmentCategories } = useSuspenseQuery(departmentCategoriesQuery);
   const { data: technicians } = useSuspenseQuery(techniciansQuery);
+  const { data: rootCauses } = useSuspenseQuery(rootCausesQuery());
   const { data: users = [] } = useQuery({
     queryKey: ["profiles"],
     queryFn: async () => {
@@ -268,6 +273,7 @@ function SettingsPage() {
   // back to null, i.e. no window declared, i.e. count everything.
   const { data: appSettings } = useQuery(appSettingsQuery());
   const reliabilityStartDate = appSettings?.reliability_start_date ?? null;
+  const rootCauseTrackingStartDate = appSettings?.root_cause_tracking_start_date ?? null;
   const qc = useQueryClient();
   const [selectedLine, setSelectedLine] = useState(lines[0]?.id ?? "");
   const [activeSection, setActiveSection] = useState("users");
@@ -304,6 +310,7 @@ function SettingsPage() {
         { id: "reasons", label: "Downtime Reasons", icon: List, count: reasons.length },
         { id: "fields", label: "Line Fields", icon: SlidersHorizontal },
         { id: "departments", label: "Departments", icon: Building2, count: departments.length },
+        { id: "rootCauses", label: "Root Causes", icon: Crosshair, count: rootCauses.length },
         {
           id: "departmentCategories",
           label: "Department Categories",
@@ -379,6 +386,8 @@ function SettingsPage() {
         return (
           <DepartmentsCard departments={departments} categories={departmentCategories} qc={qc} />
         );
+      case "rootCauses":
+        return <RootCausesCard rootCauses={rootCauses} qc={qc} />;
       case "departmentCategories":
         return <DepartmentCategoriesCard categories={departmentCategories} qc={qc} />;
       case "downtimeTypes":
@@ -390,7 +399,7 @@ function SettingsPage() {
       case "backup":
         return <BackupCard qc={qc} />;
       case "reliability":
-        return <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} qc={qc} />;
+        return <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} rootCauseTrackingStartDate={rootCauseTrackingStartDate} qc={qc} />;
       default:
         return null;
     }
@@ -469,10 +478,13 @@ function SettingsPage() {
           </div>
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
             <DepartmentsCard departments={departments} categories={departmentCategories} qc={qc} />
-            <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />
+            <RootCausesCard rootCauses={rootCauses} qc={qc} />
           </div>
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <DowntimeTypesCard downtimeTypes={downtimeTypes} qc={qc} />
             <SeverityLevelsCard severityLevels={severityLevels} qc={qc} />
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
             <FaultTitlesCard stats={faultTitleStats} qc={qc} />
           </div>
         </section>
@@ -483,7 +495,7 @@ function SettingsPage() {
           <GroupHeading>System</GroupHeading>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <BackupCard qc={qc} />
-            <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} qc={qc} />
+            <ReliabilityWindowCard reliabilityStartDate={reliabilityStartDate} rootCauseTrackingStartDate={rootCauseTrackingStartDate} qc={qc} />
           </div>
         </section>
       </div>
@@ -941,22 +953,30 @@ function BackupCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 // so there's no "are you sure" here the way a delete would need one.
 function ReliabilityWindowCard({
   reliabilityStartDate,
+  rootCauseTrackingStartDate,
   qc,
 }: {
   reliabilityStartDate: string | null;
+  rootCauseTrackingStartDate: string | null;
   qc: ReturnType<typeof useQueryClient>;
 }) {
   const { profile } = useAuth();
   const [value, setValue] = useState(reliabilityStartDate ?? "");
   const [saving, setSaving] = useState(false);
+  const [rootCauseValue, setRootCauseValue] = useState(rootCauseTrackingStartDate ?? "");
+  const [savingRootCause, setSavingRootCause] = useState(false);
 
   // Stay in sync if the row changes from outside this card (another admin,
   // another tab) instead of freezing on whatever loaded when it mounted.
   useEffect(() => {
     setValue(reliabilityStartDate ?? "");
   }, [reliabilityStartDate]);
+  useEffect(() => {
+    setRootCauseValue(rootCauseTrackingStartDate ?? "");
+  }, [rootCauseTrackingStartDate]);
 
   const dirty = value !== (reliabilityStartDate ?? "");
+  const rootCauseDirty = rootCauseValue !== (rootCauseTrackingStartDate ?? "");
 
   async function handleSave() {
     setSaving(true);
@@ -985,6 +1005,31 @@ function ReliabilityWindowCard({
       toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveRootCauseDate() {
+    setSavingRootCause(true);
+    try {
+      const nextDate = rootCauseValue || null;
+      const { error } = await supabase
+        .from("app_settings")
+        .update({
+          root_cause_tracking_start_date: nextDate,
+          updated_by: profile?.id ?? null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", true);
+      if (error) throw error;
+      toast.success("Root cause tracking date saved");
+      void logAudit("settings.update", "app_settings", "true", {
+        root_cause_tracking_start_date: nextDate,
+      });
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingRootCause(false);
     }
   }
 
@@ -1022,6 +1067,38 @@ function ReliabilityWindowCard({
             Clear (count everything)
           </Button>
         )}
+      </CardContent>
+      <CardContent className="border-t border-border pt-4">
+        <p className="mb-3 text-xs text-muted-foreground">
+          Root causes are recorded on the shift report from this date onward. Any percentage based
+          on them covers this period only — events before it are unclassified because nobody was
+          recording the cause yet, not because they had none.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="root-cause-tracking-start-date">Root cause tracking start date</Label>
+            <Input
+              id="root-cause-tracking-start-date"
+              type="date"
+              value={rootCauseValue}
+              onChange={(e) => setRootCauseValue(e.target.value)}
+              className="w-[180px]"
+            />
+          </div>
+          <Button onClick={handleSaveRootCauseDate} disabled={savingRootCause || !rootCauseDirty}>
+            {savingRootCause ? "Saving…" : "Save"}
+          </Button>
+          {rootCauseValue !== "" && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRootCauseValue("")}
+              disabled={savingRootCause}
+            >
+              Clear (not yet declared)
+            </Button>
+          )}
+        </div>
       </CardContent>
     </MobileCollapsibleCard>
   );
@@ -2052,6 +2129,158 @@ function DepartmentsCard({
               </div>
             </div>
           ))}
+        </div>
+      </CardContent>
+    </MobileCollapsibleCard>
+  );
+}
+
+// WHY a fault happened — see RootCause in src/lib/queries.ts and
+// 20260909120000_root_causes.sql. Same shape as DepartmentsCard above (name +
+// code, add/edit/delete), minus the category picker — root causes don't
+// belong to a category. Deleting one is the one place this card diverges: a
+// cause can already be assigned to events, and ON DELETE SET NULL means
+// deleting it here doesn't touch those events — it just un-classifies them —
+// so the confirm has to say that plainly instead of behaving like every
+// other master-data delete on this page (which have nothing depending on
+// them the same way).
+function RootCausesCard({
+  rootCauses,
+  qc,
+}: {
+  rootCauses: RootCause[];
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  function startEdit(r: RootCause) {
+    setEditingId(r.id);
+    setName(r.name);
+    setCode(r.code);
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setName("");
+    setCode("");
+  }
+
+  async function save() {
+    const validationError = validateMasterDataInput(name, code);
+    if (validationError) return toast.error(validationError);
+    if (editingId) {
+      const { error } = await supabase
+        .from("root_causes")
+        .update({ name: name.trim(), code: normalizeCode(code) })
+        .eq("id", editingId);
+      if (error) return toast.error(error.message);
+      toast.success(`Root cause "${name}" updated`);
+      void logAudit("settings.update", "root_cause", editingId, { name });
+      cancelEdit();
+    } else {
+      const { error } = await supabase.from("root_causes").insert({
+        name: name.trim(),
+        code: normalizeCode(code),
+        sort_order: rootCauses.length + 1,
+      });
+      if (error) return toast.error(error.message);
+      toast.success(`Root cause "${name}" added`);
+      void logAudit("settings.create", "root_cause", undefined, { name });
+      setName("");
+      setCode("");
+    }
+    qc.invalidateQueries({ queryKey: ["root-causes"] });
+  }
+  async function del(r: RootCause) {
+    if (
+      !confirm(
+        `Delete root cause "${r.name}"? Events already classified with it keep their full history — they just become unclassified again, the same as if a cause had never been picked.`,
+      )
+    )
+      return;
+    const { error } = await supabase.from("root_causes").delete().eq("id", r.id);
+    if (error) return toast.error(error.message);
+    if (editingId === r.id) cancelEdit();
+    toast.success(`Root cause "${r.name}" deleted`);
+    void logAudit("settings.delete", "root_cause", r.id, { name: r.name });
+    qc.invalidateQueries({ queryKey: ["root-causes"] });
+  }
+
+  return (
+    <MobileCollapsibleCard
+      icon={Crosshair}
+      iconClassName="bg-muted text-muted-foreground"
+      title="Root Causes"
+      count={rootCauses.length}
+    >
+      <CardHeader>
+        <div className="flex items-start gap-3">
+          <CardIconBox icon={Crosshair} className="bg-muted text-muted-foreground" />
+          <div>
+            <CardTitle>Root Causes</CardTitle>
+            <CardDescription>
+              Why a fault happened, as opposed to which component it was ("Servo 1003"). Optional
+              on every event — pick one when it's actually known.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-4 flex gap-2">
+          <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            placeholder="Code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="w-24"
+          />
+          <Button onClick={save}>
+            {editingId ? (
+              "Update"
+            ) : (
+              <>
+                <Plus className="mr-1 h-4 w-4" />
+                Add
+              </>
+            )}
+          </Button>
+          {editingId && (
+            <Button size="sm" variant="ghost" onClick={cancelEdit}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          {rootCauses.map((r) => (
+            <div
+              key={r.id}
+              className="flex items-center justify-between rounded-md border border-border p-2 text-sm"
+            >
+              <span className="flex items-center gap-2 font-medium">
+                {r.name}
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                  {r.code}
+                </span>
+                {!r.is_active && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                    Inactive
+                  </span>
+                )}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="ghost" onClick={() => startEdit(r)}>
+                  <Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => del(r)}>
+                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          {rootCauses.length === 0 && (
+            <p className="p-4 text-center text-sm text-muted-foreground">No root causes yet.</p>
+          )}
         </div>
       </CardContent>
     </MobileCollapsibleCard>

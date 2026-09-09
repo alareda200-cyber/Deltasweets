@@ -120,6 +120,7 @@ import {
   collapseStoppageEvents,
   techniciansQuery,
   appSettingsQuery,
+  rootCausesQuery,
   type MaintenanceEvent,
   type MaintenanceType,
   type MaintenanceStatus,
@@ -1296,6 +1297,7 @@ function MaintenancePage() {
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
+    rootCauseId: string | null;
   }): Promise<string | null> {
     const { data: inserted, error } = await supabase
       .from("maintenance_events")
@@ -1310,6 +1312,7 @@ function MaintenancePage() {
         stops_line: data.stopsLine,
         created_by: user?.id ?? null,
         stoppage_id: data.stoppageId,
+        root_cause_id: data.rootCauseId,
       })
       .select()
       .single();
@@ -1322,6 +1325,7 @@ function MaintenancePage() {
       type: data.type,
       title: data.title,
       stoppageId: data.stoppageId,
+      rootCauseId: data.rootCauseId,
     });
     if (data.stoppageId) {
       try {
@@ -1345,6 +1349,7 @@ function MaintenancePage() {
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
+    rootCauseId: string | null;
   }) {
     const id = await insertEvent(data);
     if (id) setCreateOpen(false);
@@ -2835,6 +2840,7 @@ function CreateEventDialog({
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
+    rootCauseId: string | null;
   }) => Promise<void>;
   // Titles of every existing maintenance event (any line), plant-wide — used
   // to drive the Title field's autocomplete dropdown and its "Did you mean…"
@@ -2853,9 +2859,12 @@ function CreateEventDialog({
   // exception — work done while the line kept running — is what gets recorded.
   const [stopsLine, setStopsLine] = useState(true);
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
+  const [rootCauseId, setRootCauseId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const { data: technicians = [] } = useQuery(techniciansQuery);
   const activeTechnicians = technicians.filter((t) => t.is_active);
+  const { data: rootCauses = [] } = useQuery(rootCausesQuery());
+  const activeRootCauses = rootCauses.filter((c) => c.is_active);
 
   // Deduplicated by normalized form (lowercase + trim + collapsed
   // whitespace), keeping the first-seen literal spelling — existingTitles
@@ -2909,6 +2918,7 @@ function CreateEventDialog({
     setSeverityLabel("");
     setStopsLine(true);
     setTechnicianIds([]);
+    setRootCauseId("");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -2933,6 +2943,7 @@ function CreateEventDialog({
         severityLabel,
         technicianIds,
         stoppageId: stoppage?.id ?? null,
+        rootCauseId: rootCauseId || null,
       });
       reset();
     } finally {
@@ -3038,6 +3049,25 @@ function CreateEventDialog({
                 onChange={setTechnicianIds}
               />
             </div>
+          </div>
+          <div>
+            <Label>Root cause (optional)</Label>
+            <Select
+              value={rootCauseId || "none"}
+              onValueChange={(v) => setRootCauseId(v === "none" ? "" : v)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select root cause" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— not classified —</SelectItem>
+                {activeRootCauses.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="relative">
             <Label>Title</Label>
@@ -3150,6 +3180,7 @@ function StoppageDialog({
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
+    rootCauseId: string | null;
   }) => Promise<string | null>;
   // Set by the Stoppages tab when opening this dialog to view an already-
   // existing stoppage (as opposed to the "New Stoppage" button, which opens

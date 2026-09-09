@@ -43,18 +43,21 @@ export type Database = {
         Row: {
           id: boolean
           reliability_start_date: string | null
+          root_cause_tracking_start_date: string | null
           updated_at: string
           updated_by: string | null
         }
         Insert: {
           id?: boolean
           reliability_start_date?: string | null
+          root_cause_tracking_start_date?: string | null
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
           id?: boolean
           reliability_start_date?: string | null
+          root_cause_tracking_start_date?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -551,6 +554,7 @@ export type Database = {
           line_id: string | null
           resolved_at: string | null
           resolved_by: string | null
+          root_cause_id: string | null
           severity_label: string | null
           started_at: string
           status: string
@@ -569,6 +573,7 @@ export type Database = {
           line_id?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
+          root_cause_id?: string | null
           severity_label?: string | null
           started_at?: string
           status?: string
@@ -587,6 +592,7 @@ export type Database = {
           line_id?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
+          root_cause_id?: string | null
           severity_label?: string | null
           started_at?: string
           status?: string
@@ -617,6 +623,13 @@ export type Database = {
             columns: ["resolved_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "maintenance_events_root_cause_id_fkey"
+            columns: ["root_cause_id"]
+            isOneToOne: false
+            referencedRelation: "root_causes"
             referencedColumns: ["id"]
           },
           {
@@ -913,6 +926,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      root_causes: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       severity_levels: {
         Row: {

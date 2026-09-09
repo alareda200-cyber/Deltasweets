@@ -152,6 +152,21 @@ export interface Department {
   is_active: boolean;
 }
 
+// The WHY behind a fault — distinct from a maintenance_events.title, which
+// only names the component touched ("Servo 1003"). A catalogue like
+// Department/DowntimeType above, not a free-text field, so it can be
+// corrected in Settings without touching every event that used it. See
+// 20260909120000_root_causes.sql for why this exists and why it is never
+// back-filled onto historical events.
+export interface RootCause {
+  id: string;
+  name: string;
+  code: string;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number;
+}
+
 export interface DowntimeType {
   id: string;
   code: string;
@@ -278,6 +293,25 @@ export const departmentsQuery = queryOptions({
     return data as Department[];
   },
 });
+
+// Not filtered to is_active — same reasoning as techniciansQuery above: the
+// Settings card needs to see every cause (including a deactivated one) to
+// manage it, and the event dialogs need to know which are still active vs.
+// only kept selectable because they're already assigned to the event being
+// edited. Callers that just want assignable causes filter client-side.
+export const rootCausesQuery = () =>
+  queryOptions({
+    queryKey: ["root-causes"],
+    queryFn: async (): Promise<RootCause[]> => {
+      const { data, error } = await supabase
+        .from("root_causes")
+        .select("*")
+        .order("sort_order")
+        .order("name");
+      if (error) throw error;
+      return data as RootCause[];
+    },
+  });
 
 export const downtimeTypesQuery = queryOptions({
   queryKey: ["downtime-types"],
@@ -476,6 +510,12 @@ export interface MaintenanceEvent {
   // standalone failure. See MaintenanceStoppage and
   // 20260810120000_maintenance_stoppages.sql.
   stoppage_id: string | null;
+  // References root_causes.id — WHY the fault happened, as distinct from
+  // `title` (WHICH component). Optional and almost always null on existing
+  // rows: see 20260909120000_root_causes.sql for why classification is
+  // forward-only from app_settings.root_cause_tracking_start_date, never
+  // back-filled.
+  root_cause_id: string | null;
 }
 
 export interface MaintenanceStoppage {
@@ -518,7 +558,9 @@ function localDayEndExclusiveISO(day: string): string {
 // Shared base select for both maintenanceEventsQuery and
 // openMaintenanceEventsQuery below, so MaintenanceEvent stays one shape
 // (same columns, same technicians join) instead of the two queries
-// silently drifting apart.
+// silently drifting apart. The "*" already returns root_cause_id with every
+// row — no separate embed needed; callers resolve it against rootCausesQuery
+// client-side the same way EventDetailDialog resolves technician_ids.
 function maintenanceEventsSelect() {
   return supabase
     .from("maintenance_events")
@@ -1057,6 +1099,10 @@ export const nonProductionDaysQuery = () =>
 
 export interface AppSettings {
   reliability_start_date: string | null;
+  // Date from which root-cause classification is actually being recorded —
+  // see 20260909120000_root_causes.sql. Null = not yet declared, meaning no
+  // event should be read as "confirmed no cause"; it's simply unclassified.
+  root_cause_tracking_start_date: string | null;
 }
 
 // The app's single settings row (id is a boolean PK that only accepts `true`
@@ -1071,11 +1117,14 @@ export const appSettingsQuery = () =>
     queryFn: async (): Promise<AppSettings> => {
       const { data, error } = await supabase
         .from("app_settings")
-        .select("reliability_start_date")
+        .select("reliability_start_date, root_cause_tracking_start_date")
         .eq("id", true)
         .maybeSingle();
-      if (error || !data) return { reliability_start_date: null };
-      return { reliability_start_date: data.reliability_start_date };
+      if (error || !data) return { reliability_start_date: null, root_cause_tracking_start_date: null };
+      return {
+        reliability_start_date: data.reliability_start_date,
+        root_cause_tracking_start_date: data.root_cause_tracking_start_date,
+      };
     },
   });
 

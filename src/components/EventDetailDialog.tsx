@@ -40,6 +40,7 @@ import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
 import {
   maintenanceNotesQuery,
   techniciansQuery,
+  rootCausesQuery,
   syncStoppageAggregate,
   type MaintenanceEvent,
   type MaintenanceStatus,
@@ -82,6 +83,7 @@ export function EventDetailDialog({
   const [type, setType] = useState<MaintenanceType>("mechanical");
   const [stopsLine, setStopsLine] = useState(true);
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
+  const [rootCauseId, setRootCauseId] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -100,6 +102,13 @@ export function EventDetailDialog({
   const assignableTechnicians = technicians.filter(
     (t) => t.is_active || technicianIds.includes(t.id),
   );
+  const { data: rootCauses = [] } = useQuery(rootCausesQuery());
+  // Same rule as assignableTechnicians above: a cause already assigned to
+  // this event stays selectable even if it's since been deactivated in
+  // Settings — only new picks are restricted to is_active causes.
+  const assignableRootCauses = rootCauses.filter(
+    (c) => c.is_active || c.id === rootCauseId,
+  );
 
   // Reset the edit form whenever a *different* event is opened — keyed on
   // id (not the whole event object) so a background refetch of the events
@@ -115,6 +124,7 @@ export function EventDetailDialog({
       setType(event.type);
       setStopsLine(event.stops_line);
       setTechnicianIds(event.technician_ids);
+      setRootCauseId(event.root_cause_id ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event?.id]);
@@ -154,6 +164,7 @@ export function EventDetailDialog({
         technician_ids: string[];
         stops_line: boolean;
         type: MaintenanceType;
+        root_cause_id: string | null;
       } = {
         title: title.trim(),
         description: description.trim() || null,
@@ -164,6 +175,7 @@ export function EventDetailDialog({
         technician_ids: technicianIds,
         stops_line: stopsLine,
         type,
+        root_cause_id: rootCauseId || null,
       };
       if (becomingResolved) {
         // Attribute the resolution to whoever is saving it right now — only
@@ -186,6 +198,7 @@ export function EventDetailDialog({
         startedAt,
         resolvedAt,
         type,
+        rootCauseId: updatePayload.root_cause_id,
       });
       if (event.stoppage_id) {
         // This event's status/resolved_at may have just changed — the
@@ -351,6 +364,31 @@ export function EventDetailDialog({
                   </Select>
                 ) : (
                   <p className="mt-1">{TYPE_LABELS[event.type]}</p>
+                )}
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Root cause</Label>
+                {canEdit ? (
+                  <Select
+                    value={rootCauseId || "none"}
+                    onValueChange={(v) => setRootCauseId(v === "none" ? "" : v)}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select root cause" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— not classified —</SelectItem>
+                      {assignableRootCauses.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="mt-1">
+                    {rootCauses.find((c) => c.id === event.root_cause_id)?.name ?? "— not classified —"}
+                  </p>
                 )}
               </div>
               <div>
