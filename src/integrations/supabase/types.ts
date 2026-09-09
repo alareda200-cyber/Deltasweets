@@ -929,34 +929,31 @@ export type Database = {
       }
       root_causes: {
         Row: {
-          code: string
+          code: string | null
           created_at: string
           description: string | null
           id: string
           is_active: boolean
           name: string
           sort_order: number
-          updated_at: string
         }
         Insert: {
-          code: string
+          code?: string | null
           created_at?: string
           description?: string | null
           id?: string
           is_active?: boolean
           name: string
           sort_order?: number
-          updated_at?: string
         }
         Update: {
-          code?: string
+          code?: string | null
           created_at?: string
           description?: string | null
           id?: string
           is_active?: boolean
           name?: string
           sort_order?: number
-          updated_at?: string
         }
         Relationships: []
       }

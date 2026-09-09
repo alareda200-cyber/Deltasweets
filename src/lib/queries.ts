@@ -161,7 +161,10 @@ export interface Department {
 export interface RootCause {
   id: string;
   name: string;
-  code: string;
+  // Nullable — unlike Department/DowntimeType/SeverityLevel above, a code
+  // isn't required to save a cause (root_causes.code has no NOT NULL
+  // constraint; only name is required and case-insensitively unique).
+  code: string | null;
   description: string | null;
   is_active: boolean;
   sort_order: number;

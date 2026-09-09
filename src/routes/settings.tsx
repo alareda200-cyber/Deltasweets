@@ -2138,7 +2138,15 @@ function DepartmentsCard({
 // WHY a fault happened — see RootCause in src/lib/queries.ts and
 // 20260909120000_root_causes.sql. Same shape as DepartmentsCard above (name +
 // code, add/edit/delete), minus the category picker — root causes don't
-// belong to a category. Deleting one is the one place this card diverges: a
+// belong to a category. Two real divergences from DepartmentsCard, both
+// driven by the live schema, not by choice here:
+//  - code is optional (root_causes.code has no NOT NULL constraint) — this
+//    card must NOT reuse validateMasterDataInput, which requires one.
+//  - name is case-insensitively unique (root_causes_name_key on lower(name)),
+//    because "Nozzle blockage" and "nozzle blockage" must be the same cause,
+//    not two — a duplicate has to surface as a readable error instead of a
+//    raw Postgres one.
+// Deleting one is the other place this card diverges from Departments: a
 // cause can already be assigned to events, and ON DELETE SET NULL means
 // deleting it here doesn't touch those events — it just un-classifies them —
 // so the confirm has to say that plainly instead of behaving like every
@@ -2158,7 +2166,7 @@ function RootCausesCard({
   function startEdit(r: RootCause) {
     setEditingId(r.id);
     setName(r.name);
-    setCode(r.code);
+    setCode(r.code ?? "");
   }
   function cancelEdit() {
     setEditingId(null);
@@ -2166,25 +2174,41 @@ function RootCausesCard({
     setCode("");
   }
 
+  // Postgres unique_violation — root_causes_name_key (lower(name)) or
+  // root_causes_code_key (lower(code), only enforced when code is set).
+  // Surfaced by name so a duplicate reads as "this cause already exists",
+  // not as a constraint name nobody on the floor recognizes.
+  function friendlyError(error: { code?: string; message: string }): string {
+    if (error.code === "23505") {
+      if (error.message.includes("root_causes_name_key")) {
+        return `A root cause named "${name.trim()}" already exists (names are case-insensitive).`;
+      }
+      if (error.message.includes("root_causes_code_key")) {
+        return `Code "${code.trim()}" is already used by another root cause.`;
+      }
+    }
+    return error.message;
+  }
+
   async function save() {
-    const validationError = validateMasterDataInput(name, code);
-    if (validationError) return toast.error(validationError);
+    if (!name.trim()) return toast.error("Name is required");
+    const codeValue = code.trim() ? normalizeCode(code) : null;
     if (editingId) {
       const { error } = await supabase
         .from("root_causes")
-        .update({ name: name.trim(), code: normalizeCode(code) })
+        .update({ name: name.trim(), code: codeValue })
         .eq("id", editingId);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(friendlyError(error));
       toast.success(`Root cause "${name}" updated`);
       void logAudit("settings.update", "root_cause", editingId, { name });
       cancelEdit();
     } else {
       const { error } = await supabase.from("root_causes").insert({
         name: name.trim(),
-        code: normalizeCode(code),
+        code: codeValue,
         sort_order: rootCauses.length + 1,
       });
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(friendlyError(error));
       toast.success(`Root cause "${name}" added`);
       void logAudit("settings.create", "root_cause", undefined, { name });
       setName("");
@@ -2230,10 +2254,10 @@ function RootCausesCard({
         <div className="mb-4 flex gap-2">
           <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input
-            placeholder="Code"
+            placeholder="Code (optional)"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            className="w-24"
+            className="w-32"
           />
           <Button onClick={save}>
             {editingId ? (
@@ -2259,9 +2283,11 @@ function RootCausesCard({
             >
               <span className="flex items-center gap-2 font-medium">
                 {r.name}
-                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                  {r.code}
-                </span>
+                {r.code && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                    {r.code}
+                  </span>
+                )}
                 {!r.is_active && (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                     Inactive
