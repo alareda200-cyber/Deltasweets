@@ -16,10 +16,24 @@ async function assertAdmin(callerId: string, callerSupabase: any) {
   }
 }
 
+// Rejection-sampled index into `max`, drawn from a CSPRNG byte. Discarding
+// bytes >= the largest multiple of `max` below 256 avoids the modulo bias
+// that would otherwise favor the low end of the alphabet.
+function randomIndex(max: number): number {
+  const limit = 256 - (256 % max);
+  const bytes = new Uint8Array(1);
+  let byte: number;
+  do {
+    crypto.getRandomValues(bytes);
+    byte = bytes[0];
+  } while (byte >= limit);
+  return byte % max;
+}
+
 function generateTempPassword(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
   let body = "";
-  for (let i = 0; i < 10; i++) body += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 10; i++) body += chars[randomIndex(chars.length)];
   // Guarantees upper/lower/digit/symbol presence so it never fails a
   // "weak password" check on the user's next sign-in.
   return `Kx7-${body}!`;
