@@ -44,7 +44,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -56,11 +55,18 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
+import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSection";
+import { GroupedEventLog } from "@/components/maintenance/GroupedEventLog";
+import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
 import { TableSkeletonRows } from "@/components/TableSkeletonRows";
 import {
-  Wrench,
-  Zap,
   Activity,
   Timer,
   Plus,
@@ -68,19 +74,16 @@ import {
   FileDown,
   Repeat,
   Gauge,
-  CalendarCheck,
   Layers,
   AlertTriangle,
   Trash2,
   Clock,
   ChevronRight,
   List,
-  TrendingDown,
-  ChartScatter,
   Inbox,
   type LucideIcon,
   CalendarOff,
-  Snowflake,
+  MoreHorizontal,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -103,6 +106,7 @@ import {
   eventElapsedMinutes,
   openEventCount,
   nonProductionDayLookup,
+  faultKey,
 } from "@/lib/maintenance-format";
 import type { ClosedDays } from "@/lib/maintenance-format";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
@@ -111,6 +115,8 @@ import {
   maintenanceEventsQuery,
   openMaintenanceEventsQuery,
   maintenanceMetricsQuery,
+  computeMaintenanceMetrics,
+  reliabilityWindowStartMs,
   maintenanceStoppagesQuery,
   maintenanceStoppageQuery,
   stoppageEventsQuery,
@@ -158,11 +164,20 @@ function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onCli
       : e.type === "electrical"
         ? "border-l-warning"
         : "border-l-border";
+  // The whole card is clickable through one real <button> stretched over it —
+  // it used to be a <div onClick>, which Tab skips and screen readers don't
+  // announce as actionable. The badges stay outside the button (a <div> is
+  // not valid inside one).
   return (
     <div
-      onClick={onClick}
-      className={`flex cursor-pointer items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3`}
+      className={`relative flex items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3 focus-within:ring-2 focus-within:ring-ring`}
     >
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`${e.title}, ${e.production_lines?.name ?? "no line"}, ${STATUS_LABELS[e.status]}`}
+        className="absolute inset-0 rounded-r-lg focus-visible:outline-none"
+      />
       <div className="min-w-0">
         <p className="truncate text-sm font-medium leading-tight">{e.title}</p>
         <p className="truncate text-xs leading-tight text-muted-foreground">
@@ -195,10 +210,12 @@ function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onCli
 function MobileCollapsibleSection({
   title,
   count,
+  alert,
   children,
 }: {
   title: string;
   count?: number;
+  alert?: { count: number; label: string };
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -212,6 +229,15 @@ function MobileCollapsibleSection({
       >
         <span className="text-sm font-semibold">{title}</span>
         <span className="flex items-center gap-2">
+          {alert && alert.count > 0 && (
+            <Badge
+              variant="destructive"
+              className="h-5 min-w-5 justify-center px-1.5 text-xs leading-none"
+              aria-label={alert.label}
+            >
+              {alert.count}
+            </Badge>
+          )}
           {count !== undefined && (
             <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
           )}
@@ -258,11 +284,29 @@ function MiniKpiCard({
 
   return (
     <div className={`rounded-xl border border-border bg-gradient-to-br p-2 shadow-card ${tone}`}>
-      <p className="line-clamp-2 text-[9px] font-medium uppercase leading-tight tracking-wider text-muted-foreground">
+      <p className="line-clamp-2 text-[11px] font-medium uppercase leading-tight tracking-wider text-muted-foreground">
         {label}
       </p>
       <p className={`mt-1 whitespace-nowrap text-lg font-medium tabular-nums ${accent}`}>{value}</p>
       {sub && <p className="mt-1 hidden text-xs text-muted-foreground md:block">{sub}</p>}
+    </div>
+  );
+}
+
+// Every section states whether the filter bar above applies to it. The page
+// used to print "Showing: <filters>" over seven blocks of which four ignored
+// the filters — in the old MTBF / MTTR section, two tables side by side
+// disagreed on it.
+const FOLLOWS_FILTERS = "Follows the filters above";
+const NOT_FILTERED = "All records · not affected by filters";
+
+function SectionHeading({ title, scope, id }: { title: string; scope: string; id?: string }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <h2 id={id} className="text-base font-semibold md:text-lg">
+        {title}
+      </h2>
+      <ScopeChip>{scope}</ScopeChip>
     </div>
   );
 }
@@ -272,6 +316,10 @@ interface MaintenanceSidebarItem {
   label: string;
   icon: LucideIcon;
   count?: number;
+  // Something in the section needs attention (e.g. stoppages with no member
+  // events). Rendered as a red badge with its own accessible label, not a
+  // bare number that reads like a total.
+  alert?: { count: number; label: string };
 }
 
 interface MaintenanceSidebarGroup {
@@ -316,6 +364,15 @@ function MaintenanceSidebar({
                   {item.count !== undefined && (
                     <span className="shrink-0 text-xs tabular-nums opacity-70">{item.count}</span>
                   )}
+                  {item.alert && item.alert.count > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-5 min-w-5 justify-center px-1.5 text-xs leading-none"
+                      aria-label={item.alert.label}
+                    >
+                      {item.alert.count}
+                    </Badge>
+                  )}
                 </button>
               );
             })}
@@ -344,103 +401,6 @@ function reliabilityWindowLabel(reliabilityStartDate: string | null): string | n
     year: "numeric",
   });
   return `Avg. since ${formatted}`;
-}
-
-// The 8 headline KPI cards — extracted so both the mobile (always-visible,
-// current position) and desktop (inside the sidebar's Events section)
-// instances call the same JSX instead of duplicating it. `className`
-// controls the grid itself (columns/gap/visibility), everything else is
-// identical between the two call sites.
-function MaintenanceKpiGrid({
-  openMechanical,
-  mtbfMechanicalHours,
-  mttrMechanicalHours,
-  openElectrical,
-  mtbfElectricalHours,
-  mttrElectricalHours,
-  openPreventive,
-  openRefrigeration,
-  reliabilityStartDate,
-  className,
-}: {
-  openMechanical: number;
-  mtbfMechanicalHours: number | null;
-  mttrMechanicalHours: number | null;
-  openElectrical: number;
-  mtbfElectricalHours: number | null;
-  mttrElectricalHours: number | null;
-  openPreventive: number;
-  openRefrigeration: number;
-  reliabilityStartDate: string | null;
-  className: string;
-}) {
-  const windowLabel = reliabilityWindowLabel(reliabilityStartDate);
-  return (
-    <div className={className}>
-      <KpiCard
-        label="Open Mechanical"
-        value={String(openMechanical)}
-        icon={Wrench}
-        variant={openMechanical > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTBF (Mechanical)"
-        value={formatHours(mtbfMechanicalHours)}
-        sub={windowLabel ?? "Lifetime avg. time between failures"}
-        icon={Activity}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTTR (Mechanical)"
-        value={formatHours(mttrMechanicalHours)}
-        sub={windowLabel ?? "Lifetime avg. time to repair"}
-        icon={Timer}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Electrical"
-        value={String(openElectrical)}
-        icon={Zap}
-        variant={openElectrical > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTBF (Electrical)"
-        value={formatHours(mtbfElectricalHours)}
-        sub={windowLabel ?? "Lifetime avg. time between failures"}
-        icon={Activity}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTTR (Electrical)"
-        value={formatHours(mttrElectricalHours)}
-        sub={windowLabel ?? "Lifetime avg. time to repair"}
-        icon={Timer}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Preventive"
-        value={String(openPreventive)}
-        sub="Scheduled maintenance, not counted in MTBF"
-        icon={CalendarCheck}
-        variant={openPreventive > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Refrigeration"
-        value={String(openRefrigeration)}
-        sub="External contractor — counted in MTBF/MTTR"
-        icon={Snowflake}
-        variant={openRefrigeration > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-    </div>
-  );
 }
 
 // Non-production days: the calendar the downtime maths reads.
@@ -623,7 +583,22 @@ function NonProductionDaysSection({
 // which section (Events, Stoppages, Reliability, Top losses, MTBF / MTTR) is
 // active. Reliability and Top losses are driven by the same filter state as
 // Events, so the controls can't live inside EventsListCard's own Card.
+// YYYY-MM-DD for the local calendar day `daysAgo` days before today — the
+// same local-day convention the From/To inputs and the queries use.
+function localDayString(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function shortLocalDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
 function MaintenanceFilters({
+  reliabilityStartDate,
   lines,
   lineId,
   setLineId,
@@ -636,6 +611,7 @@ function MaintenanceFilters({
   to,
   setTo,
 }: {
+  reliabilityStartDate: string | null;
   lines: { id: string; name: string }[];
   lineId: string;
   setLineId: (v: string) => void;
@@ -649,9 +625,58 @@ function MaintenanceFilters({
   setTo: (v: string) => void;
 }) {
   const hasAny = Boolean(lineId || type || status || from || to);
+  const [moreFilters, setMoreFilters] = useState(false);
+  // One-tap periods. "Since <window>" is offered because it is the only
+  // period over which MTBF/MTTR mean the same thing throughout — the window
+  // exists because recording changed on that day.
+  const presets: { label: string; from: string }[] = [
+    { label: "7 days", from: localDayString(6) },
+    { label: "30 days", from: localDayString(29) },
+    { label: "90 days", from: localDayString(89) },
+    ...(reliabilityStartDate
+      ? [
+          {
+            label: `Since ${shortLocalDay(reliabilityStartDate)}`,
+            from: reliabilityStartDate,
+          },
+        ]
+      : []),
+    { label: "All time", from: "" },
+  ];
+  // Filters set but tucked away on mobile — counted on the toggle so a
+  // narrowed list never looks like the whole list. A From date that matches a
+  // period button is already visible there; any other From is hidden.
+  const presetActive = presets.some((p) => !to && from === p.from);
+  const hiddenActive = [type, status, to, presetActive ? "" : from].filter(Boolean).length;
   return (
     <Card className="mb-6">
       <CardContent className="pt-6">
+        <div
+          role="group"
+          aria-label="Period"
+          className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3"
+        >
+          <span className="mr-1 text-xs font-semibold">Period</span>
+          {presets.map((p) => {
+            const active = !to && from === p.from;
+            return (
+              <Button
+                key={p.label}
+                type="button"
+                size="sm"
+                variant={active ? "default" : "outline"}
+                aria-pressed={active}
+                className="h-11 md:h-9"
+                onClick={() => {
+                  setFrom(p.from);
+                  setTo("");
+                }}
+              >
+                {p.label}
+              </Button>
+            );
+          })}
+        </div>
         {/* Every control carries a visible label. Previously the three
             Selects had none while From/To did, so the labels sat above nothing
             and the five controls never shared a baseline. */}
@@ -672,54 +697,79 @@ function MaintenanceFilters({
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label className="text-xs">Type</Label>
-            <Select
-              value={type || "all"}
-              onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
-            >
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="mechanical">Mechanical</SelectItem>
-                <SelectItem value="electrical">Electrical</SelectItem>
-                <SelectItem value="preventive">Preventive Maintenance</SelectItem>
-                <SelectItem value="refrigeration">Refrigeration</SelectItem>
-              </SelectContent>
-            </Select>
+          {/* Mobile: Line and the period buttons stay visible; type, status and
+              the date pickers sit behind "More filters" so the filter card no
+              longer pushes every section below the first two screens. Desktop
+              (md:contents) lays them out in the same grid as before. */}
+          <div className={moreFilters ? "contents" : "hidden md:contents"}>
+            <div>
+              <Label className="text-xs">Type</Label>
+              <Select
+                value={type || "all"}
+                onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="mechanical">Mechanical</SelectItem>
+                  <SelectItem value="electrical">Electrical</SelectItem>
+                  <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                  <SelectItem value="refrigeration">Refrigeration</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select
+                value={status || "all"}
+                onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">From</Label>
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="h-9"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">To</Label>
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="h-9"
+              />
+            </div>
           </div>
-          <div>
-            <Label className="text-xs">Status</Label>
-            <Select
-              value={status || "all"}
-              onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
-            >
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">From</Label>
-            <Input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="h-9"
-            />
-          </div>
-          <div>
-            <Label className="text-xs">To</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" />
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 md:hidden"
+            aria-expanded={moreFilters}
+            onClick={() => setMoreFilters((v) => !v)}
+          >
+            {moreFilters ? "Fewer filters" : "More filters"}
+            {!moreFilters && hiddenActive > 0 && (
+              <span className="ml-2 rounded-full bg-primary px-2 text-xs text-primary-foreground">
+                {hiddenActive}
+              </span>
+            )}
+          </Button>
         </div>
         {/* Always present, disabled when nothing is set — it used to appear
             only once a filter was applied, so the bar changed height under the
@@ -785,6 +835,7 @@ function EventsListCard({
   isLoading,
   events,
   onSelectEvent,
+  downtimeByKey,
 }: {
   lines: { id: string; name: string }[];
   lineId: string;
@@ -800,7 +851,10 @@ function EventsListCard({
   isLoading: boolean;
   events: MaintenanceEvent[];
   onSelectEvent: (e: MaintenanceEvent) => void;
+  downtimeByKey: Map<string, number>;
 }) {
+  // Grouped by fault by default. One row per event is one switch away.
+  const [grouped, setGrouped] = useState(true);
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(1);
   // Reset to page 1 whenever the actual filters change — not whenever
@@ -816,149 +870,186 @@ function EventsListCard({
 
   return (
     <Card>
-      <CardContent>
-        {/* Mobile: one card per event instead of the table below (which is
+      <CardContent className="pt-4">
+        <div className="mb-3 flex items-center justify-between gap-3 border-b border-border pb-3">
+          <Label
+            htmlFor="group-repeats"
+            className="flex min-h-[44px] cursor-pointer items-center gap-3 text-sm font-medium md:min-h-0"
+          >
+            <Switch id="group-repeats" checked={grouped} onCheckedChange={setGrouped} />
+            Group repeated faults
+          </Label>
+          <span className="text-xs text-muted-foreground">
+            {grouped ? "One row per fault" : "One row per event"}
+          </span>
+        </div>
+        {grouped ? (
+          <GroupedEventLog
+            events={events}
+            isLoading={isLoading}
+            downtimeByKey={downtimeByKey}
+            resetKey={filterKey}
+            onSelectEvent={onSelectEvent}
+            onShowAll={() => setGrouped(false)}
+          />
+        ) : (
+          <>
+            {/* Mobile: one card per event instead of the table below (which is
             desktop-only, hidden md:block, fully unchanged) — same
             events/isLoading data and the same durationMs/firstNote
             derivations as the table rows use. */}
-        <div className="space-y-2 md:hidden">
-          {isLoading && (
-            <div className="flex justify-center py-10">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          )}
-          {!isLoading && events.length === 0 && (
-            <div className="py-10 text-center">
-              <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
-              <p className="mt-2 text-sm text-muted-foreground">
-                No maintenance events match this filter.
-              </p>
-            </div>
-          )}
-          {pageRows.map((e) => (
-            <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
-          ))}
-        </div>
-
-        <div className="hidden md:block">
-          <Table stickyHeader>
-            <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
-              <TableRow>
-                <TableHead>Event</TableHead>
-                <TableHead className="hidden md:table-cell">Line</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="hidden sm:table-cell">Severity</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden lg:table-cell">Started</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="hidden md:table-cell">Technician</TableHead>
-                <TableHead className="hidden md:table-cell">Notes</TableHead>
-                <TableHead className="hidden lg:table-cell">Closed by</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading && <TableSkeletonRows columns={10} />}
-              {!isLoading && events.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={10}
-                    className="py-10 text-center text-sm text-muted-foreground"
-                  >
-                    <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
-                    <p className="mt-2">No maintenance events match this filter.</p>
-                  </TableCell>
-                </TableRow>
+            <div className="space-y-2 md:hidden">
+              {isLoading && (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
               )}
-              {pageRows.map((e) => {
-                const durationMs = eventElapsedMinutes(e) * 60_000;
-                const firstNote = e.maintenance_notes[0]?.note;
-                return (
-                  <TableRow
-                    key={e.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => onSelectEvent(e)}
-                  >
-                    <TableCell>
-                      <p className="text-sm font-medium leading-tight">{e.title}</p>
-                      {e.description && (
-                        <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
-                          {e.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {e.production_lines?.name ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
-                        {e.stoppage_id && (
-                          <Badge variant="outline" className="text-[10px]">
-                            Part of Stoppage
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {e.severity_label ? (
-                        <Badge variant={severityBadgeVariant(e.severity_label)}>
-                          {e.severity_label}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusBadgeVariant(e.status)}>
-                        {STATUS_LABELS[e.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {new Date(e.started_at).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-sm tabular-nums">
-                      {formatDuration(durationMs)}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                      {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                      {firstNote ? truncateNote(firstNote) : "—"}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {e.status === "resolved"
-                        ? e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—"
-                        : "—"}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+              {!isLoading && events.length === 0 && (
+                <div className="py-10 text-center">
+                  <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No maintenance events match this filter.
+                  </p>
+                </div>
+              )}
+              {pageRows.map((e) => (
+                <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
+              ))}
+            </div>
 
-        {events.length > 0 && (
-          <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
-            <span>
-              {events.length} event{events.length === 1 ? "" : "s"} · Page {page} of {totalPages}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
+            <div className="hidden md:block">
+              <Table stickyHeader>
+                <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+                  <TableRow>
+                    <TableHead>Event</TableHead>
+                    <TableHead className="hidden md:table-cell">Line</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="hidden sm:table-cell">Severity</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden lg:table-cell">Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead className="hidden md:table-cell">Technician</TableHead>
+                    <TableHead className="hidden md:table-cell">Notes</TableHead>
+                    <TableHead className="hidden lg:table-cell">Closed by</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading && <TableSkeletonRows columns={10} />}
+                  {!isLoading && events.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={10}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                        <p className="mt-2">No maintenance events match this filter.</p>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {pageRows.map((e) => {
+                    const durationMs = eventElapsedMinutes(e) * 60_000;
+                    const firstNote = e.maintenance_notes[0]?.note;
+                    return (
+                      <TableRow
+                        key={e.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => onSelectEvent(e)}
+                      >
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              onSelectEvent(e);
+                            }}
+                            className="text-left text-sm font-medium leading-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {e.title}
+                          </button>
+                          {e.description && (
+                            <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
+                              {e.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                          {e.production_lines?.name ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                            {e.stoppage_id && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Part of Stoppage
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {e.severity_label ? (
+                            <Badge variant={severityBadgeVariant(e.severity_label)}>
+                              {e.severity_label}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusBadgeVariant(e.status)}>
+                            {STATUS_LABELS[e.status]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                          {new Date(e.started_at).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-sm tabular-nums">
+                          {formatDuration(durationMs)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                          {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                          {firstNote ? truncateNote(firstNote) : "—"}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                          {e.status === "resolved"
+                            ? e.resolved_by_profile?.display_name ||
+                              e.resolved_by_profile?.email ||
+                              "—"
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {events.length > 0 && (
+              <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
+                <span>
+                  {events.length} event{events.length === 1 ? "" : "s"} · Page {page} of{" "}
+                  {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
@@ -973,7 +1064,7 @@ function MaintenancePage() {
   const qc = useQueryClient();
 
   const [lineId, setLineId] = useState("");
-  const [activeSection, setActiveSection] = useState("events");
+  const [activeSection, setActiveSection] = useState("overview");
   const [type, setType] = useState<MaintenanceType | "">("");
   const [status, setStatus] = useState<MaintenanceStatus | "">("");
   const [from, setFrom] = useState("");
@@ -1017,6 +1108,28 @@ function MaintenancePage() {
     maintenanceEventsQuery(lineId || null, type || null, status || null, from || null, to || null),
   );
 
+  // Every MTBF / MTTR / Availability on this page — and the PDF's period
+  // figures — reads THESE events: the page's filters, clipped to the declared
+  // reliability window, fed through the same computeMaintenanceMetrics the
+  // plant-wide query uses. Before this, Equipment Availability came from the
+  // filtered events with NO window while the MTBF cards came from the window
+  // with NO filters, so one page showed MTBF 1.55 h and an availability built
+  // on 2.02 h (25 Sep 2026, unfiltered). The window only ever narrows the
+  // reliability maths; the event list, open counts, downtime and top losses
+  // keep every real event (see maintenanceMetricsQuery).
+  const windowStartMs = reliabilityWindowStartMs(reliabilityStartDate);
+  const reliabilityEvents = useMemo(
+    () =>
+      windowStartMs === null
+        ? events
+        : events.filter((e) => new Date(e.started_at).getTime() >= windowStartMs),
+    [events, windowStartMs],
+  );
+  const periodMetrics = useMemo(
+    () => computeMaintenanceMetrics(reliabilityEvents),
+    [reliabilityEvents],
+  );
+
   // Covers every query-key prefix a stoppage can be cached under (list,
   // single-row detail, member-event list) — see maintenanceStoppagesQuery /
   // maintenanceStoppageQuery / stoppageEventsQuery in src/lib/queries.ts.
@@ -1035,16 +1148,6 @@ function MaintenancePage() {
   const openElectrical = openFaults.filter((e) => e.type === "electrical").length;
   const openPreventive = openFaults.filter((e) => e.type === "preventive").length;
   const openRefrigeration = openFaults.filter((e) => e.type === "refrigeration").length;
-  // Mobile-only "stays visible, never collapses" list — same open predicate
-  // and plant-wide (allEvents, not the filtered `events`) scope as the
-  // Open Mechanical/Electrical/Preventive KPI cards above, most-recent first.
-  const openEvents = useMemo(
-    () =>
-      allEvents
-        .filter((e) => e.status !== "resolved")
-        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
-    [allEvents],
-  );
 
   const mtbfMechanicalHours = useMemo(
     () => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"),
@@ -1060,20 +1163,6 @@ function MaintenancePage() {
   );
   const mttrElectricalHours = useMemo(
     () => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"),
-    [metrics],
-  );
-  // Mechanical + electrical + refrigeration pooled — same weighted-average
-  // formula as weightedAverage() above, just spanning all three unplanned
-  // types at once instead of one, for the mobile-only combined MTBF/MTTR
-  // mini KPIs. Refrigeration counts here because it's unplanned downtime
-  // (external contractor faults), same as mechanical/electrical — unlike
-  // preventive, which is scheduled and excluded from MTBF/MTTR entirely.
-  const mtbfCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mtbf_hours", "mtbf_gap_count"),
-    [metrics],
-  );
-  const mttrCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mttr_hours", "mttr_sample_count"),
     [metrics],
   );
 
@@ -1140,8 +1229,18 @@ function MaintenancePage() {
     const totalDowntimeMinutes = totalDowntimeMinutesOf(collapsedEvents, closedDays);
     const openCount = openEventCount(collapsedEvents);
     const repeatFailureRatePct = repeatFailureRateOf(events);
-    const mtbfHours = localMtbfHours(events);
-    const mttrHours = localMttrHours(events);
+    const mtbfHours = weightedAverage(
+      periodMetrics,
+      ["mechanical", "electrical", "refrigeration"],
+      "mtbf_hours",
+      "mtbf_gap_count",
+    );
+    const mttrHours = weightedAverage(
+      periodMetrics,
+      ["mechanical", "electrical", "refrigeration"],
+      "mttr_hours",
+      "mttr_sample_count",
+    );
     const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
     return {
       totalDowntimeMinutes,
@@ -1151,7 +1250,7 @@ function MaintenancePage() {
       mttrHours,
       availabilityPct,
     };
-  }, [events, collapsedEvents, closedDays]);
+  }, [events, collapsedEvents, closedDays, periodMetrics]);
 
   const titleAggregates = useMemo(
     () => aggregateByTitle(collapsedEvents, closedDays),
@@ -1173,6 +1272,13 @@ function MaintenancePage() {
         closedDays,
       ),
     [collapsedEvents, closedDays],
+  );
+
+  // Top Losses' own per-title downtime, keyed the way it aggregates — the
+  // grouped event log reads "Time lost" from here so the two can't disagree.
+  const downtimeByKey = useMemo(
+    () => new Map(titleAggregates.map((t) => [faultKey(t.title), t.totalMinutes])),
+    [titleAggregates],
   );
 
   const topLossesByDowntime = useMemo(
@@ -1234,7 +1340,10 @@ function MaintenancePage() {
       })
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
   }, [failureTitleAggregates, reliabilitySummary.mttrHours]);
-  const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
+  const reliabilityByLine = useMemo(
+    () => reliabilityByLineOf(reliabilityEvents),
+    [reliabilityEvents],
+  );
   // Stoppages referenced by the currently-filtered `events` — same
   // "exported (currently filtered) events" semantics reliabilityByLine
   // above already uses, so the PDF report's Stoppages summary always
@@ -1378,10 +1487,18 @@ function MaintenancePage() {
         openPreventiveCount: events.filter(
           (e) => e.type === "preventive" && e.status !== "resolved",
         ).length,
-        mtbfMechanicalHours: localMtbfHours(events.filter((e) => e.type === "mechanical")),
-        mttrMechanicalHours: localMttrHours(events.filter((e) => e.type === "mechanical")),
-        mtbfElectricalHours: localMtbfHours(events.filter((e) => e.type === "electrical")),
-        mttrElectricalHours: localMttrHours(events.filter((e) => e.type === "electrical")),
+        mtbfMechanicalHours: localMtbfHours(
+          reliabilityEvents.filter((e) => e.type === "mechanical"),
+        ),
+        mttrMechanicalHours: localMttrHours(
+          reliabilityEvents.filter((e) => e.type === "mechanical"),
+        ),
+        mtbfElectricalHours: localMtbfHours(
+          reliabilityEvents.filter((e) => e.type === "electrical"),
+        ),
+        mttrElectricalHours: localMttrHours(
+          reliabilityEvents.filter((e) => e.type === "electrical"),
+        ),
         lifetimeTotalEvents: allEvents.length,
         lifetimeOpenCount: openMechanical + openElectrical + openRefrigeration,
         lifetimeOpenPreventiveCount: openPreventive,
@@ -1429,82 +1546,42 @@ function MaintenancePage() {
             Events &amp; reliability metrics
           </p>
         </div>
-        {canEdit && (
-          <Button
-            size="sm"
-            className="shrink-0 bg-accent text-accent-foreground hover:bg-accent/90"
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            Event
-          </Button>
-        )}
-      </div>
-
-      {/* Mobile-only quick actions — 2x2 grid, icon over label. */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
-        {canEdit && (
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="flex flex-col items-center gap-1 rounded-lg bg-accent p-3 text-accent-foreground"
-          >
-            <Plus className="h-[18px] w-[18px]" />
-            <span className="text-xs font-medium">New event</span>
-          </button>
-        )}
-        {canEdit && (
-          <button
-            onClick={() => setStoppageDialogOpen(true)}
-            className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
-          >
-            <Layers className="h-[18px] w-[18px]" />
-            <span className="text-xs font-medium">New stoppage</span>
-          </button>
-        )}
-        <button
-          onClick={handleExportReport}
-          disabled={exportingReport}
-          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground disabled:opacity-50"
-        >
-          {exportingReport ? (
-            <Loader2 className="h-[18px] w-[18px] animate-spin" />
-          ) : (
-            <FileDown className="h-[18px] w-[18px]" />
+        <div className="flex shrink-0 items-center gap-2">
+          {canEdit && (
+            <Button
+              className="h-11 bg-accent text-accent-foreground hover:bg-accent/90"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Event
+            </Button>
           )}
-          <span className="text-xs font-medium">Export report</span>
-        </button>
-        <button
-          onClick={() =>
-            document
-              .getElementById("reliability-analytics")
-              ?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
-        >
-          <Gauge className="h-[18px] w-[18px]" />
-          <span className="text-xs font-medium">Analytics</span>
-        </button>
-      </div>
-
-      {/* Mobile-only mini KPI row — MTBF/MTTR combined across mechanical +
-          electrical (same weighted-average formula as the Mechanical/
-          Electrical KPI cards below, just pooled across both types instead
-          of filtered to one) and Open = open mechanical + open electrical,
-          same definition the PDF report's openCount already uses. */}
-      <div className="mb-4 grid grid-cols-3 gap-1 md:hidden">
-        <div className="rounded-lg bg-muted p-2 text-center">
-          <p className="text-[10px] text-muted-foreground">MTBF</p>
-          <p className="text-sm font-semibold">{formatHours(mtbfCombinedHours)}</p>
-        </div>
-        <div className="rounded-lg bg-muted p-2 text-center">
-          <p className="text-[10px] text-muted-foreground">MTTR</p>
-          <p className="text-sm font-semibold">{formatHours(mttrCombinedHours)}</p>
-        </div>
-        <div className="rounded-lg bg-destructive p-2 text-center">
-          <p className="text-[10px] text-destructive-foreground/80">Open</p>
-          <p className="text-sm font-semibold text-destructive-foreground">
-            {openMechanical + openElectrical}
-          </p>
+          {/* Secondary actions live behind one menu on mobile. They used to be
+              a 2x2 tile grid that repeated "New event" (already the button
+              beside this) and carried an "Analytics" tile that scrolled to a
+              section still collapsed — so its first tap did nothing. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-11 w-11" aria-label="More actions">
+                <MoreHorizontal className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => setStoppageDialogOpen(true)}>
+                  <Layers className="mr-2 h-4 w-4" />
+                  New stoppage
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onSelect={() => void handleExportReport()}
+                disabled={exportingReport}
+              >
+                <FileDown className="mr-2 h-4 w-4" />
+                {exportingReport ? reportProgress || "Exporting…" : "Export report"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1539,10 +1616,17 @@ function MaintenancePage() {
         </div>
       </div>
 
+      <RightNowSection
+        openFaults={openFaults}
+        stoppages={stoppages}
+        onSelectEvent={setSelectedEvent}
+      />
+
       {/* Filter bar — page-scoped (outside both the mobile stack and the
           desktop sidebar+content grid below), so it renders once and stays
           visible across every section on both viewports. */}
       <MaintenanceFilters
+        reliabilityStartDate={reliabilityStartDate}
         lines={lines}
         lineId={lineId}
         setLineId={setLineId}
@@ -1556,174 +1640,149 @@ function MaintenancePage() {
         setTo={setTo}
       />
 
-      {/* Mobile: stays in this always-visible position exactly as before.
-          Desktop: this exact grid (same MaintenanceKpiGrid) moves inside the
-          sidebar's Events section instead — see renderActiveSection below. */}
-      <MaintenanceKpiGrid
-        openMechanical={openMechanical}
-        mtbfMechanicalHours={mtbfMechanicalHours}
-        mttrMechanicalHours={mttrMechanicalHours}
-        openElectrical={openElectrical}
-        mtbfElectricalHours={mtbfElectricalHours}
-        mttrElectricalHours={mttrElectricalHours}
-        openPreventive={openPreventive}
-        openRefrigeration={openRefrigeration}
-        reliabilityStartDate={reliabilityStartDate}
-        className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 md:hidden"
-      />
-
-      {/* Mobile-only, always visible — never collapses, even while the
-          section below is closed, so open faults stay in view. */}
-      {openEvents.length > 0 && (
-        <div className="mb-4 space-y-2 md:hidden">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Open events ({openEvents.length})
-          </p>
-          {openEvents.map((e) => (
-            <MobileEventCard key={e.id} event={e} onClick={() => setSelectedEvent(e)} />
-          ))}
-        </div>
-      )}
-
-      {/* Mobile only below this point through MetricsTable — desktop (md:)
-          uses the sidebar layout instead (renderActiveSection below), which
-          covers the exact same content via the same extracted components. */}
-      <div className="md:hidden">
-        <MobileCollapsibleSection title="Maintenance events" count={events.length}>
-          <Tabs defaultValue="events">
-            <TabsList>
-              <TabsTrigger value="events">Events</TabsTrigger>
-              <TabsTrigger value="stoppages" className="gap-1.5">
-                Stoppages
-                {orphanedStoppageCount > 0 && (
-                  <Badge
-                    variant="destructive"
-                    className="h-4 min-w-4 justify-center px-1 text-[10px] leading-none"
-                  >
-                    {orphanedStoppageCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="events">
-              <EventsListCard
-                lines={lines}
-                lineId={lineId}
-                setLineId={setLineId}
-                type={type}
-                setType={setType}
-                status={status}
-                setStatus={setStatus}
-                from={from}
-                setFrom={setFrom}
-                to={to}
-                setTo={setTo}
-                isLoading={isLoading}
-                events={events}
-                onSelectEvent={setSelectedEvent}
-              />
-            </TabsContent>
-
-            <TabsContent value="stoppages">
-              <StoppagesSection
-                rows={allStoppageRows}
-                canDelete={canDelete}
-                onView={setViewStoppageId}
-                onDelete={handleDeleteStoppage}
-              />
-            </TabsContent>
-          </Tabs>
+      {/* Mobile: every section below the filters is collapsed by default so
+          the first screen is Right now + filters. Desktop: one section at a
+          time from the sidebar. Both render the same extracted components
+          with the same props. */}
+      <div className="space-y-3 md:hidden">
+        <MobileCollapsibleSection title="Losses & reliability">
+          <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
+          <ReliabilityAnalyticsSection
+            totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+            openCount={reliabilitySummary.openCount}
+            repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+            availabilityPct={reliabilitySummary.availabilityPct}
+            windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
+            topLossesByDowntime={topLossesByDowntime}
+            topLossesByFrequency={topLossesByFrequency}
+            meanDowntimePerFault={meanDowntimePerFault}
+            chronicVsSporadic={chronicVsSporadic}
+            reliabilityByLine={reliabilityByLine}
+          />
+          <div className="mt-4">
+            <MetricsTable metrics={periodMetrics} />
+          </div>
         </MobileCollapsibleSection>
 
-        <div className="mt-6 md:mt-0">
-          <MobileCollapsibleSection title="Non-production days" count={nonProductionDays.length}>
-            <NonProductionDaysSection
-              rows={nonProductionDays}
-              lines={lines}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              onAdd={handleAddNonProductionDay}
-              onDelete={handleDeleteNonProductionDay}
-            />
-          </MobileCollapsibleSection>
-        </div>
+        <MobileCollapsibleSection title="Event log" count={events.length}>
+          <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
+          <EventsListCard
+            lines={lines}
+            lineId={lineId}
+            setLineId={setLineId}
+            type={type}
+            setType={setType}
+            status={status}
+            setStatus={setStatus}
+            from={from}
+            setFrom={setFrom}
+            to={to}
+            setTo={setTo}
+            isLoading={isLoading}
+            events={events}
+            onSelectEvent={setSelectedEvent}
+            downtimeByKey={downtimeByKey}
+          />
+        </MobileCollapsibleSection>
 
-        <div className="mt-6 md:mt-0">
-          <MobileCollapsibleSection title="Reliability Analytics">
-            <ReliabilityAnalyticsSection
-              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
-              openCount={reliabilitySummary.openCount}
-              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
-              availabilityPct={reliabilitySummary.availabilityPct}
-              topLossesByDowntime={topLossesByDowntime}
-              topLossesByFrequency={topLossesByFrequency}
-              meanDowntimePerFault={meanDowntimePerFault}
-              chronicVsSporadic={chronicVsSporadic}
-              reliabilityByLine={reliabilityByLine}
-            />
-          </MobileCollapsibleSection>
-        </div>
+        <MobileCollapsibleSection
+          title="Stoppages"
+          alert={{
+            count: orphanedStoppageCount,
+            label: `${orphanedStoppageCount} stoppage(s) with no events`,
+          }}
+        >
+          <p className="mb-3 text-xs text-muted-foreground">{NOT_FILTERED}</p>
+          <StoppagesSection
+            rows={allStoppageRows}
+            canDelete={canDelete}
+            onView={setViewStoppageId}
+            onDelete={handleDeleteStoppage}
+          />
+        </MobileCollapsibleSection>
 
-        <MetricsTable metrics={metrics} />
+        <MobileCollapsibleSection title="Non-production days">
+          <p className="mb-3 text-xs text-muted-foreground">{NOT_FILTERED}</p>
+          <NonProductionDaysSection
+            rows={nonProductionDays}
+            lines={lines}
+            canEdit={canEdit}
+            canDelete={canDelete}
+            onAdd={handleAddNonProductionDay}
+            onDelete={handleDeleteNonProductionDay}
+          />
+        </MobileCollapsibleSection>
       </div>
 
-      {/* Desktop (md: and up): sidebar layout — Overview (Events, Stoppages)
-          and Analytics (Reliability, Top losses, MTBF / MTTR) groups, one
-          section active at a time via the same extracted
-          components/data/props the mobile view above uses. */}
+      {/* Desktop (md: and up): four sections. Overview holds everything that
+          answers "what is costing us time, and are we getting better" — it
+          used to be three sidebar items, one of which (Reliability) was three
+          cards on its own page. */}
       <div className="mt-6 hidden gap-6 md:grid md:grid-cols-[200px_1fr]">
         <MaintenanceSidebar
           groups={[
             {
-              label: "Overview",
+              label: "Maintenance",
               items: [
-                // events.length is a full-table length once unfiltered — it
-                // depends on maintenanceEventsQuery's selectAllRows paging
-                // (src/lib/queries.ts) to be truthful. Don't reintroduce an
-                // un-ranged select there, or this silently caps again.
-                { id: "events", label: "Events", icon: List, count: events.length },
+                { id: "overview", label: "Overview", icon: Activity },
+                { id: "events", label: "Event log", icon: List },
                 {
                   id: "stoppages",
                   label: "Stoppages",
                   icon: Layers,
-                  count: allStoppageRows.length,
+                  alert: {
+                    count: orphanedStoppageCount,
+                    label: `${orphanedStoppageCount} stoppage(s) with no events`,
+                  },
                 },
-                {
-                  id: "nonProduction",
-                  label: "Non-production days",
-                  icon: CalendarOff,
-                  count: nonProductionDays.length,
-                },
-              ],
-            },
-            {
-              label: "Analytics",
-              items: [
-                { id: "reliability", label: "Reliability", icon: ChartScatter },
-                { id: "topLosses", label: "Top losses", icon: TrendingDown },
-                { id: "mtbf", label: "MTBF / MTTR", icon: Activity },
+                { id: "nonProduction", label: "Non-production days", icon: CalendarOff },
               ],
             },
           ]}
           active={activeSection}
           onSelect={setActiveSection}
         />
-        <div>
+        <div className="min-w-0">
+          {activeSection === "overview" && (
+            <div className="space-y-8">
+              <section aria-labelledby="losses-heading">
+                <SectionHeading
+                  id="losses-heading"
+                  title="What’s costing us time"
+                  scope={FOLLOWS_FILTERS}
+                />
+                <TopLossesGrid
+                  topLossesByDowntime={topLossesByDowntime}
+                  topLossesByFrequency={topLossesByFrequency}
+                  meanDowntimePerFault={meanDowntimePerFault}
+                  chronicVsSporadic={chronicVsSporadic}
+                />
+              </section>
+              <section aria-labelledby="reliability-heading" className="space-y-6">
+                <SectionHeading
+                  id="reliability-heading"
+                  title="Reliability"
+                  scope={`${FOLLOWS_FILTERS}${
+                    reliabilityStartDate
+                      ? ` · ${reliabilityWindowLabel(reliabilityStartDate)?.replace(/^Avg\./, "avg.")}`
+                      : ""
+                  } · preventive excluded`}
+                />
+                <ReliabilityHeadlineCards
+                  totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+                  openCount={reliabilitySummary.openCount}
+                  repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+                  availabilityPct={reliabilitySummary.availabilityPct}
+                  windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
+                />
+                <MetricsTable metrics={periodMetrics} />
+                <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
+              </section>
+            </div>
+          )}
           {activeSection === "events" && (
-            <div className="space-y-6">
-              <MaintenanceKpiGrid
-                openMechanical={openMechanical}
-                mtbfMechanicalHours={mtbfMechanicalHours}
-                mttrMechanicalHours={mttrMechanicalHours}
-                openElectrical={openElectrical}
-                mtbfElectricalHours={mtbfElectricalHours}
-                mttrElectricalHours={mttrElectricalHours}
-                openPreventive={openPreventive}
-                openRefrigeration={openRefrigeration}
-                reliabilityStartDate={reliabilityStartDate}
-                className="grid grid-cols-3 gap-4"
-              />
+            <section aria-labelledby="log-heading">
+              <SectionHeading id="log-heading" title="Event log" scope={FOLLOWS_FILTERS} />
               <EventsListCard
                 lines={lines}
                 lineId={lineId}
@@ -1739,49 +1798,37 @@ function MaintenancePage() {
                 isLoading={isLoading}
                 events={events}
                 onSelectEvent={setSelectedEvent}
+                downtimeByKey={downtimeByKey}
               />
-            </div>
+            </section>
           )}
           {activeSection === "stoppages" && (
-            <StoppagesSection
-              rows={allStoppageRows}
-              canDelete={canDelete}
-              onView={setViewStoppageId}
-              onDelete={handleDeleteStoppage}
-            />
+            <section aria-labelledby="stoppages-heading">
+              <SectionHeading id="stoppages-heading" title="Stoppages" scope={NOT_FILTERED} />
+              <StoppagesSection
+                rows={allStoppageRows}
+                canDelete={canDelete}
+                onView={setViewStoppageId}
+                onDelete={handleDeleteStoppage}
+              />
+            </section>
           )}
           {activeSection === "nonProduction" && (
-            <NonProductionDaysSection
-              rows={nonProductionDays}
-              lines={lines}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              onAdd={handleAddNonProductionDay}
-              onDelete={handleDeleteNonProductionDay}
-            />
-          )}
-
-          {activeSection === "reliability" && (
-            <ReliabilityHeadlineCards
-              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
-              openCount={reliabilitySummary.openCount}
-              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
-              availabilityPct={reliabilitySummary.availabilityPct}
-            />
-          )}
-          {activeSection === "topLosses" && (
-            <TopLossesGrid
-              topLossesByDowntime={topLossesByDowntime}
-              topLossesByFrequency={topLossesByFrequency}
-              meanDowntimePerFault={meanDowntimePerFault}
-              chronicVsSporadic={chronicVsSporadic}
-            />
-          )}
-          {activeSection === "mtbf" && (
-            <div className="space-y-6">
-              <MetricsTable metrics={metrics} />
-              <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
-            </div>
+            <section aria-labelledby="nonprod-heading">
+              <SectionHeading
+                id="nonprod-heading"
+                title="Non-production days"
+                scope={NOT_FILTERED}
+              />
+              <NonProductionDaysSection
+                rows={nonProductionDays}
+                lines={lines}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                onAdd={handleAddNonProductionDay}
+                onDelete={handleDeleteNonProductionDay}
+              />
+            </section>
           )}
         </div>
       </div>
@@ -2108,11 +2155,13 @@ function ReliabilityHeadlineCards({
   openCount,
   repeatFailureRatePct,
   availabilityPct,
+  windowLabel,
 }: {
   totalDowntimeMinutes: number;
   openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
+  windowLabel: string | null;
 }) {
   // An open event's cost is unknown, so it is not in the total above. Saying so
   // is not optional: a total that quietly omits an unresolved 41-hour fault is
@@ -2134,6 +2183,10 @@ function ReliabilityHeadlineCards({
           ? "warning"
           : "danger";
   const availabilityValue = availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`;
+  // Unplanned = mechanical + electrical + refrigeration (preventive is
+  // scheduled). The old copy said "mechanical/electrical only", which was
+  // never what the maths did.
+  const availabilitySub = `Unplanned faults${windowLabel ? `, ${windowLabel.replace(/^Avg\./, "avg.")}` : ""} · MTBF ÷ (MTBF + MTTR)`;
 
   return (
     <>
@@ -2158,7 +2211,7 @@ function ReliabilityHeadlineCards({
         <MiniKpiCard
           label="Equipment Availability"
           value={availabilityValue}
-          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
+          sub={availabilitySub}
           variant={availabilityVariant}
         />
       </div>
@@ -2181,7 +2234,7 @@ function ReliabilityHeadlineCards({
         <KpiCard
           label="Equipment Availability"
           value={availabilityValue}
-          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
+          sub={availabilitySub}
           icon={Gauge}
           variant={availabilityVariant}
         />
@@ -2520,6 +2573,7 @@ function ReliabilityAnalyticsSection({
   openCount,
   repeatFailureRatePct,
   availabilityPct,
+  windowLabel,
   topLossesByDowntime,
   topLossesByFrequency,
   meanDowntimePerFault,
@@ -2530,6 +2584,7 @@ function ReliabilityAnalyticsSection({
   openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
+  windowLabel: string | null;
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
@@ -2541,18 +2596,13 @@ function ReliabilityAnalyticsSection({
   reliabilityByLine: LineReliability[];
 }) {
   return (
-    <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
-      <div>
-        <h2 className="text-lg font-semibold">Reliability Analytics</h2>
-        <p className="text-sm text-muted-foreground">
-          Computed from the events matching the filters above.
-        </p>
-      </div>
+    <div className="space-y-4">
       <ReliabilityHeadlineCards
         totalDowntimeMinutes={totalDowntimeMinutes}
         openCount={openCount}
         repeatFailureRatePct={repeatFailureRatePct}
         availabilityPct={availabilityPct}
+        windowLabel={windowLabel}
       />
       <TopLossesGrid
         topLossesByDowntime={topLossesByDowntime}
@@ -2573,11 +2623,11 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">MTBF / MTTR by Line & Type</h2>
           <Badge variant="outline" className="font-normal text-muted-foreground">
-            Not affected by filters
+            Follows the filters above
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Lifetime reliability across all data. Sorted worst MTBF first.
+          Unplanned faults inside the reliability window. Sorted worst MTBF first.
         </p>
       </CardHeader>
       <CardContent>
