@@ -44,7 +44,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -56,7 +55,7 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
-import { RightNowSection } from "@/components/maintenance/RightNowSection";
+import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSection";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -79,8 +78,6 @@ import {
   Clock,
   ChevronRight,
   List,
-  TrendingDown,
-  ChartScatter,
   Inbox,
   type LucideIcon,
   CalendarOff,
@@ -201,10 +198,12 @@ function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onCli
 function MobileCollapsibleSection({
   title,
   count,
+  alert,
   children,
 }: {
   title: string;
   count?: number;
+  alert?: { count: number; label: string };
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -218,6 +217,15 @@ function MobileCollapsibleSection({
       >
         <span className="text-sm font-semibold">{title}</span>
         <span className="flex items-center gap-2">
+          {alert && alert.count > 0 && (
+            <Badge
+              variant="destructive"
+              className="h-5 min-w-5 justify-center px-1.5 text-xs leading-none"
+              aria-label={alert.label}
+            >
+              {alert.count}
+            </Badge>
+          )}
           {count !== undefined && (
             <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
           )}
@@ -273,11 +281,33 @@ function MiniKpiCard({
   );
 }
 
+// Every section states whether the filter bar above applies to it. The page
+// used to print "Showing: <filters>" over seven blocks of which four ignored
+// the filters — in the old MTBF / MTTR section, two tables side by side
+// disagreed on it.
+const FOLLOWS_FILTERS = "Follows the filters above";
+const NOT_FILTERED = "All records · not affected by filters";
+
+function SectionHeading({ title, scope, id }: { title: string; scope: string; id?: string }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <h2 id={id} className="text-base font-semibold md:text-lg">
+        {title}
+      </h2>
+      <ScopeChip>{scope}</ScopeChip>
+    </div>
+  );
+}
+
 interface MaintenanceSidebarItem {
   id: string;
   label: string;
   icon: LucideIcon;
   count?: number;
+  // Something in the section needs attention (e.g. stoppages with no member
+  // events). Rendered as a red badge with its own accessible label, not a
+  // bare number that reads like a total.
+  alert?: { count: number; label: string };
 }
 
 interface MaintenanceSidebarGroup {
@@ -321,6 +351,15 @@ function MaintenanceSidebar({
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {item.count !== undefined && (
                     <span className="shrink-0 text-xs tabular-nums opacity-70">{item.count}</span>
+                  )}
+                  {item.alert && item.alert.count > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-5 min-w-5 justify-center px-1.5 text-xs leading-none"
+                      aria-label={item.alert.label}
+                    >
+                      {item.alert.count}
+                    </Badge>
                   )}
                 </button>
               );
@@ -532,7 +571,22 @@ function NonProductionDaysSection({
 // which section (Events, Stoppages, Reliability, Top losses, MTBF / MTTR) is
 // active. Reliability and Top losses are driven by the same filter state as
 // Events, so the controls can't live inside EventsListCard's own Card.
+// YYYY-MM-DD for the local calendar day `daysAgo` days before today — the
+// same local-day convention the From/To inputs and the queries use.
+function localDayString(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function shortLocalDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
 function MaintenanceFilters({
+  reliabilityStartDate,
   lines,
   lineId,
   setLineId,
@@ -545,6 +599,7 @@ function MaintenanceFilters({
   to,
   setTo,
 }: {
+  reliabilityStartDate: string | null;
   lines: { id: string; name: string }[];
   lineId: string;
   setLineId: (v: string) => void;
@@ -558,9 +613,52 @@ function MaintenanceFilters({
   setTo: (v: string) => void;
 }) {
   const hasAny = Boolean(lineId || type || status || from || to);
+  // One-tap periods. "Since <window>" is offered because it is the only
+  // period over which MTBF/MTTR mean the same thing throughout — the window
+  // exists because recording changed on that day.
+  const presets: { label: string; from: string }[] = [
+    { label: "7 days", from: localDayString(6) },
+    { label: "30 days", from: localDayString(29) },
+    { label: "90 days", from: localDayString(89) },
+    ...(reliabilityStartDate
+      ? [
+          {
+            label: `Since ${shortLocalDay(reliabilityStartDate)}`,
+            from: reliabilityStartDate,
+          },
+        ]
+      : []),
+    { label: "All time", from: "" },
+  ];
   return (
     <Card className="mb-6">
       <CardContent className="pt-6">
+        <div
+          role="group"
+          aria-label="Period"
+          className="mb-3 flex flex-wrap items-center gap-2 border-b border-border pb-3"
+        >
+          <span className="mr-1 text-xs font-semibold">Period</span>
+          {presets.map((p) => {
+            const active = !to && from === p.from;
+            return (
+              <Button
+                key={p.label}
+                type="button"
+                size="sm"
+                variant={active ? "default" : "outline"}
+                aria-pressed={active}
+                className="h-11 md:h-9"
+                onClick={() => {
+                  setFrom(p.from);
+                  setTo("");
+                }}
+              >
+                {p.label}
+              </Button>
+            );
+          })}
+        </div>
         {/* Every control carries a visible label. Previously the three
             Selects had none while From/To did, so the labels sat above nothing
             and the five controls never shared a baseline. */}
@@ -882,7 +980,7 @@ function MaintenancePage() {
   const qc = useQueryClient();
 
   const [lineId, setLineId] = useState("");
-  const [activeSection, setActiveSection] = useState("events");
+  const [activeSection, setActiveSection] = useState("overview");
   const [type, setType] = useState<MaintenanceType | "">("");
   const [status, setStatus] = useState<MaintenanceStatus | "">("");
   const [from, setFrom] = useState("");
@@ -1437,6 +1535,7 @@ function MaintenancePage() {
           desktop sidebar+content grid below), so it renders once and stays
           visible across every section on both viewports. */}
       <MaintenanceFilters
+        reliabilityStartDate={reliabilityStartDate}
         lines={lines}
         lineId={lineId}
         setLineId={setLineId}
@@ -1450,134 +1549,148 @@ function MaintenancePage() {
         setTo={setTo}
       />
 
-      {/* Mobile only below this point through MetricsTable — desktop (md:)
-          uses the sidebar layout instead (renderActiveSection below), which
-          covers the exact same content via the same extracted components. */}
-      <div className="md:hidden">
-        <MobileCollapsibleSection title="Maintenance events" count={events.length}>
-          <Tabs defaultValue="events">
-            <TabsList>
-              <TabsTrigger value="events">Events</TabsTrigger>
-              <TabsTrigger value="stoppages" className="gap-1.5">
-                Stoppages
-                {orphanedStoppageCount > 0 && (
-                  <Badge
-                    variant="destructive"
-                    className="h-4 min-w-4 justify-center px-1 text-[10px] leading-none"
-                  >
-                    {orphanedStoppageCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="events">
-              <EventsListCard
-                lines={lines}
-                lineId={lineId}
-                setLineId={setLineId}
-                type={type}
-                setType={setType}
-                status={status}
-                setStatus={setStatus}
-                from={from}
-                setFrom={setFrom}
-                to={to}
-                setTo={setTo}
-                isLoading={isLoading}
-                events={events}
-                onSelectEvent={setSelectedEvent}
-              />
-            </TabsContent>
-
-            <TabsContent value="stoppages">
-              <StoppagesSection
-                rows={allStoppageRows}
-                canDelete={canDelete}
-                onView={setViewStoppageId}
-                onDelete={handleDeleteStoppage}
-              />
-            </TabsContent>
-          </Tabs>
+      {/* Mobile: every section below the filters is collapsed by default so
+          the first screen is Right now + filters. Desktop: one section at a
+          time from the sidebar. Both render the same extracted components
+          with the same props. */}
+      <div className="space-y-3 md:hidden">
+        <MobileCollapsibleSection title="Losses & reliability">
+          <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
+          <ReliabilityAnalyticsSection
+            totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+            openCount={reliabilitySummary.openCount}
+            repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+            availabilityPct={reliabilitySummary.availabilityPct}
+            windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
+            topLossesByDowntime={topLossesByDowntime}
+            topLossesByFrequency={topLossesByFrequency}
+            meanDowntimePerFault={meanDowntimePerFault}
+            chronicVsSporadic={chronicVsSporadic}
+            reliabilityByLine={reliabilityByLine}
+          />
+          <div className="mt-4">
+            <MetricsTable metrics={periodMetrics} />
+          </div>
         </MobileCollapsibleSection>
 
-        <div className="mt-6 md:mt-0">
-          <MobileCollapsibleSection title="Non-production days" count={nonProductionDays.length}>
-            <NonProductionDaysSection
-              rows={nonProductionDays}
-              lines={lines}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              onAdd={handleAddNonProductionDay}
-              onDelete={handleDeleteNonProductionDay}
-            />
-          </MobileCollapsibleSection>
-        </div>
+        <MobileCollapsibleSection title="Event log" count={events.length}>
+          <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
+          <EventsListCard
+            lines={lines}
+            lineId={lineId}
+            setLineId={setLineId}
+            type={type}
+            setType={setType}
+            status={status}
+            setStatus={setStatus}
+            from={from}
+            setFrom={setFrom}
+            to={to}
+            setTo={setTo}
+            isLoading={isLoading}
+            events={events}
+            onSelectEvent={setSelectedEvent}
+          />
+        </MobileCollapsibleSection>
 
-        <div className="mt-6 md:mt-0">
-          <MobileCollapsibleSection title="Reliability Analytics">
-            <ReliabilityAnalyticsSection
-              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
-              openCount={reliabilitySummary.openCount}
-              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
-              availabilityPct={reliabilitySummary.availabilityPct}
-              windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
-              topLossesByDowntime={topLossesByDowntime}
-              topLossesByFrequency={topLossesByFrequency}
-              meanDowntimePerFault={meanDowntimePerFault}
-              chronicVsSporadic={chronicVsSporadic}
-              reliabilityByLine={reliabilityByLine}
-            />
-          </MobileCollapsibleSection>
-        </div>
+        <MobileCollapsibleSection
+          title="Stoppages"
+          alert={{
+            count: orphanedStoppageCount,
+            label: `${orphanedStoppageCount} stoppage(s) with no events`,
+          }}
+        >
+          <p className="mb-3 text-xs text-muted-foreground">{NOT_FILTERED}</p>
+          <StoppagesSection
+            rows={allStoppageRows}
+            canDelete={canDelete}
+            onView={setViewStoppageId}
+            onDelete={handleDeleteStoppage}
+          />
+        </MobileCollapsibleSection>
 
-        <MetricsTable metrics={periodMetrics} />
+        <MobileCollapsibleSection title="Non-production days">
+          <p className="mb-3 text-xs text-muted-foreground">{NOT_FILTERED}</p>
+          <NonProductionDaysSection
+            rows={nonProductionDays}
+            lines={lines}
+            canEdit={canEdit}
+            canDelete={canDelete}
+            onAdd={handleAddNonProductionDay}
+            onDelete={handleDeleteNonProductionDay}
+          />
+        </MobileCollapsibleSection>
       </div>
 
-      {/* Desktop (md: and up): sidebar layout — Overview (Events, Stoppages)
-          and Analytics (Reliability, Top losses, MTBF / MTTR) groups, one
-          section active at a time via the same extracted
-          components/data/props the mobile view above uses. */}
+      {/* Desktop (md: and up): four sections. Overview holds everything that
+          answers "what is costing us time, and are we getting better" — it
+          used to be three sidebar items, one of which (Reliability) was three
+          cards on its own page. */}
       <div className="mt-6 hidden gap-6 md:grid md:grid-cols-[200px_1fr]">
         <MaintenanceSidebar
           groups={[
             {
-              label: "Overview",
+              label: "Maintenance",
               items: [
-                // events.length is a full-table length once unfiltered — it
-                // depends on maintenanceEventsQuery's selectAllRows paging
-                // (src/lib/queries.ts) to be truthful. Don't reintroduce an
-                // un-ranged select there, or this silently caps again.
-                { id: "events", label: "Events", icon: List, count: events.length },
+                { id: "overview", label: "Overview", icon: Activity },
+                { id: "events", label: "Event log", icon: List },
                 {
                   id: "stoppages",
                   label: "Stoppages",
                   icon: Layers,
-                  count: allStoppageRows.length,
+                  alert: {
+                    count: orphanedStoppageCount,
+                    label: `${orphanedStoppageCount} stoppage(s) with no events`,
+                  },
                 },
-                {
-                  id: "nonProduction",
-                  label: "Non-production days",
-                  icon: CalendarOff,
-                  count: nonProductionDays.length,
-                },
-              ],
-            },
-            {
-              label: "Analytics",
-              items: [
-                { id: "reliability", label: "Reliability", icon: ChartScatter },
-                { id: "topLosses", label: "Top losses", icon: TrendingDown },
-                { id: "mtbf", label: "MTBF / MTTR", icon: Activity },
+                { id: "nonProduction", label: "Non-production days", icon: CalendarOff },
               ],
             },
           ]}
           active={activeSection}
           onSelect={setActiveSection}
         />
-        <div>
+        <div className="min-w-0">
+          {activeSection === "overview" && (
+            <div className="space-y-8">
+              <section aria-labelledby="losses-heading">
+                <SectionHeading
+                  id="losses-heading"
+                  title="What’s costing us time"
+                  scope={FOLLOWS_FILTERS}
+                />
+                <TopLossesGrid
+                  topLossesByDowntime={topLossesByDowntime}
+                  topLossesByFrequency={topLossesByFrequency}
+                  meanDowntimePerFault={meanDowntimePerFault}
+                  chronicVsSporadic={chronicVsSporadic}
+                />
+              </section>
+              <section aria-labelledby="reliability-heading" className="space-y-6">
+                <SectionHeading
+                  id="reliability-heading"
+                  title="Reliability"
+                  scope={`${FOLLOWS_FILTERS}${
+                    reliabilityStartDate
+                      ? ` · ${reliabilityWindowLabel(reliabilityStartDate)?.toLowerCase()}`
+                      : ""
+                  } · preventive excluded`}
+                />
+                <ReliabilityHeadlineCards
+                  totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
+                  openCount={reliabilitySummary.openCount}
+                  repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
+                  availabilityPct={reliabilitySummary.availabilityPct}
+                  windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
+                />
+                <MetricsTable metrics={periodMetrics} />
+                <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
+              </section>
+            </div>
+          )}
           {activeSection === "events" && (
-            <div className="space-y-6">
+            <section aria-labelledby="log-heading">
+              <SectionHeading id="log-heading" title="Event log" scope={FOLLOWS_FILTERS} />
               <EventsListCard
                 lines={lines}
                 lineId={lineId}
@@ -1594,49 +1707,35 @@ function MaintenancePage() {
                 events={events}
                 onSelectEvent={setSelectedEvent}
               />
-            </div>
+            </section>
           )}
           {activeSection === "stoppages" && (
-            <StoppagesSection
-              rows={allStoppageRows}
-              canDelete={canDelete}
-              onView={setViewStoppageId}
-              onDelete={handleDeleteStoppage}
-            />
+            <section aria-labelledby="stoppages-heading">
+              <SectionHeading id="stoppages-heading" title="Stoppages" scope={NOT_FILTERED} />
+              <StoppagesSection
+                rows={allStoppageRows}
+                canDelete={canDelete}
+                onView={setViewStoppageId}
+                onDelete={handleDeleteStoppage}
+              />
+            </section>
           )}
           {activeSection === "nonProduction" && (
-            <NonProductionDaysSection
-              rows={nonProductionDays}
-              lines={lines}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              onAdd={handleAddNonProductionDay}
-              onDelete={handleDeleteNonProductionDay}
-            />
-          )}
-
-          {activeSection === "reliability" && (
-            <ReliabilityHeadlineCards
-              totalDowntimeMinutes={reliabilitySummary.totalDowntimeMinutes}
-              openCount={reliabilitySummary.openCount}
-              repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
-              availabilityPct={reliabilitySummary.availabilityPct}
-              windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
-            />
-          )}
-          {activeSection === "topLosses" && (
-            <TopLossesGrid
-              topLossesByDowntime={topLossesByDowntime}
-              topLossesByFrequency={topLossesByFrequency}
-              meanDowntimePerFault={meanDowntimePerFault}
-              chronicVsSporadic={chronicVsSporadic}
-            />
-          )}
-          {activeSection === "mtbf" && (
-            <div className="space-y-6">
-              <MetricsTable metrics={periodMetrics} />
-              <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
-            </div>
+            <section aria-labelledby="nonprod-heading">
+              <SectionHeading
+                id="nonprod-heading"
+                title="Non-production days"
+                scope={NOT_FILTERED}
+              />
+              <NonProductionDaysSection
+                rows={nonProductionDays}
+                lines={lines}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                onAdd={handleAddNonProductionDay}
+                onDelete={handleDeleteNonProductionDay}
+              />
+            </section>
           )}
         </div>
       </div>
@@ -2404,13 +2503,7 @@ function ReliabilityAnalyticsSection({
   reliabilityByLine: LineReliability[];
 }) {
   return (
-    <div id="reliability-analytics" className="mt-6 space-y-4 scroll-mt-4">
-      <div>
-        <h2 className="text-lg font-semibold">Reliability Analytics</h2>
-        <p className="text-sm text-muted-foreground">
-          Computed from the events matching the filters above.
-        </p>
-      </div>
+    <div className="space-y-4">
       <ReliabilityHeadlineCards
         totalDowntimeMinutes={totalDowntimeMinutes}
         openCount={openCount}
