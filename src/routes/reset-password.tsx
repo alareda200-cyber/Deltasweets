@@ -1,11 +1,10 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
+import { AuthBrandPanel, PasswordInput } from "@/components/AppShell";
 
 export const Route = createFileRoute("/reset-password")({
   head: () => ({ meta: [{ title: "Reset Password · Production Scorecard" }] }),
@@ -68,34 +67,79 @@ function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Set a new password</CardTitle>
-          <CardDescription>Choose a new password for your account.</CardDescription>
-        </CardHeader>
-        <CardContent>
+    <div className="min-h-screen bg-background text-foreground md:grid md:grid-cols-2">
+      <AuthBrandPanel />
+      <main className="px-6 py-7 md:flex md:items-center md:justify-center md:p-16">
+        <div className="flex w-full flex-col gap-[18px] md:w-[400px]">
+          <div>
+            <h1 className="text-2xl font-bold md:text-3xl">Set a new password</h1>
+            <p className="mt-1.5 text-[15px] text-muted-foreground">
+              Choose a new password for your account.
+            </p>
+          </div>
           {invalid && !ready ? (
-            <p className="text-sm text-destructive">This reset link is invalid or has expired. Request a new one from the Login page.</p>
+            <div className="flex flex-col gap-3">
+              <p role="alert" className="text-sm text-destructive">
+                This reset link is invalid or has expired. Request a new one from the sign-in page.
+              </p>
+              <Link
+                to="/login"
+                className="inline-flex h-12 items-center justify-center rounded-xl border border-border bg-card text-[15px] font-semibold text-primary transition-colors hover:bg-muted"
+              >
+                Back to sign in
+              </Link>
+            </div>
           ) : !ready ? (
-            <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+            <div className="flex justify-center py-6">
+              <Loader2
+                className="h-5 w-5 animate-spin text-muted-foreground"
+                aria-label="Checking reset link"
+              />
+            </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="new-password">New Password</Label>
-                <Input id="new-password" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-                <p className="text-xs text-muted-foreground">At least 8 characters, with uppercase, lowercase, a number, and a special character.</p>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-[18px]">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="new-password" className="text-sm font-semibold">
+                  New password
+                </Label>
+                <PasswordInput
+                  id="new-password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={setPassword}
+                />
+                <p className="text-xs text-muted-foreground">
+                  At least 8 characters, with uppercase, lowercase, a number, and a special
+                  character.
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="confirm-password">Confirm Password</Label>
-                <Input id="confirm-password" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="confirm-password" className="text-sm font-semibold">
+                  Confirm password
+                </Label>
+                <PasswordInput
+                  id="confirm-password"
+                  autoComplete="new-password"
+                  value={confirm}
+                  onChange={setConfirm}
+                />
               </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" disabled={submitting}>{submitting ? "Updating…" : "Set Password"}</Button>
+              {error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+              <Button
+                type="submit"
+                className="h-[52px] rounded-xl text-[17px] font-semibold md:h-12 md:text-base"
+                disabled={submitting}
+              >
+                {submitting ? "Updating…" : "Set Password"}
+              </Button>
             </form>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </main>
     </div>
   );
 }

@@ -55,14 +55,19 @@ export function PushNotificationToggle() {
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       disabled={loading || blocked}
       title={label}
       aria-label={label}
-      className="rounded-lg border border-border bg-card p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+      className="grid h-11 w-11 place-items-center rounded-[10px] text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:border md:border-border md:bg-card"
     >
       <Icon
-        className={cn("h-4 w-4", subscribed && "text-primary", blocked && "text-destructive")}
+        className={cn(
+          "h-5 w-5 md:h-[18px] md:w-[18px]",
+          subscribed && "text-primary",
+          blocked && "text-destructive",
+        )}
       />
     </button>
   );

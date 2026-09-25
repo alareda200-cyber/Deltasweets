@@ -1,19 +1,15 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   LayoutDashboard,
-  PlusSquare,
-  PlusCircle,
-  Settings,
-  Factory,
+  SquarePlus,
   LogOut,
-  Users,
   User,
   KeyRound,
-  ChevronDown,
-  ScrollText,
   Bell,
   AlertTriangle,
   Wrench,
+  Ellipsis,
+  Moon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -33,42 +29,75 @@ import {
 import { MyProfileDialog } from "@/components/MyProfileDialog";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useNotifications } from "@/lib/notifications";
-import { Badge } from "@/components/ui/badge";
 import { PushNotificationToggle } from "@/components/PushNotificationToggle";
+import { Input } from "@/components/ui/input";
 
+// Desktop top nav (md and up). Text-only links, per the approved header
+// mockup. Permission-filtered below so a role never sees a link that
+// dead-ends on RequireAuth's access-denied screen.
 const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
-  { to: "/entry", label: "Daily Entry", icon: PlusSquare, permission: "entry.view" as const },
-  {
-    to: "/maintenance",
-    label: "Maintenance",
-    icon: Wrench,
-    permission: "maintenance.view" as const,
-  },
-  { to: "/users", label: "Users", icon: Users, permission: "users.manage" as const },
-  { to: "/audit-log", label: "Audit Log", icon: ScrollText, permission: "users.manage" as const },
-  { to: "/settings", label: "Settings", icon: Settings, permission: "settings.manage" as const },
+  { to: "/", label: "Dashboard", permission: "dashboard.view" as const },
+  { to: "/entry", label: "Daily entry", permission: "entry.view" as const },
+  { to: "/maintenance", label: "Maintenance", permission: "maintenance.view" as const },
+  { to: "/users", label: "Users", permission: "users.manage" as const },
+  { to: "/audit-log", label: "Audit log", permission: "users.manage" as const },
+  { to: "/settings", label: "Settings", permission: "settings.manage" as const },
 ];
 
-// Mobile-only bottom tab bar (below md) — a fixed 4-item subset of `nav`
-// above, not a replacement for it: the top navbar stays exactly as-is at
-// every width, this is purely additive for small screens. Own labels/icons
-// per the mobile-nav spec (e.g. "New Entry"/PlusCircle here vs. "Daily
-// Entry"/PlusSquare in the top nav) rather than reusing `nav`'s entries
-// directly. Permission-filtered the same way `nav` is below, so a role
-// without e.g. maintenance.view never gets a tab that dead-ends on
-// RequireAuth's access-denied screen.
+// Mobile bottom tab bar (below md). Three permission-filtered tabs plus
+// "More", which every role gets: it is the only way to reach Users, Audit
+// log, Settings, profile, password and sign-out on a phone. `permission:
+// null` means "always shown".
 const mobileNav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard.view" as const },
-  { to: "/entry", label: "New Entry", icon: PlusCircle, permission: "entry.view" as const },
+  {
+    to: "/",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    permission: "dashboard.view" as const,
+    match: ["/"],
+  },
+  {
+    to: "/entry",
+    label: "Entry",
+    icon: SquarePlus,
+    permission: "entry.view" as const,
+    match: ["/entry"],
+  },
   {
     to: "/maintenance",
     label: "Maintenance",
     icon: Wrench,
     permission: "maintenance.view" as const,
+    match: ["/maintenance"],
   },
-  { to: "/settings", label: "Settings", icon: Settings, permission: "settings.manage" as const },
+  {
+    to: "/more",
+    label: "More",
+    icon: Ellipsis,
+    permission: null,
+    match: ["/more", "/users", "/audit-log", "/settings"],
+  },
 ];
+
+function isActive(pathname: string, prefix: string) {
+  return prefix === "/"
+    ? pathname === "/"
+    : pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+// Shared by the header avatar and the More page's profile row so both show
+// the same initials, name and colour.
+export function useProfileIdentity() {
+  const { profile, role } = useAuth();
+  const initials =
+    `${profile?.first_name?.[0] ?? ""}${profile?.last_name?.[0] ?? ""}`.toLocaleUpperCase() ||
+    profile?.email?.[0]?.toUpperCase() ||
+    "?";
+  const displayName = profile?.display_name || profile?.email || "";
+  const avatarColor = profile?.avatar_color || "#0ea5e9";
+  const roleLabel = role ? ROLE_LABELS[role as Role] : "";
+  return { initials, displayName, avatarColor, roleLabel };
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -78,88 +107,89 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [pathname]);
   const navigate = useNavigate();
   const visibleNav = nav.filter((n) => can(role, n.permission));
-  const visibleMobileNav = mobileNav.filter((n) => can(role, n.permission));
+  const visibleMobileNav = mobileNav.filter(
+    (n) => n.permission === null || can(role, n.permission),
+  );
   const [profileOpen, setProfileOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const { data: notifications = [] } = useNotifications();
+  const { initials, displayName, avatarColor, roleLabel } = useProfileIdentity();
 
   async function handleSignOut() {
     await signOut();
     navigate({ to: "/login" });
   }
 
-  const initials =
-    `${profile?.first_name?.[0] ?? ""}${profile?.last_name?.[0] ?? ""}`.toLocaleUpperCase() ||
-    profile?.email?.[0]?.toUpperCase() ||
-    "?";
-  const displayName = profile?.display_name || profile?.email || "";
+  const alertCount = notifications.length;
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 border-b border-border bg-card/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-6 px-4 md:px-8">
-          <Link to="/" className="flex shrink-0 items-center gap-2.5">
-            <div className="grid h-9 w-9 place-items-center rounded-lg gradient-hero shadow-elevated">
-              <Factory className="h-5 w-5 text-white" />
-            </div>
-            <div className="hidden sm:block">
-              <p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                Production Intelligence
-              </p>
-              <p className="-mt-0.5 text-sm font-bold tracking-tight">Scorecard OS</p>
-            </div>
+      <header className="sticky top-0 z-40 border-b border-border bg-card/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 pl-4 pr-3 md:h-16 md:gap-7 md:px-8 lg:px-10">
+          <Link to="/" className="flex min-h-11 min-w-0 shrink items-center gap-2.5 rounded-lg">
+            <span
+              aria-hidden="true"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-primary text-[13px] font-bold text-primary-foreground md:h-9 md:w-9 md:rounded-[10px] md:text-sm"
+            >
+              DS
+            </span>
+            <span className="min-w-0 leading-tight">
+              <span className="block truncate text-[15px] font-bold">Delta Sweets</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                Production scorecard
+              </span>
+            </span>
           </Link>
-          {/* min-w-0 lets this shrink inside the flex row instead of forcing
-              the header wider than the viewport — without it, overflow-x-auto
-              never kicks in because the row just grows to fit every item
-              (this is what caused the 549px-wide header on a 390px mobile
-              viewport once the Maintenance icon pushed nav past 5 items). */}
-          {/* hidden md:flex: the top navbar's own links are replaced by the
-              fixed bottom tab bar below md — that one stays put unmodified.
-              Everything else in the header (logo, notifications, avatar
-              menu) is intentionally untouched and still visible on mobile. */}
-          <nav className="ml-2 hidden min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide md:flex">
+          {/* min-w-0 + overflow-x-auto: between md and ~1100px the six links
+              scroll inside the nav instead of widening the header. */}
+          <nav
+            aria-label="Main"
+            className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-hide md:flex"
+          >
             {visibleNav.map((n) => {
-              const active = n.to === "/" ? pathname === "/" : pathname.startsWith(n.to);
+              const active = isActive(pathname, n.to);
               return (
                 <Link
                   key={n.to}
                   to={n.to}
+                  aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex h-10 shrink-0 items-center whitespace-nowrap rounded-[10px] px-3.5 text-sm transition-colors",
                     active
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      ? "bg-primary/10 font-semibold text-primary"
+                      : "text-foreground hover:bg-muted",
                   )}
                 >
-                  <n.icon className="h-4 w-4" />
-                  <span className="hidden sm:inline">{n.label}</span>
+                  {n.label}
                 </Link>
               );
             })}
           </nav>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
             <PushNotificationToggle />
             <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="relative rounded-lg border border-border bg-card p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  aria-label="Notifications"
+                  type="button"
+                  className="relative grid h-11 w-11 place-items-center rounded-[10px] text-foreground transition-colors hover:bg-muted md:border md:border-border md:bg-card"
+                  aria-label={
+                    alertCount > 0 ? `Alerts, ${alertCount} in the last 7 days` : "Alerts"
+                  }
                 >
-                  <Bell className="h-4 w-4" />
-                  {notifications.length > 0 && (
-                    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
-                      {notifications.length > 9 ? "9+" : notifications.length}
+                  <Bell className="h-5 w-5 md:h-[18px] md:w-[18px]" />
+                  {alertCount > 0 && (
+                    <span className="absolute right-0.5 top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold leading-none text-destructive-foreground">
+                      {alertCount > 9 ? "9+" : alertCount}
                     </span>
                   )}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+              <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
+                <DropdownMenuLabel>Alerts · last 7 days</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 && (
+                  {alertCount === 0 && (
                     <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                       No alerts in the last 7 days.
                     </p>
@@ -169,44 +199,41 @@ export function AppShell({ children }: { children: ReactNode }) {
                       <AlertTriangle
                         className={cn(
                           "mt-0.5 h-3.5 w-3.5 shrink-0",
-                          n.severity === "critical" ? "text-destructive" : "text-amber-500",
+                          n.severity === "critical" ? "text-destructive" : "text-warning-strong",
                         )}
                       />
                       <div>
                         <p className="font-medium leading-tight">{n.message}</p>
-                        <p className="text-[10px] text-muted-foreground">{n.entryDate}</p>
+                        <p className="text-xs text-muted-foreground">{n.entryDate}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
+            {/* Account menu: desktop only. On a phone the same actions
+                (profile, password, sign out) live on the More tab. */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 transition-colors hover:bg-muted">
-                  <Avatar
-                    className="h-7 w-7"
-                    style={{ backgroundColor: profile?.avatar_color || "#0ea5e9" }}
-                  >
+                <button
+                  type="button"
+                  aria-label={`Account: ${displayName}${roleLabel ? `, ${roleLabel}` : ""}`}
+                  className="hidden h-11 items-center gap-2.5 rounded-xl border border-border bg-card pl-1.5 pr-3 text-foreground transition-colors hover:bg-muted md:flex"
+                >
+                  <Avatar className="h-8 w-8" style={{ backgroundColor: avatarColor }}>
                     <AvatarFallback
-                      style={{
-                        backgroundColor: profile?.avatar_color || "#0ea5e9",
-                        color: "white",
-                      }}
-                      className="text-[11px]"
+                      style={{ backgroundColor: avatarColor, color: "white" }}
+                      className="text-[13px] font-bold"
                     >
                       {initials}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="hidden text-left md:block">
-                    <span className="block max-w-[120px] truncate text-xs font-medium leading-tight">
+                  <span className="text-left leading-tight">
+                    <span className="block max-w-[140px] truncate text-[13px] font-semibold">
                       {displayName}
                     </span>
-                    <span className="block text-[10px] leading-tight text-muted-foreground">
-                      {role ? ROLE_LABELS[role as Role] : ""}
-                    </span>
+                    <span className="block text-xs text-muted-foreground">{roleLabel}</span>
                   </span>
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -238,31 +265,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      {/* pb-[72px] (mobile only) keeps trailing page content clear of the
-          fixed bottom nav below — md:py-8 resets both top and bottom back
-          to the original symmetric padding at md+, where the bottom nav
-          doesn't render at all. */}
-      <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-[72px] md:px-8 md:py-8">{children}</main>
+      {/* pb-24 (mobile only) keeps trailing page content clear of the fixed
+          68px bottom nav; md:py-8 restores symmetric padding where that nav
+          doesn't render. */}
+      <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 md:px-8 md:py-8">{children}</main>
 
-      {/* Mobile-only bottom tab bar — md:hidden, sits alongside (not
-          instead of) the top navbar above, which is untouched. */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-40 flex md:hidden"
-        style={{ background: "var(--card)", borderTop: "0.5px solid var(--border)" }}
+        aria-label="Main"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-card md:hidden"
       >
         {visibleMobileNav.map((n) => {
-          const active = n.to === "/" ? pathname === "/" : pathname.startsWith(n.to);
+          const active = n.match.some((m) => isActive(pathname, m));
           return (
             <Link
               key={n.to}
               to={n.to}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "flex min-h-14 flex-1 flex-col items-center justify-center gap-1",
-                active ? "text-accent" : "text-muted-foreground",
+                "flex h-[68px] min-w-0 flex-1 flex-col items-center justify-center gap-1 text-xs",
+                active ? "font-semibold text-primary" : "text-muted-foreground",
               )}
             >
-              <n.icon className="h-[22px] w-[22px]" />
-              <span className="text-[10px] leading-none">{n.label}</span>
+              <n.icon className="h-[22px] w-[22px]" aria-hidden="true" />
+              <span className="truncate">{n.label}</span>
             </Link>
           );
         })}
@@ -277,11 +302,77 @@ export function AppShell({ children }: { children: ReactNode }) {
 function ThemeToggle() {
   return (
     <button
+      type="button"
       onClick={() => document.documentElement.classList.toggle("dark")}
-      className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      aria-label="Toggle theme"
+      className="grid h-11 w-11 place-items-center rounded-[10px] text-foreground transition-colors hover:bg-muted md:border md:border-border md:bg-card"
+      aria-label="Toggle dark theme"
+      title="Toggle dark theme"
     >
-      Theme
+      <Moon className="h-5 w-5 md:h-[18px] md:w-[18px]" />
     </button>
+  );
+}
+
+// Brand panel for the signed-out pages (/login, /reset-password): stacked on top on a phone, the
+// left half of a split layout from md up.
+export function AuthBrandPanel() {
+  return (
+    <div className="flex flex-col gap-5 bg-primary px-6 pb-8 pt-10 text-primary-foreground md:min-h-screen md:px-[72px] md:py-16">
+      <div className="flex items-center gap-2.5 md:gap-3">
+        <span
+          aria-hidden="true"
+          className="grid h-10 w-10 place-items-center rounded-[11px] bg-primary-foreground text-[15px] font-bold text-primary md:h-11 md:w-11 md:rounded-xl md:text-base"
+        >
+          DS
+        </span>
+        <span className="text-[17px] font-bold md:text-lg">Delta Sweets</span>
+      </div>
+      <div className="flex max-w-[520px] flex-col gap-4 md:my-auto md:pb-16">
+        <p className="text-[28px] font-bold leading-[1.15] md:text-[44px] md:leading-[1.1]">
+          Production scorecard
+        </p>
+        <p className="hidden text-lg leading-normal text-primary-foreground/85 md:block">
+          Daily output, time lost and machine faults for every line, in one place.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Password field with a Show/Hide toggle. The toggle is a real 44px button
+// inside the input's right padding.
+export function PasswordInput({
+  id,
+  autoComplete,
+  value,
+  onChange,
+}: {
+  id: string;
+  autoComplete: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={visible ? "text" : "password"}
+        autoComplete={autoComplete}
+        required
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-[52px] rounded-xl pl-3.5 pr-16 text-[17px] md:h-12 md:rounded-[10px] md:text-base"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? "Hide password" : "Show password"}
+        aria-controls={id}
+        className="absolute right-1 top-1 h-11 rounded-lg px-3 text-[15px] font-semibold text-primary hover:bg-muted md:right-0.5 md:top-0.5 md:text-sm"
+      >
+        {visible ? "Hide" : "Show"}
+      </button>
+    </div>
   );
 }

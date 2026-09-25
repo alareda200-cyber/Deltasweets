@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as MoreRouteImport } from './routes/more'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as EntryRouteImport } from './routes/entry'
@@ -31,6 +32,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MoreRoute = MoreRouteImport.update({
+  id: '/more',
+  path: '/more',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MaintenanceRoute = MaintenanceRouteImport.update({
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/entry': typeof EntryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/more': typeof MoreRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/entry': typeof EntryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/more': typeof MoreRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/entry': typeof EntryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/more': typeof MoreRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/entry'
     | '/login'
     | '/maintenance'
+    | '/more'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/entry'
     | '/login'
     | '/maintenance'
+    | '/more'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/entry'
     | '/login'
     | '/maintenance'
+    | '/more'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   EntryRoute: typeof EntryRoute
   LoginRoute: typeof LoginRoute
   MaintenanceRoute: typeof MaintenanceRoute
+  MoreRoute: typeof MoreRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
@@ -155,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/more': {
+      id: '/more'
+      path: '/more'
+      fullPath: '/more'
+      preLoaderRoute: typeof MoreRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/maintenance': {
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   EntryRoute: EntryRoute,
   LoginRoute: LoginRoute,
   MaintenanceRoute: MaintenanceRoute,
+  MoreRoute: MoreRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
