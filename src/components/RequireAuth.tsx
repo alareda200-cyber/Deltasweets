@@ -53,7 +53,7 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Set a new password</CardTitle>
-            <CardDescription>Your password was reset by an administrator. You cannot access the app until you set a new one.</CardDescription>
+            <CardDescription>Your password must be changed before you continue.</CardDescription>
           </CardHeader>
           <CardContent>
             <ChangePasswordForm submitLabel="Set Password" onSuccess={() => navigate({ to: "/" })} />
