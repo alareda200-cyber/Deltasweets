@@ -56,11 +56,16 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
+import { RightNowSection } from "@/components/maintenance/RightNowSection";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EventDetailDialog } from "@/components/EventDetailDialog";
 import { TableSkeletonRows } from "@/components/TableSkeletonRows";
 import {
-  Wrench,
-  Zap,
   Activity,
   Timer,
   Plus,
@@ -68,7 +73,6 @@ import {
   FileDown,
   Repeat,
   Gauge,
-  CalendarCheck,
   Layers,
   AlertTriangle,
   Trash2,
@@ -80,7 +84,7 @@ import {
   Inbox,
   type LucideIcon,
   CalendarOff,
-  Snowflake,
+  MoreHorizontal,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
@@ -346,103 +350,6 @@ function reliabilityWindowLabel(reliabilityStartDate: string | null): string | n
     year: "numeric",
   });
   return `Avg. since ${formatted}`;
-}
-
-// The 8 headline KPI cards — extracted so both the mobile (always-visible,
-// current position) and desktop (inside the sidebar's Events section)
-// instances call the same JSX instead of duplicating it. `className`
-// controls the grid itself (columns/gap/visibility), everything else is
-// identical between the two call sites.
-function MaintenanceKpiGrid({
-  openMechanical,
-  mtbfMechanicalHours,
-  mttrMechanicalHours,
-  openElectrical,
-  mtbfElectricalHours,
-  mttrElectricalHours,
-  openPreventive,
-  openRefrigeration,
-  reliabilityStartDate,
-  className,
-}: {
-  openMechanical: number;
-  mtbfMechanicalHours: number | null;
-  mttrMechanicalHours: number | null;
-  openElectrical: number;
-  mtbfElectricalHours: number | null;
-  mttrElectricalHours: number | null;
-  openPreventive: number;
-  openRefrigeration: number;
-  reliabilityStartDate: string | null;
-  className: string;
-}) {
-  const windowLabel = reliabilityWindowLabel(reliabilityStartDate);
-  return (
-    <div className={className}>
-      <KpiCard
-        label="Open Mechanical"
-        value={String(openMechanical)}
-        icon={Wrench}
-        variant={openMechanical > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTBF (Mechanical)"
-        value={formatHours(mtbfMechanicalHours)}
-        sub={windowLabel ?? "Lifetime avg. time between failures"}
-        icon={Activity}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTTR (Mechanical)"
-        value={formatHours(mttrMechanicalHours)}
-        sub={windowLabel ?? "Lifetime avg. time to repair"}
-        icon={Timer}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Electrical"
-        value={String(openElectrical)}
-        icon={Zap}
-        variant={openElectrical > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTBF (Electrical)"
-        value={formatHours(mtbfElectricalHours)}
-        sub={windowLabel ?? "Lifetime avg. time between failures"}
-        icon={Activity}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="MTTR (Electrical)"
-        value={formatHours(mttrElectricalHours)}
-        sub={windowLabel ?? "Lifetime avg. time to repair"}
-        icon={Timer}
-        variant="primary"
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Preventive"
-        value={String(openPreventive)}
-        sub="Scheduled maintenance, not counted in MTBF"
-        icon={CalendarCheck}
-        variant={openPreventive > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-      <KpiCard
-        label="Open Refrigeration"
-        value={String(openRefrigeration)}
-        sub="External contractor — counted in MTBF/MTTR"
-        icon={Snowflake}
-        variant={openRefrigeration > 0 ? "danger" : "success"}
-        className="p-3 md:p-5"
-      />
-    </div>
-  );
 }
 
 // Non-production days: the calendar the downtime maths reads.
@@ -1059,16 +966,6 @@ function MaintenancePage() {
   const openElectrical = openFaults.filter((e) => e.type === "electrical").length;
   const openPreventive = openFaults.filter((e) => e.type === "preventive").length;
   const openRefrigeration = openFaults.filter((e) => e.type === "refrigeration").length;
-  // Mobile-only "stays visible, never collapses" list — same open predicate
-  // and plant-wide (allEvents, not the filtered `events`) scope as the
-  // Open Mechanical/Electrical/Preventive KPI cards above, most-recent first.
-  const openEvents = useMemo(
-    () =>
-      allEvents
-        .filter((e) => e.status !== "resolved")
-        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
-    [allEvents],
-  );
 
   const mtbfMechanicalHours = useMemo(
     () => weightedAverage(metrics, "mechanical", "mtbf_hours", "mtbf_gap_count"),
@@ -1084,20 +981,6 @@ function MaintenancePage() {
   );
   const mttrElectricalHours = useMemo(
     () => weightedAverage(metrics, "electrical", "mttr_hours", "mttr_sample_count"),
-    [metrics],
-  );
-  // Mechanical + electrical + refrigeration pooled — same weighted-average
-  // formula as weightedAverage() above, just spanning all three unplanned
-  // types at once instead of one, for the mobile-only combined MTBF/MTTR
-  // mini KPIs. Refrigeration counts here because it's unplanned downtime
-  // (external contractor faults), same as mechanical/electrical — unlike
-  // preventive, which is scheduled and excluded from MTBF/MTTR entirely.
-  const mtbfCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mtbf_hours", "mtbf_gap_count"),
-    [metrics],
-  );
-  const mttrCombinedHours = useMemo(
-    () => weightedAverage(metrics, ["mechanical", "electrical", "refrigeration"], "mttr_hours", "mttr_sample_count"),
     [metrics],
   );
 
@@ -1415,10 +1298,18 @@ function MaintenancePage() {
         openPreventiveCount: events.filter(
           (e) => e.type === "preventive" && e.status !== "resolved",
         ).length,
-        mtbfMechanicalHours: localMtbfHours(reliabilityEvents.filter((e) => e.type === "mechanical")),
-        mttrMechanicalHours: localMttrHours(reliabilityEvents.filter((e) => e.type === "mechanical")),
-        mtbfElectricalHours: localMtbfHours(reliabilityEvents.filter((e) => e.type === "electrical")),
-        mttrElectricalHours: localMttrHours(reliabilityEvents.filter((e) => e.type === "electrical")),
+        mtbfMechanicalHours: localMtbfHours(
+          reliabilityEvents.filter((e) => e.type === "mechanical"),
+        ),
+        mttrMechanicalHours: localMttrHours(
+          reliabilityEvents.filter((e) => e.type === "mechanical"),
+        ),
+        mtbfElectricalHours: localMtbfHours(
+          reliabilityEvents.filter((e) => e.type === "electrical"),
+        ),
+        mttrElectricalHours: localMttrHours(
+          reliabilityEvents.filter((e) => e.type === "electrical"),
+        ),
         lifetimeTotalEvents: allEvents.length,
         lifetimeOpenCount: openMechanical + openElectrical + openRefrigeration,
         lifetimeOpenPreventiveCount: openPreventive,
@@ -1466,82 +1357,42 @@ function MaintenancePage() {
             Events &amp; reliability metrics
           </p>
         </div>
-        {canEdit && (
-          <Button
-            size="sm"
-            className="shrink-0 bg-accent text-accent-foreground hover:bg-accent/90"
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            Event
-          </Button>
-        )}
-      </div>
-
-      {/* Mobile-only quick actions — 2x2 grid, icon over label. */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
-        {canEdit && (
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="flex flex-col items-center gap-1 rounded-lg bg-accent p-3 text-accent-foreground"
-          >
-            <Plus className="h-[18px] w-[18px]" />
-            <span className="text-xs font-medium">New event</span>
-          </button>
-        )}
-        {canEdit && (
-          <button
-            onClick={() => setStoppageDialogOpen(true)}
-            className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
-          >
-            <Layers className="h-[18px] w-[18px]" />
-            <span className="text-xs font-medium">New stoppage</span>
-          </button>
-        )}
-        <button
-          onClick={handleExportReport}
-          disabled={exportingReport}
-          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground disabled:opacity-50"
-        >
-          {exportingReport ? (
-            <Loader2 className="h-[18px] w-[18px] animate-spin" />
-          ) : (
-            <FileDown className="h-[18px] w-[18px]" />
+        <div className="flex shrink-0 items-center gap-2">
+          {canEdit && (
+            <Button
+              className="h-11 bg-accent text-accent-foreground hover:bg-accent/90"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Event
+            </Button>
           )}
-          <span className="text-xs font-medium">Export report</span>
-        </button>
-        <button
-          onClick={() =>
-            document
-              .getElementById("reliability-analytics")
-              ?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-          className="flex flex-col items-center gap-1 rounded-lg bg-muted p-3 text-foreground"
-        >
-          <Gauge className="h-[18px] w-[18px]" />
-          <span className="text-xs font-medium">Analytics</span>
-        </button>
-      </div>
-
-      {/* Mobile-only mini KPI row — MTBF/MTTR combined across mechanical +
-          electrical (same weighted-average formula as the Mechanical/
-          Electrical KPI cards below, just pooled across both types instead
-          of filtered to one) and Open = open mechanical + open electrical,
-          same definition the PDF report's openCount already uses. */}
-      <div className="mb-4 grid grid-cols-3 gap-1 md:hidden">
-        <div className="rounded-lg bg-muted p-2 text-center">
-          <p className="text-[10px] text-muted-foreground">MTBF</p>
-          <p className="text-sm font-semibold">{formatHours(mtbfCombinedHours)}</p>
-        </div>
-        <div className="rounded-lg bg-muted p-2 text-center">
-          <p className="text-[10px] text-muted-foreground">MTTR</p>
-          <p className="text-sm font-semibold">{formatHours(mttrCombinedHours)}</p>
-        </div>
-        <div className="rounded-lg bg-destructive p-2 text-center">
-          <p className="text-[10px] text-destructive-foreground/80">Open</p>
-          <p className="text-sm font-semibold text-destructive-foreground">
-            {openMechanical + openElectrical}
-          </p>
+          {/* Secondary actions live behind one menu on mobile. They used to be
+              a 2x2 tile grid that repeated "New event" (already the button
+              beside this) and carried an "Analytics" tile that scrolled to a
+              section still collapsed — so its first tap did nothing. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-11 w-11" aria-label="More actions">
+                <MoreHorizontal className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => setStoppageDialogOpen(true)}>
+                  <Layers className="mr-2 h-4 w-4" />
+                  New stoppage
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onSelect={() => void handleExportReport()}
+                disabled={exportingReport}
+              >
+                <FileDown className="mr-2 h-4 w-4" />
+                {exportingReport ? reportProgress || "Exporting…" : "Export report"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1576,6 +1427,12 @@ function MaintenancePage() {
         </div>
       </div>
 
+      <RightNowSection
+        openFaults={openFaults}
+        stoppages={stoppages}
+        onSelectEvent={setSelectedEvent}
+      />
+
       {/* Filter bar — page-scoped (outside both the mobile stack and the
           desktop sidebar+content grid below), so it renders once and stays
           visible across every section on both viewports. */}
@@ -1592,35 +1449,6 @@ function MaintenancePage() {
         to={to}
         setTo={setTo}
       />
-
-      {/* Mobile: stays in this always-visible position exactly as before.
-          Desktop: this exact grid (same MaintenanceKpiGrid) moves inside the
-          sidebar's Events section instead — see renderActiveSection below. */}
-      <MaintenanceKpiGrid
-        openMechanical={openMechanical}
-        mtbfMechanicalHours={mtbfMechanicalHours}
-        mttrMechanicalHours={mttrMechanicalHours}
-        openElectrical={openElectrical}
-        mtbfElectricalHours={mtbfElectricalHours}
-        mttrElectricalHours={mttrElectricalHours}
-        openPreventive={openPreventive}
-        openRefrigeration={openRefrigeration}
-        reliabilityStartDate={reliabilityStartDate}
-        className="mb-6 grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3 md:hidden"
-      />
-
-      {/* Mobile-only, always visible — never collapses, even while the
-          section below is closed, so open faults stay in view. */}
-      {openEvents.length > 0 && (
-        <div className="mb-4 space-y-2 md:hidden">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Open events ({openEvents.length})
-          </p>
-          {openEvents.map((e) => (
-            <MobileEventCard key={e.id} event={e} onClick={() => setSelectedEvent(e)} />
-          ))}
-        </div>
-      )}
 
       {/* Mobile only below this point through MetricsTable — desktop (md:)
           uses the sidebar layout instead (renderActiveSection below), which
@@ -1750,18 +1578,6 @@ function MaintenancePage() {
         <div>
           {activeSection === "events" && (
             <div className="space-y-6">
-              <MaintenanceKpiGrid
-                openMechanical={openMechanical}
-                mtbfMechanicalHours={mtbfMechanicalHours}
-                mttrMechanicalHours={mttrMechanicalHours}
-                openElectrical={openElectrical}
-                mtbfElectricalHours={mtbfElectricalHours}
-                mttrElectricalHours={mttrElectricalHours}
-                openPreventive={openPreventive}
-                openRefrigeration={openRefrigeration}
-                reliabilityStartDate={reliabilityStartDate}
-                className="grid grid-cols-3 gap-4"
-              />
               <EventsListCard
                 lines={lines}
                 lineId={lineId}
