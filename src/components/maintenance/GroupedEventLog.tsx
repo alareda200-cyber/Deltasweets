@@ -124,8 +124,8 @@ export function GroupedEventLog({
                   </span>
                   {/* Mobile summary line — the columns below are desktop-only. */}
                   <span className="block truncate text-xs text-muted-foreground md:hidden">
-                    {g.lineNames.join(", ")} · {g.count} event{g.count === 1 ? "" : "s"} · {lost}{" "}
-                    lost
+                    {g.lineNames.join(", ")} · {g.count} event{g.count === 1 ? "" : "s"}
+                    {minutes > 0 ? ` · ${lost} lost` : ""}
                   </span>
                 </span>
                 <span className="hidden truncate text-sm md:block">{g.lineNames.join(", ")}</span>

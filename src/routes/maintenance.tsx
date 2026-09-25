@@ -625,6 +625,7 @@ function MaintenanceFilters({
   setTo: (v: string) => void;
 }) {
   const hasAny = Boolean(lineId || type || status || from || to);
+  const [moreFilters, setMoreFilters] = useState(false);
   // One-tap periods. "Since <window>" is offered because it is the only
   // period over which MTBF/MTTR mean the same thing throughout — the window
   // exists because recording changed on that day.
@@ -642,6 +643,11 @@ function MaintenanceFilters({
       : []),
     { label: "All time", from: "" },
   ];
+  // Filters set but tucked away on mobile — counted on the toggle so a
+  // narrowed list never looks like the whole list. A From date that matches a
+  // period button is already visible there; any other From is hidden.
+  const presetActive = presets.some((p) => !to && from === p.from);
+  const hiddenActive = [type, status, to, presetActive ? "" : from].filter(Boolean).length;
   return (
     <Card className="mb-6">
       <CardContent className="pt-6">
@@ -691,54 +697,79 @@ function MaintenanceFilters({
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label className="text-xs">Type</Label>
-            <Select
-              value={type || "all"}
-              onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
-            >
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="mechanical">Mechanical</SelectItem>
-                <SelectItem value="electrical">Electrical</SelectItem>
-                <SelectItem value="preventive">Preventive Maintenance</SelectItem>
-                <SelectItem value="refrigeration">Refrigeration</SelectItem>
-              </SelectContent>
-            </Select>
+          {/* Mobile: Line and the period buttons stay visible; type, status and
+              the date pickers sit behind "More filters" so the filter card no
+              longer pushes every section below the first two screens. Desktop
+              (md:contents) lays them out in the same grid as before. */}
+          <div className={moreFilters ? "contents" : "hidden md:contents"}>
+            <div>
+              <Label className="text-xs">Type</Label>
+              <Select
+                value={type || "all"}
+                onValueChange={(v) => setType(v === "all" ? "" : (v as MaintenanceType))}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="mechanical">Mechanical</SelectItem>
+                  <SelectItem value="electrical">Electrical</SelectItem>
+                  <SelectItem value="preventive">Preventive Maintenance</SelectItem>
+                  <SelectItem value="refrigeration">Refrigeration</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select
+                value={status || "all"}
+                onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">From</Label>
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="h-9"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">To</Label>
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="h-9"
+              />
+            </div>
           </div>
-          <div>
-            <Label className="text-xs">Status</Label>
-            <Select
-              value={status || "all"}
-              onValueChange={(v) => setStatus(v === "all" ? "" : (v as MaintenanceStatus))}
-            >
-              <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs">From</Label>
-            <Input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="h-9"
-            />
-          </div>
-          <div>
-            <Label className="text-xs">To</Label>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" />
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 md:hidden"
+            aria-expanded={moreFilters}
+            onClick={() => setMoreFilters((v) => !v)}
+          >
+            {moreFilters ? "Fewer filters" : "More filters"}
+            {!moreFilters && hiddenActive > 0 && (
+              <span className="ml-2 rounded-full bg-primary px-2 text-xs text-primary-foreground">
+                {hiddenActive}
+              </span>
+            )}
+          </Button>
         </div>
         {/* Always present, disabled when nothing is set — it used to appear
             only once a filter was applied, so the bar changed height under the
@@ -1733,7 +1764,7 @@ function MaintenancePage() {
                   title="Reliability"
                   scope={`${FOLLOWS_FILTERS}${
                     reliabilityStartDate
-                      ? ` · ${reliabilityWindowLabel(reliabilityStartDate)?.toLowerCase()}`
+                      ? ` · ${reliabilityWindowLabel(reliabilityStartDate)?.replace(/^Avg\./, "avg.")}`
                       : ""
                   } · preventive excluded`}
                 />
@@ -2155,7 +2186,7 @@ function ReliabilityHeadlineCards({
   // Unplanned = mechanical + electrical + refrigeration (preventive is
   // scheduled). The old copy said "mechanical/electrical only", which was
   // never what the maths did.
-  const availabilitySub = `Unplanned faults${windowLabel ? `, ${windowLabel.toLowerCase()}` : ""} · MTBF ÷ (MTBF + MTTR)`;
+  const availabilitySub = `Unplanned faults${windowLabel ? `, ${windowLabel.replace(/^Avg\./, "avg.")}` : ""} · MTBF ÷ (MTBF + MTTR)`;
 
   return (
     <>
@@ -2592,11 +2623,11 @@ function MetricsTable({ metrics }: { metrics: MaintenanceMetric[] }) {
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">MTBF / MTTR by Line & Type</h2>
           <Badge variant="outline" className="font-normal text-muted-foreground">
-            Not affected by filters
+            Follows the filters above
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Lifetime reliability across all data. Sorted worst MTBF first.
+          Unplanned faults inside the reliability window. Sorted worst MTBF first.
         </p>
       </CardHeader>
       <CardContent>
