@@ -1248,3 +1248,55 @@ export const maintenanceMetricsQuery = (reliabilityStartDate?: string | null) =>
       return computeMaintenanceMetrics((data ?? []) as unknown as MetricInputRow[]);
     },
   });
+
+// ---------------------------------------------------------------------------
+// Production dashboard (src/routes/index.tsx)
+// ---------------------------------------------------------------------------
+
+export interface EntryDayRow {
+  line_id: string;
+  entry_date: string;
+}
+
+// Just enough of every line's entries in the period to put a count on each
+// line tab — two narrow columns, one paged request for all lines together
+// instead of one request per line.
+export const entryDaysByLineQuery = (from: string, to: string) =>
+  queryOptions({
+    queryKey: ["entry-days-by-line", from, to],
+    queryFn: async (): Promise<EntryDayRow[]> => {
+      const data = await selectAllRows(() =>
+        supabase
+          .from("daily_entries")
+          .select("line_id, entry_date")
+          .gte("entry_date", from)
+          .lte("entry_date", to)
+          .order("entry_date")
+          .order("id"),
+      );
+      return data as EntryDayRow[];
+    },
+  });
+
+// Number of unplanned maintenance events (everything except preventive) that
+// started on one line inside [from, to]. A count only — the server answers
+// with a header, so no rows cross the wire and no row cap can shorten it.
+// Counts events, not stoppage windows: a stoppage with three faulty parts is
+// three faults, the same way /maintenance counts them.
+export const unplannedFaultCountQuery = (lineId: string | null, from: string, to: string) =>
+  queryOptions({
+    queryKey: ["unplanned-fault-count", lineId, from, to],
+    enabled: !!lineId,
+    queryFn: async (): Promise<number> => {
+      if (!lineId) return 0;
+      const { count, error } = await supabase
+        .from("maintenance_events")
+        .select("id", { count: "exact", head: true })
+        .eq("line_id", lineId)
+        .neq("type", "preventive")
+        .gte("started_at", localDayStartISO(from))
+        .lt("started_at", localDayEndExclusiveISO(to));
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
