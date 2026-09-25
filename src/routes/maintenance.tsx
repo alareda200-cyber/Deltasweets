@@ -111,6 +111,8 @@ import {
   maintenanceEventsQuery,
   openMaintenanceEventsQuery,
   maintenanceMetricsQuery,
+  computeMaintenanceMetrics,
+  reliabilityWindowStartMs,
   maintenanceStoppagesQuery,
   maintenanceStoppageQuery,
   stoppageEventsQuery,
@@ -1017,6 +1019,28 @@ function MaintenancePage() {
     maintenanceEventsQuery(lineId || null, type || null, status || null, from || null, to || null),
   );
 
+  // Every MTBF / MTTR / Availability on this page — and the PDF's period
+  // figures — reads THESE events: the page's filters, clipped to the declared
+  // reliability window, fed through the same computeMaintenanceMetrics the
+  // plant-wide query uses. Before this, Equipment Availability came from the
+  // filtered events with NO window while the MTBF cards came from the window
+  // with NO filters, so one page showed MTBF 1.55 h and an availability built
+  // on 2.02 h (25 Sep 2026, unfiltered). The window only ever narrows the
+  // reliability maths; the event list, open counts, downtime and top losses
+  // keep every real event (see maintenanceMetricsQuery).
+  const windowStartMs = reliabilityWindowStartMs(reliabilityStartDate);
+  const reliabilityEvents = useMemo(
+    () =>
+      windowStartMs === null
+        ? events
+        : events.filter((e) => new Date(e.started_at).getTime() >= windowStartMs),
+    [events, windowStartMs],
+  );
+  const periodMetrics = useMemo(
+    () => computeMaintenanceMetrics(reliabilityEvents),
+    [reliabilityEvents],
+  );
+
   // Covers every query-key prefix a stoppage can be cached under (list,
   // single-row detail, member-event list) — see maintenanceStoppagesQuery /
   // maintenanceStoppageQuery / stoppageEventsQuery in src/lib/queries.ts.
@@ -1140,8 +1164,18 @@ function MaintenancePage() {
     const totalDowntimeMinutes = totalDowntimeMinutesOf(collapsedEvents, closedDays);
     const openCount = openEventCount(collapsedEvents);
     const repeatFailureRatePct = repeatFailureRateOf(events);
-    const mtbfHours = localMtbfHours(events);
-    const mttrHours = localMttrHours(events);
+    const mtbfHours = weightedAverage(
+      periodMetrics,
+      ["mechanical", "electrical", "refrigeration"],
+      "mtbf_hours",
+      "mtbf_gap_count",
+    );
+    const mttrHours = weightedAverage(
+      periodMetrics,
+      ["mechanical", "electrical", "refrigeration"],
+      "mttr_hours",
+      "mttr_sample_count",
+    );
     const availabilityPct = availabilityPctOf(mtbfHours, mttrHours);
     return {
       totalDowntimeMinutes,
@@ -1151,7 +1185,7 @@ function MaintenancePage() {
       mttrHours,
       availabilityPct,
     };
-  }, [events, collapsedEvents, closedDays]);
+  }, [events, collapsedEvents, closedDays, periodMetrics]);
 
   const titleAggregates = useMemo(
     () => aggregateByTitle(collapsedEvents, closedDays),
@@ -1234,7 +1268,10 @@ function MaintenancePage() {
       })
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
   }, [failureTitleAggregates, reliabilitySummary.mttrHours]);
-  const reliabilityByLine = useMemo(() => reliabilityByLineOf(events), [events]);
+  const reliabilityByLine = useMemo(
+    () => reliabilityByLineOf(reliabilityEvents),
+    [reliabilityEvents],
+  );
   // Stoppages referenced by the currently-filtered `events` — same
   // "exported (currently filtered) events" semantics reliabilityByLine
   // above already uses, so the PDF report's Stoppages summary always
@@ -1378,10 +1415,10 @@ function MaintenancePage() {
         openPreventiveCount: events.filter(
           (e) => e.type === "preventive" && e.status !== "resolved",
         ).length,
-        mtbfMechanicalHours: localMtbfHours(events.filter((e) => e.type === "mechanical")),
-        mttrMechanicalHours: localMttrHours(events.filter((e) => e.type === "mechanical")),
-        mtbfElectricalHours: localMtbfHours(events.filter((e) => e.type === "electrical")),
-        mttrElectricalHours: localMttrHours(events.filter((e) => e.type === "electrical")),
+        mtbfMechanicalHours: localMtbfHours(reliabilityEvents.filter((e) => e.type === "mechanical")),
+        mttrMechanicalHours: localMttrHours(reliabilityEvents.filter((e) => e.type === "mechanical")),
+        mtbfElectricalHours: localMtbfHours(reliabilityEvents.filter((e) => e.type === "electrical")),
+        mttrElectricalHours: localMttrHours(reliabilityEvents.filter((e) => e.type === "electrical")),
         lifetimeTotalEvents: allEvents.length,
         lifetimeOpenCount: openMechanical + openElectrical + openRefrigeration,
         lifetimeOpenPreventiveCount: openPreventive,
@@ -1656,6 +1693,7 @@ function MaintenancePage() {
               openCount={reliabilitySummary.openCount}
               repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
               availabilityPct={reliabilitySummary.availabilityPct}
+              windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
               topLossesByDowntime={topLossesByDowntime}
               topLossesByFrequency={topLossesByFrequency}
               meanDowntimePerFault={meanDowntimePerFault}
@@ -1665,7 +1703,7 @@ function MaintenancePage() {
           </MobileCollapsibleSection>
         </div>
 
-        <MetricsTable metrics={metrics} />
+        <MetricsTable metrics={periodMetrics} />
       </div>
 
       {/* Desktop (md: and up): sidebar layout — Overview (Events, Stoppages)
@@ -1767,6 +1805,7 @@ function MaintenancePage() {
               openCount={reliabilitySummary.openCount}
               repeatFailureRatePct={reliabilitySummary.repeatFailureRatePct}
               availabilityPct={reliabilitySummary.availabilityPct}
+              windowLabel={reliabilityWindowLabel(reliabilityStartDate)}
             />
           )}
           {activeSection === "topLosses" && (
@@ -1779,7 +1818,7 @@ function MaintenancePage() {
           )}
           {activeSection === "mtbf" && (
             <div className="space-y-6">
-              <MetricsTable metrics={metrics} />
+              <MetricsTable metrics={periodMetrics} />
               <ReliabilityByLineTable reliabilityByLine={reliabilityByLine} />
             </div>
           )}
@@ -2108,11 +2147,13 @@ function ReliabilityHeadlineCards({
   openCount,
   repeatFailureRatePct,
   availabilityPct,
+  windowLabel,
 }: {
   totalDowntimeMinutes: number;
   openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
+  windowLabel: string | null;
 }) {
   // An open event's cost is unknown, so it is not in the total above. Saying so
   // is not optional: a total that quietly omits an unresolved 41-hour fault is
@@ -2134,6 +2175,10 @@ function ReliabilityHeadlineCards({
           ? "warning"
           : "danger";
   const availabilityValue = availabilityPct === null ? "—" : `${availabilityPct.toFixed(1)}%`;
+  // Unplanned = mechanical + electrical + refrigeration (preventive is
+  // scheduled). The old copy said "mechanical/electrical only", which was
+  // never what the maths did.
+  const availabilitySub = `Unplanned faults${windowLabel ? `, ${windowLabel.toLowerCase()}` : ""} · MTBF ÷ (MTBF + MTTR)`;
 
   return (
     <>
@@ -2158,7 +2203,7 @@ function ReliabilityHeadlineCards({
         <MiniKpiCard
           label="Equipment Availability"
           value={availabilityValue}
-          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
+          sub={availabilitySub}
           variant={availabilityVariant}
         />
       </div>
@@ -2181,7 +2226,7 @@ function ReliabilityHeadlineCards({
         <KpiCard
           label="Equipment Availability"
           value={availabilityValue}
-          sub="Based on mechanical/electrical failures only (MTBF ÷ (MTBF + MTTR))"
+          sub={availabilitySub}
           icon={Gauge}
           variant={availabilityVariant}
         />
@@ -2520,6 +2565,7 @@ function ReliabilityAnalyticsSection({
   openCount,
   repeatFailureRatePct,
   availabilityPct,
+  windowLabel,
   topLossesByDowntime,
   topLossesByFrequency,
   meanDowntimePerFault,
@@ -2530,6 +2576,7 @@ function ReliabilityAnalyticsSection({
   openCount: number;
   repeatFailureRatePct: number;
   availabilityPct: number | null;
+  windowLabel: string | null;
   topLossesByDowntime: TitleAggregate[];
   topLossesByFrequency: TitleAggregate[];
   meanDowntimePerFault: (TitleAggregate & { meanMinutes: number })[];
@@ -2553,6 +2600,7 @@ function ReliabilityAnalyticsSection({
         openCount={openCount}
         repeatFailureRatePct={repeatFailureRatePct}
         availabilityPct={availabilityPct}
+        windowLabel={windowLabel}
       />
       <TopLossesGrid
         topLossesByDowntime={topLossesByDowntime}

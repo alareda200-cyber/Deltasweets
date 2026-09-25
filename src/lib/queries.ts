@@ -558,6 +558,16 @@ function localDayEndExclusiveISO(day: string): string {
   return new Date(y, m - 1, d + 1, 0, 0, 0, 0).toISOString();
 }
 
+// The reliability window's start as epoch ms, built the same local-day way
+// maintenanceMetricsQuery bounds its fetch. Null when no window is declared.
+// Exported so page-side MTBF/MTTR math (which runs on already-fetched,
+// filter-scoped events) excludes exactly the same events the query does —
+// otherwise the page shows two MTBFs from two different observation windows.
+export function reliabilityWindowStartMs(reliabilityStartDate: string | null | undefined): number | null {
+  if (!reliabilityStartDate) return null;
+  return new Date(localDayStartISO(reliabilityStartDate)).getTime();
+}
+
 // Shared base select for both maintenanceEventsQuery and
 // openMaintenanceEventsQuery below, so MaintenanceEvent stays one shape
 // (same columns, same technicians join) instead of the two queries
@@ -1131,6 +1141,65 @@ export const appSettingsQuery = () =>
     },
   });
 
+export type MetricInputRow = {
+  line_id: string | null;
+  type: MaintenanceType;
+  started_at: string;
+  resolved_at: string | null;
+  production_lines: { name: string } | null;
+};
+
+// The one MTBF/MTTR formula. maintenanceMetricsQuery runs it on the windowed
+// plant-wide fetch; /maintenance runs it on its own filter-scoped, windowed
+// events — same grouping (line + type), same exclusions (no line, preventive),
+// same averaging, so a number means the same thing wherever it appears.
+export function computeMaintenanceMetrics(rows: MetricInputRow[]): MaintenanceMetric[] {
+  const groups = new Map<
+    string,
+    { line_id: string; line_name: string; type: MaintenanceType; starts: number[]; durationsHours: number[] }
+  >();
+  for (const row of rows) {
+    if (!row.line_id || row.type === "preventive") continue;
+    const key = `${row.line_id}::${row.type}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { line_id: row.line_id, line_name: row.production_lines?.name ?? "—", type: row.type, starts: [], durationsHours: [] };
+      groups.set(key, g);
+    }
+    g.starts.push(new Date(row.started_at).getTime());
+    if (row.resolved_at) {
+      g.durationsHours.push((new Date(row.resolved_at).getTime() - new Date(row.started_at).getTime()) / 3_600_000);
+    }
+  }
+
+  const metrics: MaintenanceMetric[] = [];
+  for (const g of groups.values()) {
+    const starts = [...g.starts].sort((a, b) => a - b);
+    let mtbfHours: number | null = null;
+    const gapCount = Math.max(0, starts.length - 1);
+    if (gapCount > 0) {
+      let totalGapHours = 0;
+      for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
+      mtbfHours = totalGapHours / gapCount;
+    }
+    const mttrHours = g.durationsHours.length > 0
+      ? g.durationsHours.reduce((s, v) => s + v, 0) / g.durationsHours.length
+      : null;
+    metrics.push({
+      line_id: g.line_id,
+      line_name: g.line_name,
+      type: g.type,
+      mtbf_hours: mtbfHours,
+      mtbf_gap_count: gapCount,
+      mttr_hours: mttrHours,
+      mttr_sample_count: g.durationsHours.length,
+      event_count: g.starts.length,
+      resolved_count: g.durationsHours.length,
+    });
+  }
+  return metrics.sort((a, b) => a.line_name.localeCompare(b.line_name) || a.type.localeCompare(b.type));
+}
+
 // reliabilityStartDate is app_settings.reliability_start_date (see
 // appSettingsQuery above) — a declared observation-window start, not a data
 // filter on what exists. Null/undefined keeps the original lifetime
@@ -1156,57 +1225,6 @@ export const maintenanceMetricsQuery = (reliabilityStartDate?: string | null) =>
         return query;
       });
 
-      type Row = {
-        line_id: string | null;
-        type: MaintenanceType;
-        started_at: string;
-        resolved_at: string | null;
-        production_lines: { name: string } | null;
-      };
-
-      const groups = new Map<
-        string,
-        { line_id: string; line_name: string; type: MaintenanceType; starts: number[]; durationsHours: number[] }
-      >();
-      for (const row of (data ?? []) as unknown as Row[]) {
-        if (!row.line_id || row.type === "preventive") continue;
-        const key = `${row.line_id}::${row.type}`;
-        let g = groups.get(key);
-        if (!g) {
-          g = { line_id: row.line_id, line_name: row.production_lines?.name ?? "—", type: row.type, starts: [], durationsHours: [] };
-          groups.set(key, g);
-        }
-        g.starts.push(new Date(row.started_at).getTime());
-        if (row.resolved_at) {
-          g.durationsHours.push((new Date(row.resolved_at).getTime() - new Date(row.started_at).getTime()) / 3_600_000);
-        }
-      }
-
-      const metrics: MaintenanceMetric[] = [];
-      for (const g of groups.values()) {
-        const starts = [...g.starts].sort((a, b) => a - b);
-        let mtbfHours: number | null = null;
-        const gapCount = Math.max(0, starts.length - 1);
-        if (gapCount > 0) {
-          let totalGapHours = 0;
-          for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
-          mtbfHours = totalGapHours / gapCount;
-        }
-        const mttrHours = g.durationsHours.length > 0
-          ? g.durationsHours.reduce((s, v) => s + v, 0) / g.durationsHours.length
-          : null;
-        metrics.push({
-          line_id: g.line_id,
-          line_name: g.line_name,
-          type: g.type,
-          mtbf_hours: mtbfHours,
-          mtbf_gap_count: gapCount,
-          mttr_hours: mttrHours,
-          mttr_sample_count: g.durationsHours.length,
-          event_count: g.starts.length,
-          resolved_count: g.durationsHours.length,
-        });
-      }
-      return metrics.sort((a, b) => a.line_name.localeCompare(b.line_name) || a.type.localeCompare(b.type));
+      return computeMaintenanceMetrics((data ?? []) as unknown as MetricInputRow[]);
     },
   });
