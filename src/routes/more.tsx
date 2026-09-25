@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { requireSession } from "@/lib/require-session";
 import {
   appSettingsQuery,
+  productionTargetsQuery,
+  DEFAULT_TARGETS,
   areaOwnersQuery,
   departmentsQuery,
   downtimeTypesQuery,
@@ -41,6 +43,7 @@ type SettingsSection =
   | "areas"
   | "reasons"
   | "fields"
+  | "targets"
   | "technicians"
   | "departments"
   | "types"
@@ -102,6 +105,10 @@ function MorePage() {
   const { data: rootCauses } = useQuery({ ...rootCausesQuery(), enabled: canSettings });
   const { data: areaOwners } = useQuery({ ...areaOwnersQuery, enabled: canSettings });
   const { data: appSettings } = useQuery({ ...appSettingsQuery(), enabled: canSettings });
+  const { data: targets = DEFAULT_TARGETS } = useQuery({
+    ...productionTargetsQuery(),
+    enabled: canSettings,
+  });
 
   const groups = useMemo<Group[]>(() => {
     const out: Group[] = [];
@@ -157,6 +164,13 @@ function MorePage() {
               name: "Line fields",
               sub: "Extra fields per line",
               section: "fields",
+            },
+            {
+              kind: "settings",
+              key: "targets",
+              name: "Targets",
+              sub: `Making ${targets.makingPct}% · packing ${targets.packingPct}% · time lost ${targets.lossPct}%`,
+              section: "targets",
             },
           ],
         },
@@ -255,6 +269,7 @@ function MorePage() {
     rootCauses,
     areaOwners,
     appSettings,
+    targets,
   ]);
 
   const q = filter.trim().toLocaleLowerCase();

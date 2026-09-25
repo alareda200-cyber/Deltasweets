@@ -59,6 +59,8 @@ import {
   productionAreasQuery,
   areaOwnersQuery,
   downtimeTypesQuery,
+  productionTargetsQuery,
+  DEFAULT_TARGETS,
   type EntryHistoryRow,
 } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
@@ -86,8 +88,29 @@ import {
   valuesFromRows,
 } from "@/lib/entry-form";
 
+// /entry?line=<id>&date=YYYY-MM-DD&shift=DAY opens that entry directly (the
+// Dashboard's "Open this entry" link). Only read once, when the page opens.
+interface EntrySearch {
+  line?: string;
+  date?: string;
+  shift?: string;
+}
+
+const SHIFT_VALUES = ["DAY", "A", "B", "C"];
+
 export const Route = createFileRoute("/entry")({
   head: () => ({ meta: [{ title: "Daily Entry · Production Scorecard" }] }),
+  validateSearch: (search: Record<string, unknown>): EntrySearch => ({
+    line: typeof search.line === "string" && search.line ? search.line : undefined,
+    date:
+      typeof search.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(search.date)
+        ? search.date
+        : undefined,
+    shift:
+      typeof search.shift === "string" && SHIFT_VALUES.includes(search.shift)
+        ? search.shift
+        : undefined,
+  }),
   beforeLoad: requireSession,
   loader: ({ context }) =>
     Promise.all([
@@ -104,22 +127,22 @@ export const Route = createFileRoute("/entry")({
 });
 
 // Adherence (actual/plan): higher is better. Loss (downtime/available): lower
-// is better — thresholds mirror the ones DashboardSummary already uses on
-// index.tsx (lossPct < 10/25) rather than reusing the adherence thresholds,
-// which would mislabel a low-loss day as "red".
-function adherenceColor(pct: number | null) {
+// is better. Same bands as the Dashboard (adherenceTone / lossTone in
+// src/lib/dashboard-metrics.ts), around the targets from Settings › Targets:
+// amber from target − 20 points, red below; loss amber up to 2.5 × the alert.
+function adherenceColor(pct: number | null, targetPct: number) {
   if (pct === null) return "text-muted-foreground";
-  return pct >= 90
+  return pct >= targetPct
     ? "text-success-strong"
-    : pct >= 70
+    : pct >= targetPct - 20
       ? "text-warning-strong"
       : "text-destructive-strong";
 }
-function lossColor(pct: number | null) {
+function lossColor(pct: number | null, alertPct: number) {
   if (pct === null) return "text-muted-foreground";
-  return pct < 10
+  return pct < alertPct
     ? "text-success-strong"
-    : pct < 25
+    : pct < alertPct * 2.5
       ? "text-warning-strong"
       : "text-destructive-strong";
 }
@@ -263,11 +286,14 @@ function EntryPage() {
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
 
-  const [lineId, setLineId] = useState(lines[0]?.id ?? "");
-  const [date, setDate] = useState(iso(new Date()));
+  const search = Route.useSearch();
+  const [lineId, setLineId] = useState(
+    search.line && lines.some((l) => l.id === search.line) ? search.line : (lines[0]?.id ?? ""),
+  );
+  const [date, setDate] = useState(search.date ?? iso(new Date()));
   // 212 of the 234 saved entries are "Full day". Opening on shift A sent
   // supervisors to an empty A slot next to that day's real entry.
-  const [shift, setShift] = useState("DAY");
+  const [shift, setShift] = useState(search.shift ?? "DAY");
   const supervisor = "";
   const operator = "";
   const initial = useMemo(() => emptyValues(), []);
@@ -311,6 +337,7 @@ function EntryPage() {
   // Only for the Planned / Unplanned tags and totals; if it fails they are
   // simply left out.
   const { data: downtimeTypes = [] } = useQuery(downtimeTypesQuery);
+  const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
 
   const values: EntryFormValues = useMemo(
     () => ({
@@ -898,6 +925,7 @@ function EntryPage() {
   const outputRows = [
     {
       stage: "Making",
+      target: targets.makingPct,
       plan: makingPlan,
       setPlan: setMakingPlan,
       actual: makingActual,
@@ -908,6 +936,7 @@ function EntryPage() {
     },
     {
       stage: "Packing",
+      target: targets.packingPct,
       plan: packingPlan,
       setPlan: setPackingPlan,
       actual: packingActual,
@@ -1311,7 +1340,7 @@ function EntryPage() {
                   <div key={o.stage}>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-sm font-semibold">{o.stage}</span>
-                      <span className={cn("text-sm font-bold tabular-nums", adherenceColor(o.pct))}>
+                      <span className={cn("text-sm font-bold tabular-nums", adherenceColor(o.pct, o.target))}>
                         {fmtPct(o.pct)} of plan
                       </span>
                     </div>
@@ -1370,7 +1399,7 @@ function EntryPage() {
                     <span
                       className={cn(
                         "flex h-11 items-center text-xl font-bold tabular-nums",
-                        adherenceColor(o.pct),
+                        adherenceColor(o.pct, o.target),
                       )}
                     >
                       {fmtPct(o.pct)}
@@ -1582,21 +1611,21 @@ function EntryPage() {
               [
                 [
                   "Making",
-                  "target 90%",
+                  `target ${targets.makingPct}%`,
                   fmtPct(liveSummary.makingPct),
-                  adherenceColor(liveSummary.makingPct),
+                  adherenceColor(liveSummary.makingPct, targets.makingPct),
                 ],
                 [
                   "Packing",
-                  "target 90%",
+                  `target ${targets.packingPct}%`,
                   fmtPct(liveSummary.packingPct),
-                  adherenceColor(liveSummary.packingPct),
+                  adherenceColor(liveSummary.packingPct, targets.packingPct),
                 ],
                 [
                   "Time lost",
                   `${fmtNum(totalDowntime)} of ${fmtNum(liveSummary.avail)} min`,
                   fmtPct(liveSummary.lossPct),
-                  lossColor(liveSummary.lossPct),
+                  lossColor(liveSummary.lossPct, targets.lossPct),
                 ],
                 [
                   "Rework",
@@ -1676,9 +1705,17 @@ function EntryPage() {
           <dl className="grid min-w-0 flex-1 grid-cols-3 gap-2">
             {(
               [
-                ["Making", liveSummary.makingPct, adherenceColor(liveSummary.makingPct)],
-                ["Packing", liveSummary.packingPct, adherenceColor(liveSummary.packingPct)],
-                ["Lost", liveSummary.lossPct, lossColor(liveSummary.lossPct)],
+                [
+                  "Making",
+                  liveSummary.makingPct,
+                  adherenceColor(liveSummary.makingPct, targets.makingPct),
+                ],
+                [
+                  "Packing",
+                  liveSummary.packingPct,
+                  adherenceColor(liveSummary.packingPct, targets.packingPct),
+                ],
+                ["Lost", liveSummary.lossPct, lossColor(liveSummary.lossPct, targets.lossPct)],
               ] as const
             ).map(([label, pct, color]) => (
               <div key={label} className="min-w-0">

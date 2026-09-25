@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { ProductionTargets } from "@/lib/queries";
 import { ConfirmDialog, SectionHeader, WarningNote, type QC } from "./shared";
 
 const BACKUP_TABLES = [
@@ -331,6 +332,188 @@ export function ReliabilitySection({
                 Clear (not yet declared)
               </Button>
             )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Targets — columns on the single app_settings row
+// (20260925120000_production_targets.sql). Same RLS as the reliability window:
+// every signed-in user reads them, only admins update.
+// ---------------------------------------------------------------------------
+
+type TargetKey = "makingPct" | "packingPct" | "lossPct" | "reworkPct";
+
+const TARGET_FIELDS: {
+  key: TargetKey;
+  column: string;
+  label: string;
+  hint: string;
+  optional?: boolean;
+}[] = [
+  {
+    key: "makingPct",
+    column: "target_making_pct",
+    label: "Making adherence target (% of plan)",
+    hint: "Making actual ÷ plan.",
+  },
+  {
+    key: "packingPct",
+    column: "target_packing_pct",
+    label: "Packing adherence target (% of plan)",
+    hint: "Packing actual ÷ plan.",
+  },
+  {
+    key: "lossPct",
+    column: "target_loss_pct",
+    label: "Time lost alert (% of available time)",
+    hint: "Downtime minutes ÷ available minutes, from daily entries.",
+  },
+  {
+    key: "reworkPct",
+    column: "target_rework_pct",
+    label: "Rework limit (% of making output)",
+    hint: "Leave empty for no rework target.",
+    optional: true,
+  },
+];
+
+function bandText(key: TargetKey, v: number): string {
+  if (key === "lossPct") {
+    return `Green below ${v}%, amber up to ${+(v * 2.5).toFixed(1)}%, red above.`;
+  }
+  if (key === "reworkPct") {
+    return `Green at ${v}% or less, amber up to ${+(v * 2).toFixed(1)}%, red above.`;
+  }
+  return `Green at ${v}% or more, amber from ${Math.max(0, v - 20)}%, red below.`;
+}
+
+export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc: QC }) {
+  const { profile } = useAuth();
+  const toText = (t: ProductionTargets) => ({
+    makingPct: String(t.makingPct),
+    packingPct: String(t.packingPct),
+    lossPct: String(t.lossPct),
+    reworkPct: t.reworkPct == null ? "" : String(t.reworkPct),
+  });
+  const [values, setValues] = useState<Record<TargetKey, string>>(() => toText(targets));
+  const [saving, setSaving] = useState(false);
+
+  // Stay in sync if the row changes from outside (another admin, another tab).
+  useEffect(() => {
+    setValues(toText(targets));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targets.makingPct, targets.packingPct, targets.lossPct, targets.reworkPct]);
+
+  const errors: Partial<Record<TargetKey, string>> = {};
+  for (const f of TARGET_FIELDS) {
+    const t = values[f.key].trim();
+    if (t === "" && f.optional) continue;
+    const n = Number(t);
+    if (t === "" || !Number.isFinite(n) || n <= 0 || n > 100) {
+      errors[f.key] = "Enter a number above 0 and up to 100";
+    }
+  }
+  const saved = toText(targets);
+  const dirty = TARGET_FIELDS.some((f) => values[f.key].trim() !== saved[f.key]);
+  const hasErrors = Object.keys(errors).length > 0;
+
+  async function handleSave() {
+    if (hasErrors) return;
+    setSaving(true);
+    try {
+      const next = {
+        target_making_pct: Number(values.makingPct),
+        target_packing_pct: Number(values.packingPct),
+        target_loss_pct: Number(values.lossPct),
+        target_rework_pct: values.reworkPct.trim() === "" ? null : Number(values.reworkPct),
+      };
+      const { error } = await supabase
+        .from("app_settings")
+        // The target columns are newer than the generated Supabase types.
+        .update({
+          ...next,
+          updated_by: profile?.id ?? null,
+          updated_at: new Date().toISOString(),
+        } as never)
+        .eq("id", true);
+      if (error) throw error;
+      toast.success("Targets saved");
+      void logAudit("settings.update", "app_settings", "true", next);
+      // Prefix match: refreshes ["app-settings", "targets"] on every page.
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4 md:space-y-5">
+      <SectionHeader id="targets" />
+      <Card>
+        <CardContent className="space-y-5 p-4 md:p-6">
+          <div className="grid gap-5 md:grid-cols-2">
+            {TARGET_FIELDS.map((f) => {
+              const id = `target-${f.key}`;
+              const v = Number(values[f.key]);
+              const showBand = !errors[f.key] && values[f.key].trim() !== "";
+              return (
+                <div key={f.key} className="space-y-1.5">
+                  <Label htmlFor={id}>{f.label}</Label>
+                  <Input
+                    id={id}
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    step="0.1"
+                    placeholder={f.optional ? "No target" : undefined}
+                    value={values[f.key]}
+                    onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
+                    aria-invalid={errors[f.key] ? true : undefined}
+                    aria-describedby={`${id}-hint`}
+                    className="h-11 w-full md:h-9 md:w-40"
+                  />
+                  <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+                    {errors[f.key] ? (
+                      <span className="font-medium text-destructive-strong">{errors[f.key]}</span>
+                    ) : (
+                      <>
+                        {f.hint} {showBand ? bandText(f.key, v) : ""}
+                      </>
+                    )}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+            <Button
+              onClick={handleSave}
+              disabled={saving || !dirty || hasErrors}
+              className="h-11 md:h-9"
+            >
+              {saving ? "Saving…" : "Save targets"}
+            </Button>
+            {dirty && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setValues(saved)}
+                disabled={saving}
+                className="h-11 md:h-9"
+              >
+                Undo changes
+              </Button>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Changes show on the Dashboard and Daily entry right away, for every period.
+            </p>
           </div>
         </CardContent>
       </Card>

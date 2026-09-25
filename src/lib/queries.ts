@@ -1364,3 +1364,59 @@ export const lineEntryCountQuery = (lineId: string | null) =>
       return count ?? 0;
     },
   });
+
+// ---------------------------------------------------------------------------
+// Production targets (Settings › Targets)
+// ---------------------------------------------------------------------------
+
+// Columns on the single app_settings row (20260925120000_production_targets.sql),
+// so they share its RLS: everyone reads, only admins update. Not in the
+// generated Supabase types yet, hence the untyped read below.
+export interface ProductionTargets {
+  /** Making adherence target, % of plan. */
+  makingPct: number;
+  /** Packing adherence target, % of plan. */
+  packingPct: number;
+  /** Time lost alert level, % of available minutes. */
+  lossPct: number;
+  /** Rework ceiling, % of making output. null = no target set. */
+  reworkPct: number | null;
+}
+
+// What the app used before targets were editable — also the fallback when the
+// row can't be read, so a fetch hiccup never paints every card red.
+export const DEFAULT_TARGETS: ProductionTargets = {
+  makingPct: 90,
+  packingPct: 90,
+  lossPct: 10,
+  reworkPct: null,
+};
+
+function targetNumber(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 && n <= 100 ? n : null;
+}
+
+export function targetsFromRow(row: Record<string, unknown> | null | undefined): ProductionTargets {
+  if (!row) return DEFAULT_TARGETS;
+  return {
+    makingPct: targetNumber(row.target_making_pct) ?? DEFAULT_TARGETS.makingPct,
+    packingPct: targetNumber(row.target_packing_pct) ?? DEFAULT_TARGETS.packingPct,
+    lossPct: targetNumber(row.target_loss_pct) ?? DEFAULT_TARGETS.lossPct,
+    reworkPct: targetNumber(row.target_rework_pct),
+  };
+}
+
+export const productionTargetsQuery = () =>
+  queryOptions({
+    queryKey: ["app-settings", "targets"],
+    queryFn: async (): Promise<ProductionTargets> => {
+      const { data, error } = await supabase
+        .from("app_settings")
+        .select("*")
+        .eq("id", true)
+        .maybeSingle();
+      if (error || !data) return DEFAULT_TARGETS;
+      return targetsFromRow(data as unknown as Record<string, unknown>);
+    },
+  });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BellRing, BellOff, Bell } from "lucide-react";
+import { Smartphone, Vibrate, VibrateOff } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -46,7 +46,9 @@ export function PushNotificationToggle() {
   if (!supported) return null;
 
   const blocked = permission === "denied";
-  const Icon = subscribed ? BellRing : blocked ? BellOff : Bell;
+  // A phone, not a bell: the Alerts button next to it is the bell. Buzzing
+  // phone = push on, plain phone = off, crossed-out = blocked by the browser.
+  const Icon = subscribed ? Vibrate : blocked ? VibrateOff : Smartphone;
   const label = blocked
     ? "الإشعارات محظورة من إعدادات المتصفح"
     : subscribed

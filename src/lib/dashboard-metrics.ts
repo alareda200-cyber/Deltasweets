@@ -23,24 +23,35 @@ import type {
 } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
 
-// Fixed targets. There is no Targets table yet, so these stay hard-coded (the
-// same 90% / 70% cut-offs and 10% / 25% loss bands the old sections used).
-export const ADHERENCE_TARGET = 0.9;
-export const ADHERENCE_WARN = 0.7;
-export const LOSS_ALERT_PCT = 10;
-export const LOSS_BAD_PCT = 25;
+// Targets come from Settings › Targets (productionTargetsQuery). The bands
+// around them keep the shape the app always had: with the default 90% target,
+// amber from 70% (target − 20 points) and red below; with the default 10% loss
+// alert, amber up to 25% (2.5 × the alert) and red above.
+export const ADHERENCE_WARN_GAP = 0.2;
+export const LOSS_BAD_FACTOR = 2.5;
 
 export type Tone = "success" | "warning" | "danger" | "neutral";
 
-export function adherenceTone(adh: number): Tone {
-  if (adh >= ADHERENCE_TARGET) return "success";
-  if (adh >= ADHERENCE_WARN) return "warning";
+/** adh is a ratio (0.85); targetPct is a percentage (90). */
+export function adherenceTone(adh: number, targetPct = 90): Tone {
+  const target = targetPct / 100;
+  if (adh >= target) return "success";
+  if (adh >= target - ADHERENCE_WARN_GAP) return "warning";
   return "danger";
 }
 
-export function lossTone(lossPct: number): Tone {
-  if (lossPct < LOSS_ALERT_PCT) return "success";
-  if (lossPct < LOSS_BAD_PCT) return "warning";
+/** Both in percent: lossPct 16.4, alertPct 10. */
+export function lossTone(lossPct: number, alertPct = 10): Tone {
+  if (lossPct < alertPct) return "success";
+  if (lossPct < alertPct * LOSS_BAD_FACTOR) return "warning";
+  return "danger";
+}
+
+/** Both in percent. No target → neutral: nothing to judge against. */
+export function reworkTone(reworkPct: number, targetPct: number | null): Tone {
+  if (targetPct == null) return "neutral";
+  if (reworkPct <= targetPct) return "success";
+  if (reworkPct <= targetPct * 2) return "warning";
   return "danger";
 }
 

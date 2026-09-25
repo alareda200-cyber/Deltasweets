@@ -28,6 +28,9 @@ import {
   productionAreasQuery,
   severityLevelsQuery,
   unplannedFaultCountQuery,
+  productionTargetsQuery,
+  DEFAULT_TARGETS,
+  type ProductionTargets,
   type DailyEntry,
   type EntryDowntime,
   type ProductionLine,
@@ -40,8 +43,6 @@ import { can, type Role } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { formatSavedAt, shiftLabel } from "@/lib/entry-form";
 import {
-  ADHERENCE_TARGET,
-  LOSS_ALERT_PCT,
   addDays,
   adherenceTone,
   areaOwnerScores,
@@ -53,6 +54,7 @@ import {
   formatRangeShort,
   kg,
   lossTone,
+  reworkTone,
   num,
   pct1,
   ratio,
@@ -430,6 +432,9 @@ function PeriodBody({
   const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entryIds));
   const ownersQ = useQuery(entryAreaOwnersForEntriesQuery(entryIds));
   const faultsQ = useQuery(unplannedFaultCountQuery(line.id, from, to));
+  // Settings › Targets. Falls back to the old fixed values while loading or
+  // if the row can't be read, so cards never flash red on a slow network.
+  const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
   const { data: downtimeTypes } = useSuspenseQuery(downtimeTypesQuery);
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
@@ -522,7 +527,7 @@ function PeriodBody({
   const days = new Set(list.map((e) => e.entry_date)).size;
   const split = splitDowntime(downtimes, kindOf);
   const reasons = reasonRows(downtimes, kindOf, severityLevels, productionAreas);
-  const lastDay = buildLastDay(list, downtimes, kindOf);
+  const lastDay = buildLastDay(list, downtimes, kindOf, line.id);
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
   const stageName = stage === "making" ? "Making" : "Packing";
@@ -539,7 +544,7 @@ function PeriodBody({
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-4">
-          {kpiTiles(totals, split).map((k) => (
+          {kpiTiles(totals, split, targets).map((k) => (
             <KpiTile key={k.title} {...k} />
           ))}
         </div>
@@ -592,7 +597,7 @@ function PeriodBody({
         </div>
         {lastDay && (
           <div className="flex min-w-0 [&>section]:flex-1">
-            <LastDayCard day={lastDay} canOpenEntry={canEntry} />
+            <LastDayCard day={lastDay} canOpenEntry={canEntry} targets={targets} />
           </div>
         )}
       </div>
@@ -629,16 +634,22 @@ function PeriodBody({
       <p data-pdf-section="definitions" className="text-xs text-muted-foreground">
         Adherence = actual ÷ plan. Time lost = downtime minutes ÷ available minutes, daily entries
         only — machine faults from the Maintenance page are not added. Rework % = rework kg ÷ making
-        actual kg. Targets are fixed in the app for now: making and packing{" "}
-        {Math.round(ADHERENCE_TARGET * 100)}%, time lost alert above {LOSS_ALERT_PCT}%.
+        actual kg. Targets come from Settings › Targets: making {targets.makingPct}%, packing{" "}
+        {targets.packingPct}%, time lost alert above {targets.lossPct}%
+        {targets.reworkPct != null ? `, rework at most ${targets.reworkPct}%` : ""}.
       </p>
     </>
   );
 }
 
-function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
-  const target = Math.round(ADHERENCE_TARGET * 100);
-  const adhTile = (title: string, actual: number, plan: number): KpiTileProps => {
+function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiTileProps[] {
+  const lossAlert = targets.lossPct;
+  const adhTile = (
+    title: string,
+    actual: number,
+    plan: number,
+    target: number,
+  ): KpiTileProps => {
     if (plan <= 0) {
       return {
         title,
@@ -652,9 +663,9 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
       };
     }
     const adh = actual / plan;
-    const tone = adherenceTone(adh);
-    const gap = Math.abs(adh - ADHERENCE_TARGET) * 100;
-    const below = adh < ADHERENCE_TARGET;
+    const tone = adherenceTone(adh, target);
+    const gap = Math.abs(adh * 100 - target);
+    const below = adh * 100 < target;
     return {
       title,
       target: `target ${target}%`,
@@ -695,7 +706,7 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
     avail <= 0
       ? {
           title: "Time lost",
-          target: `alert above ${LOSS_ALERT_PCT}%`,
+          target: `alert above ${lossAlert}%`,
           value: "—",
           detail: `${num(split.total)} min, no available minutes entered`,
           segments: [],
@@ -705,7 +716,7 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
         }
       : {
           title: "Time lost",
-          target: `alert above ${LOSS_ALERT_PCT}%`,
+          target: `alert above ${lossAlert}%`,
           value: pct1(lost),
           unit: "of available",
           detail:
@@ -716,7 +727,7 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
           barLabel: `Planned ${(share(split.planned) * 100).toFixed(1)} percent, unplanned ${(share(split.unplanned) * 100).toFixed(1)} percent, unclassified ${(share(split.unclassified) * 100).toFixed(1)} percent of available time`,
           status: timeStatus,
           mobileStatus: timeStatus.replace(" stops", ""),
-          tone: lossTone(lost * 100),
+          tone: lossTone(lost * 100, lossAlert),
         };
 
   const rw = reworkTotal(t);
@@ -725,9 +736,12 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
     `making ${kg(t.reworkMaking)}`,
     `packing ${kg(t.reworkPacking)}`,
   ].filter(Boolean);
+  const rwPct = t.makingActual > 0 ? (rw / t.makingActual) * 100 : null;
+  const rwTarget = targets.reworkPct;
+  const rwTone = rwPct != null ? reworkTone(rwPct, rwTarget) : "neutral";
   const reworkTile: KpiTileProps = {
     title: "Rework",
-    target: "no target set",
+    target: rwTarget != null ? `at most ${rwTarget}%` : "no target set",
     value: t.makingActual > 0 ? pct1(rw / t.makingActual) : "—",
     unit: "of making",
     detail: `${kg(rw)} kg · ${rwParts.join(" · ")}`,
@@ -735,18 +749,28 @@ function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
     segments: [
       {
         pct: t.makingActual > 0 ? (rw / t.makingActual) * 100 : 0,
-        className: "bg-muted-foreground",
+        className: rwTone === "neutral" ? "bg-muted-foreground" : toneBar(rwTone),
       },
     ],
     barLabel: `Rework ${t.makingActual > 0 ? ((rw / t.makingActual) * 100).toFixed(1) : 0} percent of making output`,
-    status: "Share of making output",
-    mobileStatus: "No target set",
-    tone: "neutral",
+    status:
+      rwTarget == null || rwPct == null
+        ? "Share of making output"
+        : rwPct <= rwTarget
+          ? `Within the ${rwTarget}% limit`
+          : `${(rwPct - rwTarget).toFixed(1)} points over the ${rwTarget}% limit`,
+    mobileStatus:
+      rwTarget == null
+        ? "No target set"
+        : rwPct != null && rwPct > rwTarget
+          ? `Over ${rwTarget}%`
+          : `Within ${rwTarget}%`,
+    tone: rwTone,
   };
 
   return [
-    adhTile("Making", t.makingActual, t.makingPlan),
-    adhTile("Packing", t.packingActual, t.packingPlan),
+    adhTile("Making", t.makingActual, t.makingPlan, targets.makingPct),
+    adhTile("Packing", t.packingActual, t.packingPlan, targets.packingPct),
     timeTile,
     reworkTile,
   ];
@@ -756,6 +780,7 @@ function buildLastDay(
   entries: DailyEntry[],
   downtimes: EntryDowntime[],
   kindOf: ReturnType<typeof downtimeKindResolver>,
+  lineId: string,
 ): LastDay | null {
   const last = entries[entries.length - 1];
   if (!last) return null;
@@ -778,6 +803,7 @@ function buildLastDay(
       downtimes.filter((d) => ids.has(d.entry_id)),
       kindOf,
     ),
+    link: { line: lineId, date: last.entry_date, shift: shifts[0] },
   };
 }
 

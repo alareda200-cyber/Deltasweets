@@ -18,6 +18,8 @@ import {
   departmentCategoriesQuery,
   techniciansQuery,
   appSettingsQuery,
+  productionTargetsQuery,
+  DEFAULT_TARGETS,
   rootCausesQuery,
 } from "@/lib/queries";
 import { isSectionId, type SectionId } from "@/components/settings/sections";
@@ -40,7 +42,11 @@ import {
   SimpleCodeListSection,
 } from "@/components/settings/MasterDataSections";
 import { FaultTitlesSection, type FaultTitleStat } from "@/components/settings/FaultTitlesSection";
-import { BackupSection, ReliabilitySection } from "@/components/settings/SystemSections";
+import {
+  BackupSection,
+  ReliabilitySection,
+  TargetsSection,
+} from "@/components/settings/SystemSections";
 
 // /settings?section=<id> opens one section (ids: see sections.ts — a contract
 // with the mobile More tab). `line` picks the line on the Line fields section.
@@ -139,6 +145,7 @@ function SettingsPage() {
   const { data: appSettings } = useQuery(appSettingsQuery());
   const reliabilityStartDate = appSettings?.reliability_start_date ?? null;
   const rootCauseTrackingStartDate = appSettings?.root_cause_tracking_start_date ?? null;
+  const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
   const qc = useQueryClient();
   const [find, setFind] = useState("");
 
@@ -158,6 +165,10 @@ function SettingsPage() {
     areas: { count: String(productionAreas.length) },
     reasons: { count: String(reasons.length), sub: `${activeReasons} active` },
     fields: { count: String(totalFields), sub: totalFields === 0 ? "None yet" : undefined },
+    targets: {
+      count: `${targets.makingPct}%`,
+      sub: `Making ${targets.makingPct}% · packing ${targets.packingPct}% · time lost ${targets.lossPct}%`,
+    },
     technicians: {
       count: String(technicians.length),
       sub: `${technicians.filter((t) => t.is_active).length} active`,
@@ -225,6 +236,8 @@ function SettingsPage() {
             qc={qc}
           />
         );
+      case "targets":
+        return <TargetsSection targets={targets} qc={qc} />;
       case "technicians":
         return <TechniciansSection technicians={technicians} qc={qc} />;
       case "departments":

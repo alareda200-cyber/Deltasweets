@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import type { ProductionTargets } from "@/lib/queries";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,8 @@ export interface LastDay {
   savedText: string | null; // "saved 24 Sep 10:11"
   totals: Totals;
   time: TimeSplit;
+  /** Where "Open this entry" goes: the day's first shift on this line. */
+  link: { line: string; date: string; shift: string };
 }
 
 function LastDayRow({
@@ -83,7 +86,15 @@ function LastDayRow({
   );
 }
 
-export function LastDayCard({ day, canOpenEntry }: { day: LastDay; canOpenEntry: boolean }) {
+export function LastDayCard({
+  day,
+  canOpenEntry,
+  targets,
+}: {
+  day: LastDay;
+  canOpenEntry: boolean;
+  targets: ProductionTargets;
+}) {
   const t = day.totals;
   const making = ratio(t.makingActual, t.makingPlan);
   const packing = ratio(t.packingActual, t.packingPlan);
@@ -109,19 +120,19 @@ export function LastDayCard({ day, canOpenEntry }: { day: LastDay; canOpenEntry:
           label="Making"
           sub={`${kg(t.makingActual)} of ${kg(t.makingPlan)} kg`}
           value={t.makingPlan > 0 ? pct1(making) : "—"}
-          tone={t.makingPlan > 0 ? adherenceTone(making) : "plain"}
+          tone={t.makingPlan > 0 ? adherenceTone(making, targets.makingPct) : "plain"}
         />
         <LastDayRow
           label="Packing"
           sub={`${kg(t.packingActual)} of ${kg(t.packingPlan)} kg`}
           value={t.packingPlan > 0 ? pct1(packing) : "—"}
-          tone={t.packingPlan > 0 ? adherenceTone(packing) : "plain"}
+          tone={t.packingPlan > 0 ? adherenceTone(packing, targets.packingPct) : "plain"}
         />
         <LastDayRow
           label="Time lost"
           sub={`${num(day.time.total)} of ${num(t.availableMin)} min · ${num(day.time.unplanned)} unplanned`}
           value={t.availableMin > 0 ? pct1(lost) : "—"}
-          tone={t.availableMin > 0 ? lossTone(lost * 100) : "plain"}
+          tone={t.availableMin > 0 ? lossTone(lost * 100, targets.lossPct) : "plain"}
         />
         <LastDayRow
           label="Rework"
@@ -133,6 +144,7 @@ export function LastDayCard({ day, canOpenEntry }: { day: LastDay; canOpenEntry:
       {canOpenEntry && (
         <Link
           to="/entry"
+          search={day.link}
           data-pdf-exclude="true"
           className="mt-auto inline-flex min-h-11 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
         >
