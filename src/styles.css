@@ -196,3 +196,307 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Motion system ("jelly") ─────────────────────────────────────────────
+   Spec: Delta Sweets — Motion canvas (25 Sep 2026). Every move says
+   something: rise = the page arrived, pop = new data, odometer = a number
+   changed, sparkle / gummy burst = target reached (never below target),
+   shake = something is wrong, pulse = live or waiting on you.
+   Durations 120 / 200 / 320 / 600ms. Two curves: spring (things that
+   arrive) and out (things that fill or fade). The reduced-motion block
+   above collapses all of it; JS-driven motion checks
+   usePrefersReducedMotion() itself. */
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Candy colours — decoration only (gummy bears), never data. */
+  --candy-1: oklch(0.6 0.22 25);
+  --candy-2: oklch(0.78 0.18 75);
+  --candy-3: oklch(0.65 0.16 155);
+  --candy-4: oklch(0.55 0.2 260);
+  --candy-5: oklch(0.72 0.17 350);
+  --candy-6: oklch(0.58 0.2 295);
+  --candy-7: oklch(0.72 0.14 200);
+}
+
+@keyframes ds-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+@keyframes ds-pop-y {
+  0% {
+    transform: scaleY(0);
+  }
+  65% {
+    transform: scaleY(1.09);
+  }
+  82% {
+    transform: scaleY(0.97);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+@keyframes ds-pop-in {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes ds-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  15% {
+    transform: translateX(-9px) rotate(-1deg);
+  }
+  30% {
+    transform: translateX(8px) rotate(1deg);
+  }
+  45% {
+    transform: translateX(-6px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+@keyframes ds-pulse-warn {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--warning) 60%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+@keyframes ds-pulse-live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--success) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+@keyframes ds-sparkle {
+  0% {
+    transform: scale(0) rotate(-90deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.35) rotate(20deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+@keyframes ds-twinkle {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes ds-spark-out {
+  0% {
+    transform: scale(0) rotate(-120deg);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.4) rotate(15deg);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.2) rotate(40deg);
+    opacity: 0;
+  }
+}
+@keyframes ds-wave {
+  to {
+    transform: translateX(-90px);
+  }
+}
+@keyframes ds-wave-rev {
+  from {
+    transform: translateX(-90px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes ds-bob {
+  50% {
+    transform: translateY(-3px) rotate(4deg);
+  }
+}
+@keyframes ds-bubble {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-170px);
+    opacity: 0;
+  }
+}
+@keyframes ds-blink {
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.08);
+  }
+}
+@keyframes ds-lid-pop {
+  30% {
+    transform: translateY(-30px) rotate(-14deg);
+  }
+  58% {
+    transform: translateY(-6px) rotate(6deg);
+  }
+  78% {
+    transform: translateY(-2px) rotate(-2deg);
+  }
+}
+@keyframes ds-hop {
+  18% {
+    transform: scale(1.06, 0.9);
+  }
+  45% {
+    transform: translateY(-16px) scale(0.96, 1.06);
+  }
+  70% {
+    transform: scale(1.05, 0.94);
+  }
+  85% {
+    transform: scale(0.99, 1.01);
+  }
+}
+@keyframes ds-slide-in {
+  0% {
+    transform: translateY(-18px) scale(0.96);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(2px) scale(1.01);
+    opacity: 1;
+  }
+}
+@keyframes ds-shimmer {
+  from {
+    background-position: -240px 0;
+  }
+  to {
+    background-position: 240px 0;
+  }
+}
+@keyframes ds-jelly-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  30% {
+    transform: translateY(-9px) scale(0.9, 1.12);
+  }
+  50% {
+    transform: translateY(0) scale(1.18, 0.82);
+  }
+}
+@keyframes ds-check {
+  from {
+    stroke-dashoffset: 26;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Entrance: `backwards` fill, so after it ends hover transforms still work. */
+@utility ds-rise {
+  animation: ds-rise 520ms var(--ease-out-soft) backwards;
+}
+@utility ds-pop-y {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: ds-pop-y 720ms var(--ease-spring) backwards;
+}
+@utility ds-pop-in {
+  animation: ds-pop-in 320ms var(--ease-spring) backwards;
+}
+@utility ds-shake {
+  animation: ds-shake 460ms ease;
+}
+@utility ds-slide-in {
+  animation: ds-slide-in 460ms var(--ease-spring) backwards;
+}
+@utility ds-pulse-warn {
+  animation: ds-pulse-warn 1400ms ease-in-out infinite;
+}
+@utility ds-pulse-live {
+  animation: ds-pulse-live 1600ms ease-in-out infinite;
+}
+@utility ds-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation:
+    ds-sparkle 700ms var(--ease-spring) backwards,
+    ds-twinkle 1800ms ease-in-out 900ms infinite;
+}
+/* Press feedback for any button-like control. Never delays the action. */
+@utility ds-squish {
+  transition:
+    transform 140ms var(--ease-spring),
+    background-color 200ms ease,
+    box-shadow 200ms ease;
+  &:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+}
+/* Hover lift for cards the user can act on. */
+@utility ds-lift {
+  transition:
+    transform 280ms var(--ease-spring),
+    box-shadow 280ms ease;
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 14px 30px -12px oklch(0.2 0.04 255 / 0.25);
+    }
+  }
+}
+@utility ds-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-muted) 0,
+    color-mix(in oklch, var(--color-muted) 40%, var(--color-card)) 40%,
+    var(--color-muted) 80%
+  );
+  background-size: 480px 100%;
+  animation: ds-shimmer 1300ms linear infinite;
+}
+@utility ds-jelly-dot {
+  animation: ds-jelly-dot 900ms var(--ease-spring) infinite;
+}
