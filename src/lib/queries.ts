@@ -563,7 +563,9 @@ function localDayEndExclusiveISO(day: string): string {
 // Exported so page-side MTBF/MTTR math (which runs on already-fetched,
 // filter-scoped events) excludes exactly the same events the query does —
 // otherwise the page shows two MTBFs from two different observation windows.
-export function reliabilityWindowStartMs(reliabilityStartDate: string | null | undefined): number | null {
+export function reliabilityWindowStartMs(
+  reliabilityStartDate: string | null | undefined,
+): number | null {
   if (!reliabilityStartDate) return null;
   return new Date(localDayStartISO(reliabilityStartDate)).getTime();
 }
@@ -1156,19 +1158,33 @@ export type MetricInputRow = {
 export function computeMaintenanceMetrics(rows: MetricInputRow[]): MaintenanceMetric[] {
   const groups = new Map<
     string,
-    { line_id: string; line_name: string; type: MaintenanceType; starts: number[]; durationsHours: number[] }
+    {
+      line_id: string;
+      line_name: string;
+      type: MaintenanceType;
+      starts: number[];
+      durationsHours: number[];
+    }
   >();
   for (const row of rows) {
     if (!row.line_id || row.type === "preventive") continue;
     const key = `${row.line_id}::${row.type}`;
     let g = groups.get(key);
     if (!g) {
-      g = { line_id: row.line_id, line_name: row.production_lines?.name ?? "—", type: row.type, starts: [], durationsHours: [] };
+      g = {
+        line_id: row.line_id,
+        line_name: row.production_lines?.name ?? "—",
+        type: row.type,
+        starts: [],
+        durationsHours: [],
+      };
       groups.set(key, g);
     }
     g.starts.push(new Date(row.started_at).getTime());
     if (row.resolved_at) {
-      g.durationsHours.push((new Date(row.resolved_at).getTime() - new Date(row.started_at).getTime()) / 3_600_000);
+      g.durationsHours.push(
+        (new Date(row.resolved_at).getTime() - new Date(row.started_at).getTime()) / 3_600_000,
+      );
     }
   }
 
@@ -1179,12 +1195,14 @@ export function computeMaintenanceMetrics(rows: MetricInputRow[]): MaintenanceMe
     const gapCount = Math.max(0, starts.length - 1);
     if (gapCount > 0) {
       let totalGapHours = 0;
-      for (let i = 1; i < starts.length; i++) totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
+      for (let i = 1; i < starts.length; i++)
+        totalGapHours += (starts[i] - starts[i - 1]) / 3_600_000;
       mtbfHours = totalGapHours / gapCount;
     }
-    const mttrHours = g.durationsHours.length > 0
-      ? g.durationsHours.reduce((s, v) => s + v, 0) / g.durationsHours.length
-      : null;
+    const mttrHours =
+      g.durationsHours.length > 0
+        ? g.durationsHours.reduce((s, v) => s + v, 0) / g.durationsHours.length
+        : null;
     metrics.push({
       line_id: g.line_id,
       line_name: g.line_name,
@@ -1197,7 +1215,9 @@ export function computeMaintenanceMetrics(rows: MetricInputRow[]): MaintenanceMe
       resolved_count: g.durationsHours.length,
     });
   }
-  return metrics.sort((a, b) => a.line_name.localeCompare(b.line_name) || a.type.localeCompare(b.type));
+  return metrics.sort(
+    (a, b) => a.line_name.localeCompare(b.line_name) || a.type.localeCompare(b.type),
+  );
 }
 
 // reliabilityStartDate is app_settings.reliability_start_date (see
