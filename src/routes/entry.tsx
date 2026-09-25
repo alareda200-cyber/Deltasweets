@@ -1,11 +1,22 @@
 import { createFileRoute, useBlocker, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { EntryHistoryPanel } from "@/components/EntryHistoryPanel";
+import { CollapsibleRow } from "@/components/entry/CollapsibleRow";
+import { DOWNTIME_GRID_COLS, DowntimeRowEditor } from "@/components/entry/DowntimeRowEditor";
+import { EntrySection } from "@/components/entry/EntrySection";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -32,13 +43,13 @@ import {
   Plus,
   Save,
   History,
-  ChevronRight,
-  Recycle,
-  Users,
-  MessageSquare,
+  ChevronDown,
   AlertTriangle,
+  AlertCircle,
+  Pencil,
+  FilePlus2,
+  Loader2,
 } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip as RTooltip, ResponsiveContainer, Legend } from "recharts";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -47,6 +58,7 @@ import {
   fieldsQuery,
   productionAreasQuery,
   areaOwnersQuery,
+  downtimeTypesQuery,
   type EntryHistoryRow,
 } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
@@ -54,13 +66,16 @@ import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
 import {
   type DtRow,
   type EntryFormValues,
   type SwitchDecision,
   type ValidationResult,
+  changedFields,
   decideSwitch,
   emptyValues,
+  formatDay,
   formatSavedAt,
   sameDowntimes,
   sameOwners,
@@ -94,20 +109,31 @@ export const Route = createFileRoute("/entry")({
 // which would mislabel a low-loss day as "red".
 function adherenceColor(pct: number | null) {
   if (pct === null) return "text-muted-foreground";
-  return pct >= 90 ? "text-success-strong" : pct >= 70 ? "text-warning-strong" : "text-destructive-strong";
-}
-function adherenceBarColor(pct: number | null) {
-  if (pct === null) return "bg-muted-foreground/40";
-  return pct >= 90 ? "bg-success" : pct >= 70 ? "bg-warning" : "bg-destructive";
+  return pct >= 90
+    ? "text-success-strong"
+    : pct >= 70
+      ? "text-warning-strong"
+      : "text-destructive-strong";
 }
 function lossColor(pct: number | null) {
   if (pct === null) return "text-muted-foreground";
-  return pct < 10 ? "text-success-strong" : pct < 25 ? "text-warning-strong" : "text-destructive-strong";
+  return pct < 10
+    ? "text-success-strong"
+    : pct < 25
+      ? "text-warning-strong"
+      : "text-destructive-strong";
 }
-function lossBarColor(pct: number | null) {
-  if (pct === null) return "bg-muted-foreground/40";
-  return pct < 10 ? "bg-success" : pct < 25 ? "bg-warning" : "bg-destructive";
-}
+const fmtPct = (pct: number | null) => (pct !== null ? `${pct.toFixed(1)}%` : "—");
+const fmtNum = (n: number) => n.toLocaleString("en-US");
+
+// Desktop shift switch, in the order supervisors use them (Full day first:
+// 212 of 234 saved entries).
+const SHIFTS = [
+  ["DAY", "Full day"],
+  ["A", "A"],
+  ["B", "B"],
+  ["C", "C"],
+] as const;
 
 // One line + day + shift. The form always shows exactly one of these.
 interface Slot {
@@ -267,6 +293,8 @@ function EntryPage() {
   const [openRework, setOpenRework] = useState(false);
   const [openAreaOwners, setOpenAreaOwners] = useState(false);
   const [openComments, setOpenComments] = useState(false);
+  // Phone only: the line / day / shift pickers under the context button.
+  const [openWhich, setOpenWhich] = useState(true);
 
   // What the form was loaded with — the saved entry, or a blank one. The form
   // has unsaved changes whenever it differs from this.
@@ -280,6 +308,9 @@ function EntryPage() {
   const [errors, setErrors] = useState<ValidationResult | null>(null);
 
   const { data: customFields = [] } = useQuery(fieldsQuery(lineId));
+  // Only for the Planned / Unplanned tags and totals; if it fails they are
+  // simply left out.
+  const { data: downtimeTypes = [] } = useQuery(downtimeTypesQuery);
 
   const values: EntryFormValues = useMemo(
     () => ({
@@ -312,6 +343,7 @@ function EntryPage() {
     ],
   );
   const dirty = useMemo(() => !sameValues(values, baseline), [values, baseline]);
+  const changed = useMemo(() => changedFields(values, baseline), [values, baseline]);
 
   // Async handlers read these instead of the render they started in.
   const latest = useRef({ dirty, editingSaved, lineId, date, shift });
@@ -322,6 +354,7 @@ function EntryPage() {
   // the finishing save write its entry id into the NEW slot's state, and the
   // next Save would update the wrong row.
   const busy = useRef(false);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   function applyValues(v: EntryFormValues) {
     setMakingPlan(v.makingPlan);
@@ -773,6 +806,7 @@ function EntryPage() {
   }
 
   const activeLineName = lines.find((l) => l.id === lineId)?.name ?? "—";
+  const context = `${activeLineName} · ${formatDay(date)} · ${shiftLabel(shift)}`;
   const saveDisabled =
     saving ||
     deleting ||
@@ -782,31 +816,141 @@ function EntryPage() {
     slot.status === "error" ||
     isConflict ||
     (isNew && !canCreate);
-  const statusText =
-    slot.status === "loading" || switching
-      ? "Loading…"
-      : slot.status === "error"
-        ? "Couldn't load this entry"
-        : isConflict
-          ? "Copy — this day already has an entry"
-          : slot.status === "existing"
-            ? `Editing saved entry · saved ${formatSavedAt(slot.updatedAt)}`
-            : canCreate
-              ? "New entry"
-              : "No entry yet — your role can't create one";
+  const isLoading = slot.status === "loading" || switching;
+  const statusText = isLoading
+    ? "Loading…"
+    : slot.status === "error"
+      ? "Couldn't load this entry"
+      : isConflict
+        ? "Copy — this day already has an entry"
+        : slot.status === "existing"
+          ? `Editing saved entry · saved ${formatSavedAt(slot.updatedAt)}`
+          : canCreate
+            ? "New entry"
+            : "No entry yet — your role can't create one";
+  const statusTone = isLoading
+    ? "bg-muted text-muted-foreground"
+    : slot.status === "error"
+      ? "bg-destructive/10 text-destructive-strong"
+      : isConflict
+        ? "bg-warning/15 text-warning-strong"
+        : slot.status === "existing"
+          ? "bg-primary/10 text-primary"
+          : "bg-muted text-foreground";
+  const StatusIcon = isLoading
+    ? Loader2
+    : slot.status === "error" || isConflict
+      ? AlertTriangle
+      : slot.status === "existing"
+        ? Pencil
+        : FilePlus2;
+  const unsavedNote = dirty && !saving;
   const fieldErr = (k: keyof ValidationResult["fields"]) => errors?.fields[k];
-  const areaOwnersSummary = `${productionAreas.length} areas · ${
-    Object.values(areaOwnerSelections).filter((s) => s.ownerId).length
-  } assigned`;
+  const canDeleteThis = slot.status === "existing" && editingSaved && canDelete;
+  const canDuplicateThis =
+    slot.status === "existing" && editingSaved && canViewHistory && canCreate;
 
-  // Same markup on desktop and mobile; `key` keeps the two copies' element ids
-  // apart (only one of them is ever visible).
-  function renderAreaOwners(key: "d" | "m") {
+  // Rework, as the Dashboard counts it: all three stages, against making.
+  const reworkTotal =
+    (Number(reworkCooking) || 0) + (Number(reworkMaking) || 0) + (Number(reworkPacking) || 0);
+  const reworkPctOfMaking =
+    liveSummary.mActual > 0 ? (reworkTotal / liveSummary.mActual) * 100 : null;
+  const reworkParts = (
+    [
+      ["cooking", reworkCooking],
+      ["making", reworkMaking],
+      ["packing", reworkPacking],
+    ] as const
+  )
+    .filter(([, v]) => (Number(v) || 0) > 0)
+    .map(([name, v]) => `${name} ${fmtNum(Number(v))}`);
+
+  // Planned / Unplanned comes from the reason's downtime type in Settings.
+  const typeNameById = new Map(downtimeTypes.map((t) => [t.id, t.name]));
+  const typeNameOfReason = (reasonId: string) => {
+    const typeId = reasons.find((r) => r.id === reasonId)?.downtime_type_id;
+    return (typeId && typeNameById.get(typeId)) || null;
+  };
+  const minutesByType = new Map<string, number>();
+  let unclassifiedMin = 0;
+  for (const d of validDowntimes) {
+    const t = typeNameOfReason(d.reason_id);
+    if (t) minutesByType.set(t, (minutesByType.get(t) ?? 0) + Number(d.minutes));
+    else unclassifiedMin += Number(d.minutes);
+  }
+  // In Settings order (Planned before Unplanned), not in row order.
+  const typeParts = [...new Set(downtimeTypes.map((t) => t.name))]
+    .filter((t) => minutesByType.has(t))
+    .map((t) => `${fmtNum(minutesByType.get(t) ?? 0)} ${t.toLowerCase()}`);
+  if (typeParts.length > 0 && unclassifiedMin > 0) {
+    typeParts.push(`${fmtNum(unclassifiedMin)} unclassified`);
+  }
+  const areaNames = [...new Set(productionAreas.map((a) => a.name))];
+
+  const scoredAreas = productionAreas.filter(
+    (a) => (areaOwnerSelections[a.id]?.score ?? "").trim() !== "",
+  ).length;
+  const assignedAreas = productionAreas.filter((a) => areaOwnerSelections[a.id]?.ownerId).length;
+  const areaOwnersSummary = `Optional · ${scoredAreas} of ${productionAreas.length} areas scored${
+    assignedAreas > 0 ? ` · ${assignedAreas} owner${assignedAreas === 1 ? "" : "s"} set` : ""
+  }`;
+
+  const outputRows = [
+    {
+      stage: "Making",
+      plan: makingPlan,
+      setPlan: setMakingPlan,
+      actual: makingActual,
+      setActual: setMakingActual,
+      pct: liveSummary.makingPct,
+      planKey: "makingPlan",
+      actualKey: "makingActual",
+    },
+    {
+      stage: "Packing",
+      plan: packingPlan,
+      setPlan: setPackingPlan,
+      actual: packingActual,
+      setActual: setPackingActual,
+      pct: liveSummary.packingPct,
+      planKey: "packingPlan",
+      actualKey: "packingActual",
+    },
+  ] as const;
+
+  const reworkFields = [
+    ["Cooking", reworkCooking, setReworkCooking, "reworkCooking"],
+    ["Making", reworkMaking, setReworkMaking, "reworkMaking"],
+    ["Packing", reworkPacking, setReworkPacking, "reworkPacking"],
+  ] as const;
+  function renderReworkFields() {
+    return reworkFields.map(([label, value, set, key]) => (
+      <Field key={key} label={label} error={fieldErr(key)}>
+        <Input
+          type="number"
+          inputMode="decimal"
+          className="h-11"
+          value={value}
+          onChange={(e) => set(e.target.value)}
+          disabled={!canEditProduction}
+        />
+      </Field>
+    ));
+  }
+
+  // "Duplicate to another day…" in the summary opens Entry History, where
+  // each row's Duplicate button runs handleDuplicate.
+  function openHistoryPanel() {
+    setShowHistory(true);
+    setTimeout(() => historyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
+  function renderAreaOwners() {
     return (
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {productionAreas.map((area) => {
           const sel = areaOwnerSelections[area.id] ?? { ownerId: "", score: "" };
-          const ownerId = `owner-${key}-${area.id}`;
+          const ownerId = `owner-${area.id}`;
           return (
             <div key={area.id} className="rounded-lg border border-border p-3">
               <p className="mb-2 text-sm font-semibold">{area.name}</p>
@@ -822,7 +966,7 @@ function EntryPage() {
                     }
                     disabled={!canEditAreaOwners}
                   >
-                    <SelectTrigger id={ownerId} className="max-md:h-11">
+                    <SelectTrigger id={ownerId} className="h-11">
                       <SelectValue placeholder="Unassigned" />
                     </SelectTrigger>
                     <SelectContent>
@@ -842,7 +986,7 @@ function EntryPage() {
                     max={100}
                     step="0.01"
                     placeholder="0–100"
-                    className="max-md:h-11"
+                    className="h-11"
                     value={sel.score}
                     onChange={(e) =>
                       setAreaOwnerSelections((p) => ({
@@ -866,73 +1010,218 @@ function EntryPage() {
 
   return (
     <AppShell>
-      {/* Mobile-only compact header. Save lives in the sticky bar at the
-          bottom (with the live numbers), so it is not repeated here. */}
-      <div className="mb-3 flex items-center justify-between gap-3 md:hidden">
-        <div className="min-w-0">
+      {/* Phone header: title + History, then one context button that says
+          which entry is open and folds away the line / day / shift pickers.
+          Save lives in the sticky bar at the bottom. */}
+      <div className="mb-3 md:hidden">
+        <div className="flex items-center justify-between gap-3">
           <h1 className="text-xl font-bold tracking-tight">Daily entry</h1>
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">
-            {activeLineName} · {date} · {shiftLabel(shift)}
-          </p>
+          {canViewHistory && (
+            <Button
+              variant="outline"
+              className="h-11 shrink-0 px-3"
+              aria-expanded={showHistory}
+              onClick={() => setShowHistory((s) => !s)}
+            >
+              <History className="h-4 w-4" /> History
+            </Button>
+          )}
+        </div>
+        <div className="mt-2 rounded-xl border border-border bg-card">
+          <button
+            type="button"
+            aria-expanded={openWhich}
+            aria-controls="entry-which-m"
+            onClick={() => setOpenWhich((o) => !o)}
+            className="flex min-h-[52px] w-full items-center gap-2 rounded-xl px-3 text-left"
+          >
+            <span className="min-w-0 flex-1 truncate text-base font-semibold">
+              <span className="sr-only">Change line, day or shift: </span>
+              {context}
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                openWhich && "rotate-180",
+              )}
+            />
+          </button>
           <p
-            className={`text-xs font-medium ${
-              slot.status === "error" || isConflict ? "text-destructive-strong" : "text-primary"
-            }`}
+            className={cn(
+              "-mt-1 px-3 pb-2 text-xs font-medium",
+              slot.status === "error" || isConflict ? "text-destructive-strong" : "text-primary",
+            )}
             aria-live="polite"
           >
             {statusText}
-            {dirty && !saving ? " · unsaved changes" : ""}
+            {unsavedNote ? " · unsaved changes" : ""}
+          </p>
+          {openWhich && (
+            <div id="entry-which-m" className="space-y-3 border-t border-border p-3">
+              <Tabs value={lineId} onValueChange={(v) => void requestSwitch({ lineId: v })}>
+                <TabsList
+                  aria-label="Line"
+                  className="flex h-auto w-full items-center justify-start gap-1 overflow-x-auto"
+                >
+                  {lines.map((l) => (
+                    <TabsTrigger
+                      key={l.id}
+                      value={l.id}
+                      className="min-h-11 shrink-0 whitespace-nowrap"
+                    >
+                      <span
+                        className="mr-2 inline-block h-2 w-2 rounded-full"
+                        style={{ background: l.color }}
+                      />
+                      {l.name}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Day">
+                  <Input
+                    type="date"
+                    value={date}
+                    onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
+                    className="h-11"
+                  />
+                </Field>
+                <Field label="Shift" htmlFor="entry-shift-m">
+                  <Select value={shift} onValueChange={(v) => void requestSwitch({ shift: v })}>
+                    <SelectTrigger id="entry-shift-m" className="h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A">Shift A</SelectItem>
+                      <SelectItem value="B">Shift B</SelectItem>
+                      <SelectItem value="C">Shift C</SelectItem>
+                      <SelectItem value="DAY">Full Day</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* md and up: title + History, then the "Which entry" card. */}
+      <div className="mb-4 hidden items-end justify-between gap-4 md:flex">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Daily entry</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Pick the line, day and shift. If an entry exists you edit it; you are asked before any
+            typing is thrown away.
           </p>
         </div>
         {canViewHistory && (
           <Button
             variant="outline"
-            className="h-11 shrink-0 px-3"
+            className="h-11 shrink-0 px-4"
             aria-expanded={showHistory}
             onClick={() => setShowHistory((s) => !s)}
           >
-            <History className="h-4 w-4" /> History
+            <History className="h-4 w-4" />
+            <span>
+              <span className="sr-only">Entry </span>History
+            </span>
           </Button>
         )}
       </div>
 
-      <div className="mb-6 hidden md:flex items-start justify-between gap-4">
+      <section
+        aria-label="Which entry"
+        className="mb-4 hidden flex-wrap items-end gap-4 rounded-xl border border-border bg-card px-5 py-4 md:flex"
+      >
+        <div className="w-56">
+          <Label htmlFor="entry-line-d" className="text-sm font-semibold">
+            Line
+          </Label>
+          <Select value={lineId} onValueChange={(v) => void requestSwitch({ lineId: v })}>
+            <SelectTrigger id="entry-line-d" className="mt-1.5 h-11 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {lines.map((l) => (
+                <SelectItem key={l.id} value={l.id}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      className="inline-block h-2 w-2 shrink-0 rounded-full"
+                      style={{ background: l.color }}
+                    />
+                    {l.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="w-52">
+          <Label htmlFor="entry-date-d" className="text-sm font-semibold">
+            Day
+          </Label>
+          <Input
+            id="entry-date-d"
+            type="date"
+            className="mt-1.5 h-11"
+            value={date}
+            onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
+          />
+        </div>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Daily Production Entry</h1>
-          <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">
-            {activeLineName} · {date} · {shiftLabel(shift)} ·{" "}
-            <span
-              className={
-                slot.status === "error" || isConflict
-                  ? "font-medium text-destructive-strong"
-                  : "font-medium text-primary"
-              }
-            >
-              {statusText}
+          <span id="entry-shift-d-label" className="text-sm font-semibold leading-none">
+            Shift
+          </span>
+          <div
+            role="group"
+            aria-labelledby="entry-shift-d-label"
+            className="mt-1.5 flex gap-0.5 rounded-lg bg-muted p-[3px]"
+          >
+            {SHIFTS.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={shift === value}
+                aria-label={value === "DAY" ? undefined : `Shift ${value}`}
+                onClick={() => void requestSwitch({ shift: value })}
+                className={cn(
+                  "h-[38px] rounded-md px-4 text-sm transition-colors",
+                  shift === value
+                    ? "bg-card font-semibold text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className={cn("ml-auto flex items-center gap-2.5 rounded-lg px-3.5 py-2", statusTone)}>
+          <StatusIcon
+            aria-hidden="true"
+            className={cn("h-[18px] w-[18px] shrink-0", isLoading && "animate-spin")}
+          />
+          <p aria-live="polite" className="text-sm">
+            <span className="block font-semibold">{statusText}</span>
+            <span className="block text-xs opacity-90">
+              {context}
+              {unsavedNote && <span className="font-semibold"> · unsaved changes</span>}
             </span>
-            {dirty && !saving ? " · unsaved changes" : ""}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {canViewHistory && (
-            <Button variant="outline" onClick={() => setShowHistory((s) => !s)}>
-              {showHistory ? "Hide Entry History" : "Entry History"}
-            </Button>
-          )}
-          <Button
-            className="bg-accent text-accent-foreground hover:bg-accent/90"
-            onClick={handleSave}
-            disabled={saveDisabled}
-          >
-            <Save className="mr-2 h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
-          </Button>
-        </div>
-      </div>
+      </section>
 
       {readOnly && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/50 bg-warning/10 px-4 py-2 text-sm">
           <span>Viewing this entry in read-only mode.</span>
-          <Button size="sm" variant="outline" onClick={() => setReadOnly(false)}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="max-md:h-11"
+            onClick={() => setReadOnly(false)}
+          >
             Edit this entry
           </Button>
         </div>
@@ -986,7 +1275,7 @@ function EntryPage() {
       )}
 
       {showHistory && canViewHistory && (
-        <div className="mb-6">
+        <div ref={historyRef} className="mb-6 scroll-mt-24">
           <EntryHistoryPanel
             lines={lines}
             onView={(row) => handleViewOrEdit(row, "view")}
@@ -1005,550 +1294,370 @@ function EntryPage() {
         </div>
       )}
 
-      <Tabs
-        value={lineId}
-        onValueChange={(v) => void requestSwitch({ lineId: v })}
-        className="mb-4"
-      >
-        <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto max-md:h-auto">
-          {lines.map((l) => (
-            <TabsTrigger
-              key={l.id}
-              value={l.id}
-              className="shrink-0 whitespace-nowrap max-md:min-h-11"
-            >
-              <span
-                className="mr-2 inline-block h-2 w-2 rounded-full"
-                style={{ background: l.color }}
-              />
-              {l.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {/* Desktop-only live summary — recomputed from liveSummary on every
-          keystroke, mirrors the adherence/loss formulas used by the
-          Dashboard so the numbers here never drift from what Save will
-          produce. Mobile keeps scrolling straight into the field cards. */}
-      <div className="mb-4 hidden grid-cols-4 gap-px overflow-hidden rounded-lg bg-border md:grid">
-        <SummaryTile
-          label="Making"
-          value={liveSummary.makingPct !== null ? `${liveSummary.makingPct.toFixed(0)}%` : "—"}
-          sub={`${liveSummary.mActual.toLocaleString()} / ${liveSummary.mPlan.toLocaleString()}`}
-          colorClass={adherenceColor(liveSummary.makingPct)}
-        />
-        <SummaryTile
-          label="Packing"
-          value={liveSummary.packingPct !== null ? `${liveSummary.packingPct.toFixed(0)}%` : "—"}
-          sub={`${liveSummary.pActual.toLocaleString()} / ${liveSummary.pPlan.toLocaleString()}`}
-          colorClass={adherenceColor(liveSummary.packingPct)}
-        />
-        <SummaryTile
-          label="Downtime"
-          value={`${totalDowntime.toLocaleString()} min`}
-          sub={`${validDowntimes.length} stoppage${validDowntimes.length === 1 ? "" : "s"}`}
-          colorClass="text-foreground"
-        />
-        <SummaryTile
-          label="Loss"
-          value={liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"}
-          sub={`of ${liveSummary.avail.toLocaleString()} min`}
-          colorClass={lossColor(liveSummary.lossPct)}
-        />
-      </div>
-
-      {/* A disabled fieldset, not pointer-events: none — read-only must stop
-          the keyboard too. m-0/p-0/min-w-0 undo the fieldset defaults so the
-          grid lays out exactly as the old div did. */}
-      <fieldset
-        disabled={readOnly}
-        className="m-0 grid min-w-0 grid-cols-1 gap-6 border-0 p-0 lg:grid-cols-3"
-        style={readOnly ? { opacity: 0.75 } : undefined}
-      >
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Entry Details</CardTitle>
-            <CardDescription>Plan & actual figures in kilograms.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {/* Mobile-only: the same 10 fields below, paired up 2-per-row
-                (Plan next to Actual, Available next to the first Rework
-                field) instead of the desktop 3-column grid. Same state,
-                same onChange/disabled — just a different arrangement. */}
-            <div className="grid grid-cols-2 gap-x-2 gap-y-3 md:hidden">
-              <Field label="Date">
-                <Input
-                  type="date"
-                  value={date}
-                  onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Shift" htmlFor="entry-shift-m">
-                <Select value={shift} onValueChange={(v) => void requestSwitch({ shift: v })}>
-                  <SelectTrigger id="entry-shift-m" className="h-11 rounded-md border bg-muted">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="A">Shift A</SelectItem>
-                    <SelectItem value="B">Shift B</SelectItem>
-                    <SelectItem value="C">Shift C</SelectItem>
-                    <SelectItem value="DAY">Full Day</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Making Plan (kg)" error={fieldErr("makingPlan")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={makingPlan}
-                  onChange={(e) => setMakingPlan(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Making Actual (kg)" error={fieldErr("makingActual")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={makingActual}
-                  onChange={(e) => setMakingActual(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Packing Plan (kg)" error={fieldErr("packingPlan")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={packingPlan}
-                  onChange={(e) => setPackingPlan(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Packing Actual (kg)" error={fieldErr("packingActual")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={packingActual}
-                  onChange={(e) => setPackingActual(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Available Time (min)" error={fieldErr("availableMin")}>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  value={availableMin}
-                  onChange={(e) => setAvailableMin(e.target.value)}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Rework Cooking (kg)" error={fieldErr("reworkCooking")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={reworkCooking}
-                  onChange={(e) => setReworkCooking(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Rework Making (kg)" error={fieldErr("reworkMaking")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={reworkMaking}
-                  onChange={(e) => setReworkMaking(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-              <Field label="Rework Packing (kg)" error={fieldErr("reworkPacking")}>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={reworkPacking}
-                  onChange={(e) => setReworkPacking(e.target.value)}
-                  disabled={!canEditProduction}
-                  className="h-11 rounded-md border bg-muted"
-                />
-              </Field>
-            </div>
-
-            {/* Desktop-only (md:contents unwraps into the grid above at
-                md+, exactly as before) — same fields, original 3-column
-                layout, completely unchanged. */}
-            {/* Desktop-only — Date/Shift/Available Time stay as plain
-                fields; Making/Packing move into the paired adherence cards
-                below and Rework moves into the collapsible row further
-                down. */}
-            <div className="hidden gap-4 md:col-span-3 md:grid md:grid-cols-3">
-              <Field label="Date">
-                <Input
-                  type="date"
-                  value={date}
-                  onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
-                />
-              </Field>
-              <Field label="Shift" htmlFor="entry-shift-d">
-                <Select value={shift} onValueChange={(v) => void requestSwitch({ shift: v })}>
-                  <SelectTrigger id="entry-shift-d">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="A">Shift A</SelectItem>
-                    <SelectItem value="B">Shift B</SelectItem>
-                    <SelectItem value="C">Shift C</SelectItem>
-                    <SelectItem value="DAY">Full Day</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Available Time (min)" error={fieldErr("availableMin")}>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  value={availableMin}
-                  onChange={(e) => setAvailableMin(e.target.value)}
-                />
-              </Field>
-            </div>
-
-            <div className="hidden gap-4 md:col-span-3 md:grid md:grid-cols-2">
-              <AdherenceCard
-                title="Making"
-                planValue={makingPlan}
-                actualValue={makingActual}
-                onPlanChange={setMakingPlan}
-                onActualChange={setMakingActual}
-                disabled={!canEditProduction}
-                pct={liveSummary.makingPct}
-                planError={fieldErr("makingPlan")}
-                actualError={fieldErr("makingActual")}
-              />
-              <AdherenceCard
-                title="Packing"
-                planValue={packingPlan}
-                actualValue={packingActual}
-                onPlanChange={setPackingPlan}
-                onActualChange={setPackingActual}
-                disabled={!canEditProduction}
-                pct={liveSummary.packingPct}
-                planError={fieldErr("packingPlan")}
-                actualError={fieldErr("packingActual")}
-              />
-            </div>
-
-            {/* Desktop-only — Rework / Area owners & performance / Comments
-                collapsed into rows; mobile keeps its always-expanded
-                originals (Rework fields inline above, Area owners &
-                Comments blocks below). */}
-            <div className="hidden md:col-span-3 md:flex md:flex-col md:gap-3">
-              <CollapsibleRow
-                icon={Recycle}
-                title="Rework"
-                summary={`${(
-                  (Number(reworkCooking) || 0) +
-                  (Number(reworkMaking) || 0) +
-                  (Number(reworkPacking) || 0)
-                ).toLocaleString()} kg total`}
-                open={openRework}
-                onToggle={() => setOpenRework((o) => !o)}
-              >
-                <div className="grid grid-cols-3 gap-4">
-                  <Field label="Rework Cooking (kg)" error={fieldErr("reworkCooking")}>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={reworkCooking}
-                      onChange={(e) => setReworkCooking(e.target.value)}
-                      disabled={!canEditProduction}
-                    />
-                  </Field>
-                  <Field label="Rework Making (kg)" error={fieldErr("reworkMaking")}>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={reworkMaking}
-                      onChange={(e) => setReworkMaking(e.target.value)}
-                      disabled={!canEditProduction}
-                    />
-                  </Field>
-                  <Field label="Rework Packing (kg)" error={fieldErr("reworkPacking")}>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      value={reworkPacking}
-                      onChange={(e) => setReworkPacking(e.target.value)}
-                      disabled={!canEditProduction}
-                    />
-                  </Field>
-                </div>
-              </CollapsibleRow>
-
-              {productionAreas.length > 0 && (
-                <CollapsibleRow
-                  icon={Users}
-                  title="Area owners & performance"
-                  summary={areaOwnersSummary}
-                  open={openAreaOwners}
-                  onToggle={() => setOpenAreaOwners((o) => !o)}
-                >
-                  {renderAreaOwners("d")}
-                </CollapsibleRow>
-              )}
-
-              <CollapsibleRow
-                icon={MessageSquare}
-                title="Comments"
-                open={openComments}
-                onToggle={() => setOpenComments((o) => !o)}
-              >
-                <Textarea
-                  aria-label="Comments"
-                  value={comments}
-                  onChange={(e) => setComments(e.target.value)}
-                  rows={2}
-                  disabled={!canEditNotes}
-                />
-              </CollapsibleRow>
-            </div>
-
-            {/* Mobile — Area owners start collapsed like on desktop: they are
-                optional, and five always-open area cards pushed the downtime
-                log a long scroll away. */}
-            {productionAreas.length > 0 && (
-              <div className="col-span-1 md:hidden">
-                <CollapsibleRow
-                  icon={Users}
-                  title="Area owners"
-                  summary={areaOwnersSummary}
-                  open={openAreaOwners}
-                  onToggle={() => setOpenAreaOwners((o) => !o)}
-                >
-                  {renderAreaOwners("m")}
-                </CollapsibleRow>
+      <div className="gap-6 md:grid lg:grid-cols-3 lg:items-start">
+        <div className="flex min-w-0 flex-col gap-3 md:gap-4 lg:col-span-2">
+          {/* A disabled fieldset, not pointer-events: none — read-only must
+              stop the keyboard too. The collapsible rows below carry their
+              own fieldset so they can still be opened and read. */}
+          <fieldset
+            disabled={readOnly}
+            className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0 md:gap-4"
+            style={readOnly ? { opacity: 0.75 } : undefined}
+          >
+            <EntrySection title="1 · Output" unit="kg">
+              {/* Phone: each stage with its live % and Plan / Actual side by side. */}
+              <div className="flex flex-col gap-3 md:hidden">
+                {outputRows.map((o) => (
+                  <div key={o.stage}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm font-semibold">{o.stage}</span>
+                      <span className={cn("text-sm font-bold tabular-nums", adherenceColor(o.pct))}>
+                        {fmtPct(o.pct)} of plan
+                      </span>
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-2">
+                      <Field label="Plan" error={fieldErr(o.planKey)}>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          aria-label={`${o.stage} plan, kg`}
+                          className="h-11"
+                          value={o.plan}
+                          onChange={(e) => o.setPlan(e.target.value)}
+                          disabled={!canEditProduction}
+                        />
+                      </Field>
+                      <Field label="Actual" error={fieldErr(o.actualKey)}>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          aria-label={`${o.stage} actual, kg`}
+                          className="h-11"
+                          value={o.actual}
+                          onChange={(e) => o.setActual(e.target.value)}
+                          disabled={!canEditProduction}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
+              {/* md and up: Making / Packing rows × Plan / Actual / Of plan. */}
+              <div className="hidden grid-cols-[5.5rem_minmax(0,1fr)_minmax(0,1fr)_7rem] items-start gap-x-4 gap-y-2.5 md:grid">
+                <span />
+                <span className="text-sm font-semibold text-muted-foreground">Plan</span>
+                <span className="text-sm font-semibold text-muted-foreground">Actual</span>
+                <span className="text-sm font-semibold text-muted-foreground">Of plan</span>
+                {outputRows.map((o) => (
+                  <Fragment key={o.stage}>
+                    <span className="flex h-11 items-center text-base font-semibold">
+                      {o.stage}
+                    </span>
+                    <GridInput
+                      label={`${o.stage} plan, kg`}
+                      value={o.plan}
+                      onChange={o.setPlan}
+                      disabled={!canEditProduction}
+                      error={fieldErr(o.planKey)}
+                    />
+                    <GridInput
+                      label={`${o.stage} actual, kg`}
+                      value={o.actual}
+                      onChange={o.setActual}
+                      disabled={!canEditProduction}
+                      error={fieldErr(o.actualKey)}
+                    />
+                    <span
+                      className={cn(
+                        "flex h-11 items-center text-xl font-bold tabular-nums",
+                        adherenceColor(o.pct),
+                      )}
+                    >
+                      {fmtPct(o.pct)}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
 
-            {customFields.length > 0 && (
-              <div className="col-span-1 md:col-span-3">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Custom fields for this line
+              {customFields.length > 0 && (
+                <div className="border-t border-border pt-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Custom fields for this line
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4">
+                    {customFields.map((f) => (
+                      <Field key={f.id} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`}>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          className="h-11"
+                          value={customValues[f.field_key] ?? ""}
+                          onChange={(e) =>
+                            setCustomValues((p) => ({ ...p, [f.field_key]: e.target.value }))
+                          }
+                        />
+                      </Field>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  {customFields.map((f) => (
-                    <Field key={f.id} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`}>
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        className="max-md:h-11"
-                        value={customValues[f.field_key] ?? ""}
-                        onChange={(e) =>
-                          setCustomValues((p) => ({ ...p, [f.field_key]: e.target.value }))
-                        }
-                      />
-                    </Field>
+              )}
+            </EntrySection>
+
+            <EntrySection
+              title="2 · Time and downtime"
+              aside={
+                <span className="text-sm font-semibold tabular-nums md:hidden">
+                  {fmtNum(totalDowntime)} min
+                </span>
+              }
+            >
+              <div className="flex flex-col gap-1.5 md:flex-row md:items-end md:gap-4">
+                <div className="md:w-56">
+                  <Field label="Available time (min)" error={fieldErr("availableMin")}>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      className="h-11"
+                      value={availableMin}
+                      onChange={(e) => setAvailableMin(e.target.value)}
+                    />
+                  </Field>
+                </div>
+                <p className="text-xs text-muted-foreground md:mb-3 md:text-sm">
+                  Full day = 1,440 · one shift = 480
+                </p>
+              </div>
+
+              {downtimes.length > 0 && (
+                <div
+                  className={cn(
+                    "hidden gap-3 text-sm font-semibold text-muted-foreground md:grid",
+                    DOWNTIME_GRID_COLS,
+                  )}
+                  aria-hidden="true"
+                >
+                  <span>Reason</span>
+                  <span>Area</span>
+                  <span>Minutes</span>
+                  <span />
+                </div>
+              )}
+              {downtimes.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                  No downtime logged. Press Add downtime to record a stoppage.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {downtimes.map((d, i) => (
+                    <DowntimeRowEditor
+                      key={i}
+                      index={i}
+                      row={d}
+                      reasons={reasons}
+                      areaNames={areaNames}
+                      typeName={d.reason_id ? typeNameOfReason(d.reason_id) : null}
+                      error={errors?.downtimes[i]}
+                      disabled={!canEditDowntime}
+                      onReasonChange={(v) => {
+                        const r = reasons.find((x) => x.id === v);
+                        setDowntimes((arr) =>
+                          arr.map((row, idx) =>
+                            idx === i
+                              ? {
+                                  ...row,
+                                  reason_id: v,
+                                  reason_name: r?.name ?? row.reason_name,
+                                  area: r?.area ?? row.area,
+                                }
+                              : row,
+                          ),
+                        );
+                      }}
+                      onAreaChange={(v) =>
+                        setDowntimes((arr) =>
+                          arr.map((row, idx) => (idx === i ? { ...row, area: v } : row)),
+                        )
+                      }
+                      onMinutesChange={(m) =>
+                        setDowntimes((arr) =>
+                          arr.map((row, idx) => (idx === i ? { ...row, minutes: m } : row)),
+                        )
+                      }
+                      onRemove={() => setDowntimes((arr) => arr.filter((_, idx) => idx !== i))}
+                    />
                   ))}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Mobile — Comments collapsed too; the summary shows whether any
-                were written. */}
-            <div className="md:hidden">
-              <CollapsibleRow
-                icon={MessageSquare}
-                title="Comments"
-                summary={comments.trim() ? "Written" : "Empty"}
-                open={openComments}
-                onToggle={() => setOpenComments((o) => !o)}
-              >
-                <Textarea
-                  aria-label="Comments"
-                  value={comments}
-                  onChange={(e) => setComments(e.target.value)}
-                  rows={3}
-                  disabled={!canEditNotes}
-                />
-              </CollapsibleRow>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Downtime Log</CardTitle>
-              <CardDescription>
-                <b>{totalDowntime}</b> min ·{" "}
-                {liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"} of
-                available
-              </CardDescription>
-            </div>
-            <Button
-              size="sm"
-              className="bg-accent text-accent-foreground hover:bg-accent/90 max-md:h-11 max-md:px-4"
-              onClick={addDowntime}
-              disabled={!canEditDowntime}
-            >
-              <Plus className="mr-1 h-4 w-4" />
-              Add
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {downtimes.length === 0 && (
-              <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-                No downtime logged. Click Add to record stoppages.
-              </p>
-            )}
-            {downtimes.map((d, i) => (
-              <div key={i} className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
-                {/* Mobile-only quick-scan summary — the editable Select/
-                    Input/Remove controls below are unchanged and still do
-                    the actual editing, on every screen size. */}
-                <div className="flex items-center justify-between gap-2 rounded-r-md border-l-[3px] border-l-accent bg-card px-2 py-1.5 md:hidden">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium leading-tight">
-                      {d.reason_name || "Pick reason"}
-                    </p>
-                    <p className="truncate text-xs leading-tight text-muted-foreground">
-                      {d.area || "—"}
-                    </p>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums">
-                    {d.minutes || 0} min
-                  </span>
-                </div>
-                <Select
-                  value={d.reason_id}
-                  onValueChange={(v) => {
-                    const r = reasons.find((x) => x.id === v);
-                    setDowntimes((arr) =>
-                      arr.map((row, idx) =>
-                        idx === i
-                          ? {
-                              ...row,
-                              reason_id: v,
-                              reason_name: r?.name ?? row.reason_name,
-                              area: r?.area ?? row.area,
-                            }
-                          : row,
-                      ),
-                    );
-                  }}
-                  disabled={!canEditDowntime}
-                >
-                  <SelectTrigger aria-label={`Downtime ${i + 1} reason`} className="max-md:h-11">
-                    <SelectValue placeholder="Pick reason" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reasons.map((r) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <Input
-                    placeholder="Area"
-                    aria-label={`Downtime ${i + 1} area`}
-                    className="max-md:h-11"
-                    value={d.area}
-                    onChange={(e) =>
-                      setDowntimes((arr) =>
-                        arr.map((row, idx) => (idx === i ? { ...row, area: e.target.value } : row)),
-                      )
-                    }
-                    disabled={!canEditDowntime}
-                  />
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="Minutes"
-                    aria-label={`Downtime ${i + 1} minutes`}
-                    aria-invalid={errors?.downtimes[i] ? true : undefined}
-                    className="max-md:h-11"
-                    value={d.minutes || ""}
-                    onChange={(e) =>
-                      setDowntimes((arr) =>
-                        arr.map((row, idx) =>
-                          idx === i ? { ...row, minutes: Number(e.target.value) } : row,
-                        ),
-                      )
-                    }
-                    disabled={!canEditDowntime}
-                  />
-                </div>
-                {errors?.downtimes[i] && (
-                  <p className="text-xs font-medium text-destructive-strong" role="alert">
-                    {errors.downtimes[i]}
-                  </p>
-                )}
+              <div className="flex flex-col gap-2 border-t border-border pt-3 md:flex-row-reverse md:items-center md:justify-between">
+                <p className="text-sm">
+                  <span className="font-bold tabular-nums">{fmtNum(totalDowntime)} min</span>
+                  {liveSummary.lossPct !== null &&
+                    ` · ${liveSummary.lossPct.toFixed(1)}% of available`}
+                  {typeParts.length > 0 && ` · ${typeParts.join(", ")}`}
+                </p>
                 <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive max-md:h-11"
-                  aria-label={`Remove downtime ${i + 1}`}
-                  onClick={() => setDowntimes((arr) => arr.filter((_, idx) => idx !== i))}
+                  variant="outline"
+                  className="h-12 w-full border-dashed font-semibold text-primary md:h-11 md:w-auto"
+                  onClick={addDowntime}
                   disabled={!canEditDowntime}
                 >
-                  <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
+                  <Plus className="h-4 w-4" /> Add downtime
                 </Button>
               </div>
-            ))}
+            </EntrySection>
 
-            <EntryPie
-              makingActual={Number(makingActual) || 0}
-              packingActual={Number(packingActual) || 0}
-              rework={
-                (Number(reworkCooking) || 0) +
-                (Number(reworkMaking) || 0) +
-                (Number(reworkPacking) || 0)
-              }
-              downtimeMin={totalDowntime}
-            />
-
-            <div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full ${lossBarColor(liveSummary.lossPct)}`}
-                  style={{ width: `${Math.min(100, Math.max(0, liveSummary.lossPct ?? 0))}%` }}
-                />
+            {/* md and up: Rework as its own section. */}
+            <EntrySection title="3 · Rework" unit="kg" className="hidden md:flex">
+              <div className="grid grid-cols-4 items-start gap-4">
+                {renderReworkFields()}
+                <p className="flex h-11 items-center self-end text-sm">
+                  <span>
+                    <span className="font-bold tabular-nums">{fmtNum(reworkTotal)} kg</span>
+                    {reworkPctOfMaking !== null && ` · ${reworkPctOfMaking.toFixed(1)}% of making`}
+                  </span>
+                </p>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"} of{" "}
-                {liveSummary.avail.toLocaleString()} available min
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </fieldset>
+            </EntrySection>
+          </fieldset>
 
-      {/* Desktop Save/Delete row — unchanged apart from the guards. */}
-      <div className="sticky bottom-4 mt-6 hidden justify-end gap-2 md:flex">
-        {slot.status === "existing" && editingSaved && canDelete && (
-          <Button
-            size="lg"
-            variant="outline"
-            className="text-destructive hover:text-destructive"
-            onClick={() => handleDelete()}
-            disabled={deleting || saving || readOnly}
+          {/* Phone: Rework folds away; the summary keeps the numbers in view. */}
+          <CollapsibleRow
+            className="md:hidden"
+            title="3 · Rework (kg)"
+            summary={`${fmtNum(reworkTotal)} kg${reworkParts.length > 0 ? ` · ${reworkParts.join(" · ")}` : ""}`}
+            open={openRework}
+            onToggle={() => setOpenRework((o) => !o)}
+            contentDisabled={readOnly}
           >
-            <Trash2 className="mr-2 h-4 w-4" /> {deleting ? "Deleting…" : "Delete Entry"}
-          </Button>
-        )}
-        <Button size="lg" onClick={handleSave} disabled={saveDisabled} className="shadow-elevated">
-          <Save className="mr-2 h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
-        </Button>
+            <div className="grid grid-cols-3 gap-2">{renderReworkFields()}</div>
+          </CollapsibleRow>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+            {productionAreas.length > 0 && (
+              <CollapsibleRow
+                className={openAreaOwners || openComments ? "md:col-span-2" : undefined}
+                title="4 · Area owners"
+                summary={areaOwnersSummary}
+                open={openAreaOwners}
+                onToggle={() => setOpenAreaOwners((o) => !o)}
+                contentDisabled={readOnly}
+              >
+                {renderAreaOwners()}
+              </CollapsibleRow>
+            )}
+            <CollapsibleRow
+              className={openAreaOwners || openComments ? "md:col-span-2" : undefined}
+              title="5 · Notes"
+              summary={comments.trim() || "Empty"}
+              open={openComments}
+              onToggle={() => setOpenComments((o) => !o)}
+              contentDisabled={readOnly}
+            >
+              <Textarea
+                aria-label="Notes"
+                value={comments}
+                onChange={(e) => setComments(e.target.value)}
+                rows={3}
+                disabled={!canEditNotes}
+              />
+            </CollapsibleRow>
+          </div>
+        </div>
+
+        {/* md and up: the live summary and the one Save button. Beside the
+            form (sticky) from lg; below it, stuck to the bottom, at md. */}
+        <aside
+          aria-labelledby="entry-summary-title"
+          className="z-10 hidden flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-elevated md:sticky md:bottom-4 md:mt-4 md:flex lg:bottom-auto lg:top-24 lg:mt-0"
+        >
+          <div>
+            <h2 id="entry-summary-title" className="text-lg font-semibold">
+              This entry
+            </h2>
+            <p className="text-sm text-muted-foreground">{context}</p>
+          </div>
+          <dl className="grid grid-cols-4 gap-4 lg:grid-cols-1 lg:gap-3">
+            {(
+              [
+                [
+                  "Making",
+                  "target 90%",
+                  fmtPct(liveSummary.makingPct),
+                  adherenceColor(liveSummary.makingPct),
+                ],
+                [
+                  "Packing",
+                  "target 90%",
+                  fmtPct(liveSummary.packingPct),
+                  adherenceColor(liveSummary.packingPct),
+                ],
+                [
+                  "Time lost",
+                  `${fmtNum(totalDowntime)} of ${fmtNum(liveSummary.avail)} min`,
+                  fmtPct(liveSummary.lossPct),
+                  lossColor(liveSummary.lossPct),
+                ],
+                [
+                  "Rework",
+                  reworkPctOfMaking !== null
+                    ? `${reworkPctOfMaking.toFixed(1)}% of making`
+                    : "cooking + making + packing",
+                  `${fmtNum(reworkTotal)} kg`,
+                  "text-foreground",
+                ],
+              ] as const
+            ).map(([label, sub, value, color]) => (
+              <div
+                key={label}
+                className="flex flex-col gap-1 lg:flex-row lg:items-baseline lg:justify-between lg:border-b lg:border-border lg:pb-3"
+              >
+                <dt className="text-sm">
+                  {label}
+                  <span className="block text-xs text-muted-foreground">{sub}</span>
+                </dt>
+                <dd className={cn("text-xl font-bold tabular-nums lg:text-2xl", color)}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {unsavedNote && (
+            <p className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-warning-strong">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>
+                {changed.length} unsaved {changed.length === 1 ? "change" : "changes"}
+                {changed.length > 0 && ` · ${changed.join(", ")}`}
+              </span>
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 lg:flex-col">
+            <Button
+              className="h-12 px-6 text-base lg:w-full"
+              onClick={handleSave}
+              disabled={saveDisabled}
+            >
+              <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
+            </Button>
+            {canDuplicateThis && (
+              <Button variant="outline" className="h-11 lg:w-full" onClick={openHistoryPanel}>
+                Duplicate to another day…
+              </Button>
+            )}
+            {canDeleteThis && (
+              <Button
+                variant="ghost"
+                className="h-11 font-semibold text-destructive-strong hover:text-destructive-strong lg:w-full"
+                onClick={() => handleDelete()}
+                disabled={deleting || saving || readOnly}
+              >
+                <Trash2 className="h-4 w-4" /> {deleting ? "Deleting…" : "Delete this entry…"}
+              </Button>
+            )}
+          </div>
+        </aside>
       </div>
 
-      {/* Mobile: Delete sits at the end of the form, away from Save. */}
-      {slot.status === "existing" && editingSaved && canDelete && (
+      {/* Phone: Delete sits at the end of the form, away from Save. */}
+      {canDeleteThis && (
         <Button
           variant="ghost"
           className="mt-4 h-11 w-full text-destructive hover:text-destructive md:hidden"
@@ -1559,10 +1668,9 @@ function EntryPage() {
         </Button>
       )}
 
-      {/* Mobile sticky bar: the live numbers the desktop shows in its summary
-          tiles (hidden below md, so adherence was never visible on a phone)
-          plus the one Save button. bottom-[72px] clears the fixed bottom nav
-          (AppShell.tsx, md:hidden). */}
+      {/* Phone sticky bar: live Making / Packing / Lost plus the one Save
+          button. bottom-[72px] clears the fixed bottom nav (AppShell.tsx,
+          md:hidden). */}
       <div className="sticky bottom-[72px] z-10 mt-4 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-elevated backdrop-blur md:hidden">
         <div className="flex items-center gap-3">
           <dl className="grid min-w-0 flex-1 grid-cols-3 gap-2">
@@ -1683,190 +1791,40 @@ function Field({
   );
 }
 
-// One cell of the desktop-only live summary row under the line tabs.
-function SummaryTile({
+// One cell of the desktop Output grid: the column heading is the visual
+// label, so the input names itself ("Making plan, kg").
+function GridInput({
   label,
   value,
-  sub,
-  colorClass,
+  onChange,
+  disabled,
+  error,
 }: {
   label: string;
   value: string;
-  sub: string;
-  colorClass: string;
-}) {
-  return (
-    <div className="bg-card px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
-    </div>
-  );
-}
-
-// Desktop-only paired Making/Packing card: header adherence %, Plan/Actual
-// side by side, thin progress bar underneath — replaces the 4 separate
-// Field entries the desktop grid used to render for these.
-function AdherenceCard({
-  title,
-  planValue,
-  actualValue,
-  onPlanChange,
-  onActualChange,
-  disabled,
-  pct,
-  planError,
-  actualError,
-}: {
-  title: string;
-  planValue: string;
-  actualValue: string;
-  onPlanChange: (v: string) => void;
-  onActualChange: (v: string) => void;
+  onChange: (v: string) => void;
   disabled: boolean;
-  pct: number | null;
-  planError?: string;
-  actualError?: string;
+  error?: string;
 }) {
+  const errId = useId();
   return (
-    <div className="rounded-lg border border-border bg-muted/50 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-sm font-semibold">{title}</p>
-        <p className={`text-xs font-medium ${adherenceColor(pct)}`}>
-          {pct !== null ? `${pct.toFixed(0)}% adherence` : "— adherence"}
+    <div>
+      <Input
+        type="number"
+        inputMode="decimal"
+        aria-label={label}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errId : undefined}
+        className="h-11 text-base tabular-nums md:text-base"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      />
+      {error && (
+        <p id={errId} role="alert" className="mt-1 text-xs font-medium text-destructive-strong">
+          {error}
         </p>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Plan (kg)" error={planError}>
-          <Input
-            type="number"
-            inputMode="decimal"
-            aria-label={`${title} plan, kg`}
-            value={planValue}
-            onChange={(e) => onPlanChange(e.target.value)}
-            disabled={disabled}
-          />
-        </Field>
-        <Field label="Actual (kg)" error={actualError}>
-          <Input
-            type="number"
-            inputMode="decimal"
-            aria-label={`${title} actual, kg`}
-            value={actualValue}
-            onChange={(e) => onActualChange(e.target.value)}
-            disabled={disabled}
-          />
-        </Field>
-      </div>
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-background">
-        <div
-          className={`h-full rounded-full ${adherenceBarColor(pct)}`}
-          style={{ width: `${Math.min(100, Math.max(0, pct ?? 0))}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// Desktop-only collapsed-by-default row (Rework / Area owners & performance
-// / Comments) — bare useState toggle, same reasoning as
-// MobileCollapsibleSection in maintenance.tsx: no Radix mount/animation
-// machinery needed, and mobile never renders this at all (it keeps its own
-// always-expanded originals), so there's no "force back open below md" case
-// to handle here.
-function CollapsibleRow({
-  icon: Icon,
-  title,
-  summary,
-  open,
-  onToggle,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  summary?: string;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/50">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left max-md:min-h-12"
-      >
-        <span className="flex items-center gap-2 text-sm font-semibold">
-          <Icon className="h-4 w-4 text-muted-foreground" />
-          {title}
-        </span>
-        <span className="flex items-center gap-2">
-          {summary && <span className="text-xs text-muted-foreground">{summary}</span>}
-          <ChevronRight
-            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-          />
-        </span>
-      </button>
-      {open && <div className="border-t border-border p-3">{children}</div>}
-    </div>
-  );
-}
-
-function EntryPie({
-  makingActual,
-  packingActual,
-  rework,
-  downtimeMin,
-}: {
-  makingActual: number;
-  packingActual: number;
-  rework: number;
-  downtimeMin: number;
-}) {
-  const data = [
-    { name: "Making (kg)", value: makingActual, fill: "var(--color-chart-1)" },
-    { name: "Packing (kg)", value: packingActual, fill: "var(--color-chart-2)" },
-    { name: "Rework (kg)", value: rework, fill: "var(--color-chart-3)" },
-    { name: "Downtime (min)", value: downtimeMin, fill: "var(--color-chart-4)" },
-  ].filter((d) => d.value > 0);
-  if (data.length === 0) return null;
-  return (
-    // Desktop only: on a phone it mixed kg with minutes in one pie and pushed
-    // the Save bar down; the sticky bar there shows the numbers instead.
-    <div className="mt-2 hidden rounded-lg border border-border bg-muted/20 p-3 md:block">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Entry Composition
-      </p>
-      <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              outerRadius={70}
-              innerRadius={35}
-              paddingAngle={2}
-            >
-              {data.map((d, i) => (
-                <Cell key={i} fill={d.fill} />
-              ))}
-            </Pie>
-            <RTooltip
-              contentStyle={{
-                background: "var(--color-popover)",
-                border: "1px solid var(--color-border)",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
+      )}
     </div>
   );
 }

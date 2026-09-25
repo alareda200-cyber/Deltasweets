@@ -165,8 +165,29 @@ function customKey(c: Record<string, string>): string {
   );
 }
 
-export function sameValues(a: EntryFormValues, b: EntryFormValues): boolean {
-  const scalar: (keyof EntryFormValues)[] = [
+const FIELD_NAMES: Record<keyof EntryFormValues, string> = {
+  makingPlan: "Making plan",
+  makingActual: "Making actual",
+  packingPlan: "Packing plan",
+  packingActual: "Packing actual",
+  availableMin: "Available time",
+  reworkCooking: "Rework cooking",
+  reworkMaking: "Rework making",
+  reworkPacking: "Rework packing",
+  comments: "Notes",
+  customValues: "Custom fields",
+  downtimes: "Downtime",
+  areaOwners: "Area owners",
+};
+
+/**
+ * The fields where `a` differs from `b`, as names a supervisor recognises
+ * ("Rework packing", "Downtime"). Empty means no unsaved changes —
+ * sameValues is defined by it, so the list and the "unsaved" flag always agree.
+ */
+export function changedFields(a: EntryFormValues, b: EntryFormValues): string[] {
+  const out: string[] = [];
+  const scalar = [
     "makingPlan",
     "makingActual",
     "packingPlan",
@@ -175,18 +196,25 @@ export function sameValues(a: EntryFormValues, b: EntryFormValues): boolean {
     "reworkCooking",
     "reworkMaking",
     "reworkPacking",
-  ];
+  ] as const;
   for (const k of scalar) {
-    if (norm(a[k] as string) !== norm(b[k] as string)) return false;
+    if (norm(a[k]) !== norm(b[k])) out.push(FIELD_NAMES[k]);
   }
-  if (a.comments.trim() !== b.comments.trim()) return false;
-  if (customKey(a.customValues) !== customKey(b.customValues)) return false;
+  if (a.comments.trim() !== b.comments.trim()) out.push(FIELD_NAMES.comments);
+  if (customKey(a.customValues) !== customKey(b.customValues)) out.push(FIELD_NAMES.customValues);
   // A half-filled downtime row (a reason but no minutes yet, or the reverse)
   // is typing the supervisor would lose, so it counts. A row added and left
   // completely blank does not — Save would skip it anyway.
   const touched = (rows: DtRow[]) => rows.filter((d) => d.reason_name || Number(d.minutes) > 0);
-  if (downtimeKey(touched(a.downtimes)) !== downtimeKey(touched(b.downtimes))) return false;
-  return sameOwners(a.areaOwners, b.areaOwners);
+  if (downtimeKey(touched(a.downtimes)) !== downtimeKey(touched(b.downtimes))) {
+    out.push(FIELD_NAMES.downtimes);
+  }
+  if (!sameOwners(a.areaOwners, b.areaOwners)) out.push(FIELD_NAMES.areaOwners);
+  return out;
+}
+
+export function sameValues(a: EntryFormValues, b: EntryFormValues): boolean {
+  return changedFields(a, b).length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,25 +348,24 @@ export function shiftLabel(shift: string): string {
   return shift === "DAY" ? "Full day" : `Shift ${shift}`;
 }
 
+// Fixed names: en-GB in newer ICU spells September "Sept".
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "2026-09-23" → "Wed 23 Sep". Falls back to the input if it isn't a date. */
+export function formatDay(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) return isoDate;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return isoDate;
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
 export function formatSavedAt(isoTs: string): string {
   const d = new Date(isoTs);
   if (Number.isNaN(d.getTime())) return "";
   const day = d.getDate();
-  // Fixed names: en-GB in newer ICU spells September "Sept".
-  const month = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ][d.getMonth()];
+  const month = MONTHS[d.getMonth()];
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${day} ${month} ${hh}:${mm}`;
