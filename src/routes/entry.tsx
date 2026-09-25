@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useBlocker, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { EntryHistoryPanel } from "@/components/EntryHistoryPanel";
@@ -18,6 +18,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Trash2,
   Plus,
   Save,
@@ -26,6 +36,7 @@ import {
   Recycle,
   Users,
   MessageSquare,
+  AlertTriangle,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, ResponsiveContainer, Legend } from "recharts";
 import { toast } from "sonner";
@@ -36,12 +47,29 @@ import {
   fieldsQuery,
   productionAreasQuery,
   areaOwnersQuery,
+  type EntryHistoryRow,
 } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
+import {
+  type DtRow,
+  type EntryFormValues,
+  type SwitchDecision,
+  type ValidationResult,
+  decideSwitch,
+  emptyValues,
+  formatSavedAt,
+  sameDowntimes,
+  sameOwners,
+  sameValues,
+  savableDowntimes,
+  shiftLabel,
+  validateValues,
+  valuesFromRows,
+} from "@/lib/entry-form";
 
 export const Route = createFileRoute("/entry")({
   head: () => ({ meta: [{ title: "Daily Entry · Production Scorecard" }] }),
@@ -59,13 +87,6 @@ export const Route = createFileRoute("/entry")({
     </RequireAuth>
   ),
 });
-
-interface DtRow {
-  reason_id: string;
-  reason_name: string;
-  area: string;
-  minutes: number;
-}
 
 // Adherence (actual/plan): higher is better. Loss (downtime/available): lower
 // is better — thresholds mirror the ones DashboardSummary already uses on
@@ -88,6 +109,118 @@ function lossBarColor(pct: number | null) {
   return pct < 10 ? "bg-success" : pct < 25 ? "bg-warning" : "bg-destructive";
 }
 
+// One line + day + shift. The form always shows exactly one of these.
+interface Slot {
+  lineId: string;
+  date: string;
+  shift: string;
+}
+
+// What the database holds for the slot on screen. "existing" carries the
+// row's updated_at so Save can refuse to overwrite someone else's newer save.
+type SlotState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "empty" }
+  | { status: "existing"; id: string; updatedAt: string };
+
+type SlotLookup =
+  { kind: "empty" } | { kind: "existing"; id: string; updatedAt: string; values: EntryFormValues };
+
+interface PendingSwitch {
+  target: Slot;
+  lookup: SlotLookup;
+  decision: SwitchDecision;
+  readOnly?: boolean;
+}
+
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err) return String(err.message);
+  return String(err);
+}
+
+// Every read is checked. Before, a failed read of an existing entry looked
+// exactly like "no entry yet": the form came up blank, and Save then replaced
+// the real row and deleted its downtimes.
+async function fetchSlot(s: Slot): Promise<SlotLookup> {
+  const { data, error } = await supabase
+    .from("daily_entries")
+    .select("*")
+    .eq("line_id", s.lineId)
+    .eq("entry_date", s.date)
+    .eq("shift", s.shift)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return { kind: "empty" };
+  const [dts, owners] = await Promise.all([
+    supabase.from("entry_downtimes").select("*").eq("entry_id", data.id).order("created_at"),
+    supabase.from("entry_area_owners").select("*").eq("entry_id", data.id),
+  ]);
+  if (dts.error) throw dts.error;
+  if (owners.error) throw owners.error;
+  return {
+    kind: "existing",
+    id: data.id,
+    updatedAt: data.updated_at,
+    values: valuesFromRows(data, dts.data ?? [], owners.data ?? []),
+  };
+}
+
+// Insert the new rows first, then delete the old ones. If the insert fails
+// nothing was removed; if the delete fails the new rows are taken back out.
+// (Before, the old rows were deleted first and a failed insert lost them.)
+// Not a transaction — that needs a database function — but no failure here
+// leaves the entry with fewer rows than it had.
+async function replaceDowntimeRows(
+  entryId: string,
+  rows: {
+    entry_id: string;
+    reason_id: string | null;
+    reason_name: string;
+    area: string;
+    minutes: number;
+  }[],
+) {
+  let newIds: string[] = [];
+  if (rows.length > 0) {
+    const { data, error } = await supabase.from("entry_downtimes").insert(rows).select("id");
+    if (error) throw error;
+    newIds = (data ?? []).map((r) => r.id);
+  }
+  let del = supabase.from("entry_downtimes").delete().eq("entry_id", entryId);
+  if (newIds.length > 0) del = del.not("id", "in", `(${newIds.join(",")})`);
+  const { error: delErr } = await del;
+  if (delErr) {
+    if (newIds.length > 0) await supabase.from("entry_downtimes").delete().in("id", newIds);
+    throw delErr;
+  }
+}
+
+async function replaceAreaOwnerRows(
+  entryId: string,
+  rows: {
+    entry_id: string;
+    production_area_id: string;
+    owner_id: string | null;
+    performance_score: number | null;
+  }[],
+) {
+  let newIds: string[] = [];
+  if (rows.length > 0) {
+    const { data, error } = await supabase.from("entry_area_owners").insert(rows).select("id");
+    if (error) throw error;
+    newIds = (data ?? []).map((r) => r.id);
+  }
+  let del = supabase.from("entry_area_owners").delete().eq("entry_id", entryId);
+  if (newIds.length > 0) del = del.not("id", "in", `(${newIds.join(",")})`);
+  const { error: delErr } = await del;
+  if (delErr) {
+    if (newIds.length > 0) await supabase.from("entry_area_owners").delete().in("id", newIds);
+    throw delErr;
+  }
+}
+
 function EntryPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -106,173 +239,227 @@ function EntryPage() {
 
   const [lineId, setLineId] = useState(lines[0]?.id ?? "");
   const [date, setDate] = useState(iso(new Date()));
-  const [shift, setShift] = useState("A");
+  // 212 of the 234 saved entries are "Full day". Opening on shift A sent
+  // supervisors to an empty A slot next to that day's real entry.
+  const [shift, setShift] = useState("DAY");
   const supervisor = "";
   const operator = "";
-  const [comments, setComments] = useState("");
-  const [makingPlan, setMakingPlan] = useState("");
-  const [makingActual, setMakingActual] = useState("");
-  const [packingPlan, setPackingPlan] = useState("");
-  const [packingActual, setPackingActual] = useState("");
-  const [availableMin, setAvailableMin] = useState("1440");
-  const [reworkCooking, setReworkCooking] = useState("0");
-  const [reworkMaking, setReworkMaking] = useState("0");
-  const [reworkPacking, setReworkPacking] = useState("0");
-  const [downtimes, setDowntimes] = useState<DtRow[]>([]);
-  const [areaOwnerSelections, setAreaOwnerSelections] = useState<
-    Record<string, { ownerId: string; score: string }>
-  >({});
-  const [customValues, setCustomValues] = useState<Record<string, string>>({});
+  const initial = useMemo(() => emptyValues(), []);
+  const [comments, setComments] = useState(initial.comments);
+  const [makingPlan, setMakingPlan] = useState(initial.makingPlan);
+  const [makingActual, setMakingActual] = useState(initial.makingActual);
+  const [packingPlan, setPackingPlan] = useState(initial.packingPlan);
+  const [packingActual, setPackingActual] = useState(initial.packingActual);
+  const [availableMin, setAvailableMin] = useState(initial.availableMin);
+  const [reworkCooking, setReworkCooking] = useState(initial.reworkCooking);
+  const [reworkMaking, setReworkMaking] = useState(initial.reworkMaking);
+  const [reworkPacking, setReworkPacking] = useState(initial.reworkPacking);
+  const [downtimes, setDowntimes] = useState<DtRow[]>(initial.downtimes);
+  const [areaOwnerSelections, setAreaOwnerSelections] = useState(initial.areaOwners);
+  const [customValues, setCustomValues] = useState<Record<string, string>>(initial.customValues);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [existingEntryId, setExistingEntryId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  // Desktop-only collapsed/expanded state for the Rework / Area owners /
-  // Comments rows. Mobile keeps these sections permanently expanded (see the
-  // md:hidden blocks below), so there's no mobile equivalent of this state.
+  // Collapsed/expanded state for the Rework / Area owners / Comments rows.
+  // Desktop and mobile render different blocks for these, never both at once,
+  // so one state per section serves both.
   const [openRework, setOpenRework] = useState(false);
   const [openAreaOwners, setOpenAreaOwners] = useState(false);
   const [openComments, setOpenComments] = useState(false);
-  const duplicatingRef = useRef(false);
+
+  // What the form was loaded with — the saved entry, or a blank one. The form
+  // has unsaved changes whenever it differs from this.
+  const [baseline, setBaseline] = useState<EntryFormValues>(initial);
+  const [slot, setSlot] = useState<SlotState>({ status: "loading" });
+  // true: the form shows the saved entry of the slot on screen. false with an
+  // "existing" slot only happens after Duplicate lands on a taken day.
+  const [editingSaved, setEditingSaved] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
+  const [errors, setErrors] = useState<ValidationResult | null>(null);
 
   const { data: customFields = [] } = useQuery(fieldsQuery(lineId));
 
-  // Prefill from existing entry if exists for this line+date+shift
-  const originalEntryRef = useRef<{
-    making_plan: number;
-    making_actual: number;
-    packing_plan: number;
-    packing_actual: number;
-    rework_cooking: number;
-    rework_making: number;
-    rework_packing: number;
-    comments: string | null;
-  } | null>(null);
-  const originalDowntimesRef = useRef<DtRow[]>([]);
-  const originalAreaOwnersRef = useRef<Record<string, { ownerId: string; score: string }>>({});
+  const values: EntryFormValues = useMemo(
+    () => ({
+      makingPlan,
+      makingActual,
+      packingPlan,
+      packingActual,
+      availableMin,
+      reworkCooking,
+      reworkMaking,
+      reworkPacking,
+      comments,
+      customValues,
+      downtimes,
+      areaOwners: areaOwnerSelections,
+    }),
+    [
+      makingPlan,
+      makingActual,
+      packingPlan,
+      packingActual,
+      availableMin,
+      reworkCooking,
+      reworkMaking,
+      reworkPacking,
+      comments,
+      customValues,
+      downtimes,
+      areaOwnerSelections,
+    ],
+  );
+  const dirty = useMemo(() => !sameValues(values, baseline), [values, baseline]);
+
+  // Async handlers read these instead of the render they started in.
+  const latest = useRef({ dirty, editingSaved, lineId, date, shift });
+  latest.current = { dirty, editingSaved, lineId, date, shift };
+  // Only the newest load may write to the form.
+  const seq = useRef(0);
+  // True while a save or delete is in flight. Switching slots then would let
+  // the finishing save write its entry id into the NEW slot's state, and the
+  // next Save would update the wrong row.
+  const busy = useRef(false);
+
+  function applyValues(v: EntryFormValues) {
+    setMakingPlan(v.makingPlan);
+    setMakingActual(v.makingActual);
+    setPackingPlan(v.packingPlan);
+    setPackingActual(v.packingActual);
+    setAvailableMin(v.availableMin);
+    setReworkCooking(v.reworkCooking);
+    setReworkMaking(v.reworkMaking);
+    setReworkPacking(v.reworkPacking);
+    setComments(v.comments);
+    setCustomValues(v.customValues);
+    setDowntimes(v.downtimes);
+    setAreaOwnerSelections(v.areaOwners);
+  }
+
+  function applyLookup(target: Slot, lookup: SlotLookup, decision: SwitchDecision) {
+    setLineId(target.lineId);
+    setDate(target.date);
+    setShift(target.shift);
+    setErrors(null);
+    if (lookup.kind === "existing") {
+      applyValues(lookup.values);
+      setBaseline(lookup.values);
+      setSlot({ status: "existing", id: lookup.id, updatedAt: lookup.updatedAt });
+      setEditingSaved(true);
+      return;
+    }
+    setSlot({ status: "empty" });
+    setEditingSaved(false);
+    if (decision === "carry") return; // keep the unsaved new entry as typed
+    const blank = emptyValues();
+    applyValues(blank);
+    setBaseline(blank);
+  }
+
+  function describe(s: Slot) {
+    const name = lines.find((l) => l.id === s.lineId)?.name ?? "this line";
+    return `${name} · ${s.date} · ${shiftLabel(s.shift)}`;
+  }
+
+  // (Re)load the slot on screen, replacing the form. Used on first open,
+  // after Save, and by Retry.
+  async function reloadSlot() {
+    const cur = latest.current;
+    const target = { lineId: cur.lineId, date: cur.date, shift: cur.shift };
+    if (!target.lineId) {
+      setSlot({ status: "empty" });
+      return;
+    }
+    const my = ++seq.current;
+    setSlot({ status: "loading" });
+    try {
+      const lookup = await fetchSlot(target);
+      if (my !== seq.current) return;
+      applyLookup(target, lookup, lookup.kind === "existing" ? "load" : "reset");
+    } catch (err) {
+      if (my !== seq.current) return;
+      setSlot({ status: "error", message: errMsg(err) });
+    }
+  }
 
   useEffect(() => {
-    if (!lineId) return;
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from("daily_entries")
-        .select("*")
-        .eq("line_id", lineId)
-        .eq("entry_date", date)
-        .eq("shift", shift)
-        .maybeSingle();
-      if (cancelled) return;
-      if (data) {
-        if (duplicatingRef.current) {
-          toast.warning(
-            "An entry already exists for this Line/Date/Shift — loaded the existing entry instead of your duplicate.",
-          );
-        }
-        setExistingEntryId(data.id);
-        originalEntryRef.current = {
-          making_plan: data.making_plan,
-          making_actual: data.making_actual,
-          packing_plan: data.packing_plan,
-          packing_actual: data.packing_actual,
-          rework_cooking: data.rework_cooking,
-          rework_making: data.rework_making,
-          rework_packing: data.rework_packing,
-          comments: data.comments,
-        };
-        setMakingPlan(String(data.making_plan));
-        setMakingActual(String(data.making_actual));
-        setPackingPlan(String(data.packing_plan));
-        setPackingActual(String(data.packing_actual));
-        setAvailableMin(String(data.available_min));
-        setReworkCooking(String(data.rework_cooking));
-        setReworkMaking(String(data.rework_making));
-        setReworkPacking(String(data.rework_packing));
-        setComments(data.comments ?? "");
-        setCustomValues(
-          Object.fromEntries(
-            Object.entries((data.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [
-              k,
-              String(v ?? ""),
-            ]),
-          ),
-        );
-        const { data: dts } = await supabase
-          .from("entry_downtimes")
-          .select("*")
-          .eq("entry_id", data.id);
-        setDowntimes(
-          (dts ?? []).map((d) => ({
-            reason_id: d.reason_id ?? "",
-            reason_name: d.reason_name,
-            area: d.area,
-            minutes: Number(d.minutes),
-          })),
-        );
-        originalDowntimesRef.current = (dts ?? []).map((d) => ({
-          reason_id: d.reason_id ?? "",
-          reason_name: d.reason_name,
-          area: d.area,
-          minutes: Number(d.minutes),
-        }));
-        const { data: owners } = await supabase
-          .from("entry_area_owners")
-          .select("*")
-          .eq("entry_id", data.id);
-        setAreaOwnerSelections(
-          Object.fromEntries(
-            (owners ?? []).map((o) => [
-              o.production_area_id,
-              {
-                ownerId: o.owner_id ?? "",
-                score: o.performance_score != null ? String(o.performance_score) : "",
-              },
-            ]),
-          ),
-        );
-        originalAreaOwnersRef.current = Object.fromEntries(
-          (owners ?? []).map((o) => [
-            o.production_area_id,
-            {
-              ownerId: o.owner_id ?? "",
-              score: o.performance_score != null ? String(o.performance_score) : "",
-            },
-          ]),
-        );
-        duplicatingRef.current = false;
-      } else {
-        setExistingEntryId(null);
-        originalEntryRef.current = null;
-        originalDowntimesRef.current = [];
-        originalAreaOwnersRef.current = {};
-        setMakingPlan("");
-        setMakingActual("");
-        setPackingPlan("");
-        setPackingActual("");
-        setAvailableMin("1440");
-        setReworkCooking("0");
-        setReworkMaking("0");
-        setReworkPacking("0");
-        setComments("");
-        setCustomValues({});
-        setDowntimes([]);
-        setAreaOwnerSelections({});
-        duplicatingRef.current = false;
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [lineId, date, shift]);
+    void reloadSlot();
+    // First open only; later loads go through requestSwitch / reloadSlot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const validDowntimes = downtimes.filter((d) => d.reason_name && Number(d.minutes) > 0);
+  // Point the form at another line/day/shift. Looks the target up first, then
+  // decides (decideSwitch) whether to open it, start blank, keep the typing,
+  // or ask before throwing typing away.
+  async function requestSwitch(next: Partial<Slot>, opts: { readOnly?: boolean } = {}) {
+    const cur = latest.current;
+    const target: Slot = {
+      lineId: next.lineId ?? cur.lineId,
+      date: next.date ?? cur.date,
+      shift: next.shift ?? cur.shift,
+    };
+    if (!target.lineId || !target.date) return;
+    if (busy.current) {
+      toast.info("Wait for the save to finish, then switch.");
+      return;
+    }
+    const same =
+      target.lineId === cur.lineId && target.date === cur.date && target.shift === cur.shift;
+    if (same) {
+      if (opts.readOnly !== undefined) setReadOnly(opts.readOnly);
+      return;
+    }
+    const my = ++seq.current;
+    setSwitching(true);
+    let lookup: SlotLookup;
+    try {
+      lookup = await fetchSlot(target);
+    } catch (err) {
+      if (my !== seq.current) return;
+      setSwitching(false);
+      toast.error(`Couldn't open ${describe(target)}: ${errMsg(err)}`);
+      return;
+    }
+    if (my !== seq.current) return;
+    setSwitching(false);
+    const decision = decideSwitch({
+      dirty: latest.current.dirty,
+      editingSaved: latest.current.editingSaved,
+      target: lookup.kind,
+    });
+    if (decision === "confirm-load" || decision === "confirm-reset") {
+      setPendingSwitch({ target, lookup, decision, readOnly: opts.readOnly });
+      return;
+    }
+    applyLookup(target, lookup, decision);
+    if (opts.readOnly !== undefined) setReadOnly(opts.readOnly);
+  }
+
+  function confirmPendingSwitch() {
+    if (!pendingSwitch) return;
+    const { target, lookup, decision, readOnly: ro } = pendingSwitch;
+    setPendingSwitch(null);
+    applyLookup(target, lookup, decision);
+    if (ro !== undefined) setReadOnly(ro);
+  }
+
+  // Leaving the page (a nav link, back button, closing the tab) with unsaved
+  // typing asks first.
+  const blocker = useBlocker({
+    shouldBlockFn: () => latest.current.dirty,
+    enableBeforeUnload: () => latest.current.dirty,
+    withResolver: true,
+  });
+
+  const validDowntimes = savableDowntimes(downtimes);
   const totalDowntime = validDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
 
-  // Live, desktop-only summary — recomputed from the same form state as the
-  // rest of the form on every keystroke. null (not 0) means "no plan/
-  // available-time entered yet", so the tiles below can show "—" instead of
-  // a misleading 0%/100%.
+  // Live summary — recomputed from the same form state as the rest of the
+  // form on every keystroke. null (not 0) means "no plan/available-time
+  // entered yet", so the tiles below can show "—" instead of a misleading
+  // 0%/100%.
   const liveSummary = useMemo(() => {
     const mPlan = Number(makingPlan) || 0;
     const mActual = Number(makingActual) || 0;
@@ -291,131 +478,201 @@ function EntryPage() {
     };
   }, [makingPlan, makingActual, packingPlan, packingActual, availableMin, totalDowntime]);
 
+  const isConflict = slot.status === "existing" && !editingSaved;
+  const isNew = slot.status === "empty";
+
+  async function refreshDashboards() {
+    await qc.invalidateQueries({ queryKey: ["entries"] });
+    await qc.invalidateQueries({ queryKey: ["entry-downtimes"] });
+    await qc.invalidateQueries({ queryKey: ["entry-area-owners"] });
+    await qc.invalidateQueries({ queryKey: ["all-entries"] });
+    // invalidateQueries alone only refetches queries that are mounted; the
+    // Dashboard's are not while this page is open, so force the refetch now.
+    await qc.refetchQueries({ queryKey: ["entries"], type: "all" });
+    await qc.refetchQueries({ queryKey: ["entry-downtimes"], type: "all" });
+    await qc.refetchQueries({ queryKey: ["entry-area-owners"], type: "all" });
+    await qc.refetchQueries({ queryKey: ["all-entries"], type: "all" });
+  }
+
   async function handleSave() {
     if (saving) return;
     if (!lineId) return toast.error("Pick a production line");
-    if (!existingEntryId && !canCreate) {
+    if (slot.status === "loading" || switching) {
+      return toast.error("Still loading this entry — try again in a moment.");
+    }
+    if (slot.status === "error") {
+      return toast.error(
+        "This entry didn't load, so saving could overwrite it. Press Retry first.",
+      );
+    }
+    if (isConflict) {
+      return toast.error(
+        `${describe({ lineId, date, shift })} already has a saved entry. Pick another day or shift for this copy.`,
+      );
+    }
+    if (isNew && !canCreate) {
       return toast.error("Your role does not have permission to create a new entry.");
     }
-    for (const [, sel] of Object.entries(areaOwnerSelections)) {
-      if (sel.score === "") continue;
-      const n = Number(sel.score);
-      if (Number.isNaN(n) || n < 0 || n > 100) {
-        return toast.error("Performance Score must be between 0 and 100");
+    const check = validateValues(values, {
+      production: canEditProduction,
+      downtime: canEditDowntime,
+      areaOwners: canEditAreaOwners,
+    });
+    if (check.count > 0) {
+      setErrors(check);
+      // Open any collapsed section that holds an error, so it can be seen.
+      if (Object.keys(check.ownerScores).length > 0) setOpenAreaOwners(true);
+      if (check.fields.reworkCooking || check.fields.reworkMaking || check.fields.reworkPacking) {
+        setOpenRework(true);
       }
+      return toast.error(
+        `Fix ${check.count} ${check.count === 1 ? "field" : "fields"} before saving`,
+      );
     }
+    setErrors(null);
     setSaving(true);
+    busy.current = true;
     try {
-      // Enforce role permissions server-side of the UI: even if a disabled
-      // input were somehow tampered with, the actual saved values for a
-      // restricted field group always fall back to what was originally
-      // loaded (or a safe default for a brand-new entry) rather than
-      // whatever is currently sitting in that field's state.
-      const orig = originalEntryRef.current;
-      const effectiveMakingPlan = canEditProduction ? makingPlan : String(orig?.making_plan ?? 0);
-      const effectiveMakingActual = canEditProduction
-        ? makingActual
-        : String(orig?.making_actual ?? 0);
-      const effectivePackingPlan = canEditProduction
-        ? packingPlan
-        : String(orig?.packing_plan ?? 0);
-      const effectivePackingActual = canEditProduction
-        ? packingActual
-        : String(orig?.packing_actual ?? 0);
-      const effectiveReworkCooking = canEditProduction
-        ? reworkCooking
-        : String(orig?.rework_cooking ?? 0);
-      const effectiveReworkMaking = canEditProduction
-        ? reworkMaking
-        : String(orig?.rework_making ?? 0);
-      const effectiveReworkPacking = canEditProduction
-        ? reworkPacking
-        : String(orig?.rework_packing ?? 0);
-      const effectiveComments = canEditNotes ? comments : (orig?.comments ?? "");
-      const effectiveDowntimes = canEditDowntime
-        ? validDowntimes
-        : originalDowntimesRef.current.filter((d) => d.reason_name && Number(d.minutes) > 0);
-      const effectiveDowntimeMin = effectiveDowntimes.reduce((s, d) => s + Number(d.minutes), 0);
-      const effectiveAreaOwnerSelections = canEditAreaOwners
-        ? areaOwnerSelections
-        : originalAreaOwnersRef.current;
-
+      // A restricted role saves the loaded values for every field group it
+      // can't edit, never whatever is sitting in that (disabled) field.
+      const orig = baseline;
+      const pick = (allowed: boolean, cur: string, loaded: string) => (allowed ? cur : loaded);
+      const effectiveDowntimes = savableDowntimes(canEditDowntime ? downtimes : orig.downtimes);
       const payload = {
         line_id: lineId,
         entry_date: date,
         shift,
         supervisor: supervisor || null,
         operator: operator || null,
-        comments: effectiveComments || null,
-        making_plan: Number(effectiveMakingPlan) || 0,
-        making_actual: Number(effectiveMakingActual) || 0,
-        packing_plan: Number(effectivePackingPlan) || 0,
-        packing_actual: Number(effectivePackingActual) || 0,
+        comments: pick(canEditNotes, comments, orig.comments) || null,
+        making_plan: Number(pick(canEditProduction, makingPlan, orig.makingPlan)) || 0,
+        making_actual: Number(pick(canEditProduction, makingActual, orig.makingActual)) || 0,
+        packing_plan: Number(pick(canEditProduction, packingPlan, orig.packingPlan)) || 0,
+        packing_actual: Number(pick(canEditProduction, packingActual, orig.packingActual)) || 0,
         available_min: Number(availableMin) || 0,
-        downtime_min: effectiveDowntimeMin,
-        rework_cooking: Number(effectiveReworkCooking) || 0,
-        rework_making: Number(effectiveReworkMaking) || 0,
-        rework_packing: Number(effectiveReworkPacking) || 0,
+        downtime_min: effectiveDowntimes.reduce((s, d) => s + Number(d.minutes), 0),
+        rework_cooking: Number(pick(canEditProduction, reworkCooking, orig.reworkCooking)) || 0,
+        rework_making: Number(pick(canEditProduction, reworkMaking, orig.reworkMaking)) || 0,
+        rework_packing: Number(pick(canEditProduction, reworkPacking, orig.reworkPacking)) || 0,
         custom_fields: Object.fromEntries(
           Object.entries(customValues).map(([k, v]) => [k, isNaN(Number(v)) ? v : Number(v)]),
         ),
       };
-      const wasExisting = !!existingEntryId;
-      const { data: upserted, error } = await supabase
-        .from("daily_entries")
-        .upsert(payload, { onConflict: "line_id,entry_date,shift" })
-        .select()
-        .single();
-      if (error) throw error;
 
-      // Replace downtimes for this entry
-      await supabase.from("entry_downtimes").delete().eq("entry_id", upserted.id);
-      if (effectiveDowntimes.length > 0) {
-        const rows = effectiveDowntimes.map((d) => ({
-          entry_id: upserted.id,
-          reason_id: d.reason_id || null,
-          reason_name: d.reason_name,
-          area: d.area,
-          minutes: Number(d.minutes),
-        }));
-        const { error: dtErr } = await supabase.from("entry_downtimes").insert(rows);
-        if (dtErr) throw dtErr;
+      let saved: { id: string; updated_at: string };
+      if (slot.status === "empty") {
+        // insert, not upsert: if someone created this day's entry after the
+        // form loaded, fail instead of silently replacing theirs.
+        const { data, error } = await supabase
+          .from("daily_entries")
+          .insert(payload)
+          .select("id, updated_at")
+          .single();
+        if (error) {
+          if (error.code === "23505") {
+            throw new Error(
+              "someone saved an entry for this day and shift while you were typing. Your typing is still on screen — copy what you need, then open the day again.",
+            );
+          }
+          throw error;
+        }
+        saved = data;
+      } else {
+        // Only overwrite the version this form loaded.
+        const loadedId = slot.status === "existing" ? slot.id : "";
+        const loadedAt = slot.status === "existing" ? slot.updatedAt : "";
+        const { data, error } = await supabase
+          .from("daily_entries")
+          .update(payload)
+          .eq("id", loadedId)
+          .eq("updated_at", loadedAt)
+          .select("id, updated_at")
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          const { data: now } = await supabase
+            .from("daily_entries")
+            .select("updated_at")
+            .eq("id", loadedId)
+            .maybeSingle();
+          if (!now) throw new Error("this entry was deleted by someone else.");
+          if (now.updated_at !== loadedAt) {
+            throw new Error(
+              "someone else saved this entry after you opened it, so it was not overwritten. Your typing is still on screen — copy what you need, then reload the day.",
+            );
+          }
+          throw new Error("your role can't change this entry.");
+        }
+        saved = data;
+      }
+      // From here on the main row is saved: a second Save must update it.
+      setSlot({ status: "existing", id: saved.id, updatedAt: saved.updated_at });
+      setEditingSaved(true);
+
+      // Child rows are rewritten only when they changed and only by a role
+      // allowed to write them — the database refuses the others, which used
+      // to fail the whole save for maintenance and quality.
+      const failures: string[] = [];
+      if (canEditDowntime && !sameDowntimes(downtimes, orig.downtimes)) {
+        try {
+          await replaceDowntimeRows(
+            saved.id,
+            effectiveDowntimes.map((d) => ({
+              entry_id: saved.id,
+              reason_id: d.reason_id || null,
+              reason_name: d.reason_name,
+              area: d.area,
+              minutes: Number(d.minutes),
+            })),
+          );
+        } catch (err) {
+          failures.push(`downtime list (${errMsg(err)})`);
+        }
+      }
+      if (canEditAreaOwners && !sameOwners(areaOwnerSelections, orig.areaOwners)) {
+        try {
+          await replaceAreaOwnerRows(
+            saved.id,
+            Object.entries(areaOwnerSelections)
+              .filter(([, sel]) => !!sel.ownerId || sel.score.trim() !== "")
+              .map(([productionAreaId, sel]) => ({
+                entry_id: saved.id,
+                production_area_id: productionAreaId,
+                owner_id: sel.ownerId || null,
+                performance_score: sel.score.trim() === "" ? null : Number(sel.score),
+              })),
+          );
+        } catch (err) {
+          failures.push(`area owners (${errMsg(err)})`);
+        }
       }
 
-      // Replace area-owner assignments for this entry
-      await supabase.from("entry_area_owners").delete().eq("entry_id", upserted.id);
-      const ownerRows = Object.entries(effectiveAreaOwnerSelections)
-        .filter(([, sel]) => !!sel.ownerId || sel.score !== "")
-        .map(([productionAreaId, sel]) => ({
-          entry_id: upserted.id,
-          production_area_id: productionAreaId,
-          owner_id: sel.ownerId || null,
-          performance_score: sel.score === "" ? null : Number(sel.score),
-        }));
-      if (ownerRows.length > 0) {
-        const { error: aoErr } = await supabase.from("entry_area_owners").insert(ownerRows);
-        if (aoErr) throw aoErr;
-      }
-
-      toast.success(`Saved entry for ${date} · Shift ${shift}`);
-      void logAudit(wasExisting ? "entry.edit" : "entry.create", "entry", upserted.id, {
+      void logAudit(isNew ? "entry.create" : "entry.edit", "entry", saved.id, {
         line_id: lineId,
         entry_date: date,
         shift,
       });
-      await qc.invalidateQueries({ queryKey: ["entries"] });
-      await qc.invalidateQueries({ queryKey: ["entry-downtimes"] });
-      await qc.invalidateQueries({ queryKey: ["entry-area-owners"] });
-      await qc.invalidateQueries({ queryKey: ["all-entries"] });
-      await qc.refetchQueries({ queryKey: ["entries"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["entry-downtimes"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["entry-area-owners"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["all-entries"], type: "all" });
-      navigate({ to: "/" });
+      void refreshDashboards();
+
+      if (failures.length > 0) {
+        // Baseline left as it was, so the form still shows unsaved changes
+        // and Save retries only what failed.
+        toast.error(
+          `Entry saved, but not the ${failures.join(" or the ")}. Your changes are still on screen — press Save again.`,
+        );
+        return;
+      }
+      // The form stays open on the saved entry (it used to jump to the
+      // Dashboard). Not reloaded: that would drop anything typed while the
+      // save was in flight, and the new updated_at is already in `slot`.
+      setBaseline(values);
+      toast.success(`Saved ${describe({ lineId, date, shift })}`, {
+        action: { label: "Dashboard", onClick: () => navigate({ to: "/" }) },
+      });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Save failed: ${msg}`);
+      toast.error(`Not saved: ${errMsg(err)}`);
     } finally {
+      busy.current = false;
       setSaving(false);
     }
   }
@@ -425,12 +682,14 @@ function EntryPage() {
   }
 
   async function handleDelete(target?: { id: string; label: string }) {
-    const targetId = target?.id ?? existingEntryId;
-    const targetLabel = target?.label ?? `${date} · Shift ${shift}`;
+    const currentId = slot.status === "existing" ? slot.id : null;
+    const targetId = target?.id ?? currentId;
+    const targetLabel = target?.label ?? `${date} · ${shiftLabel(shift)}`;
     if (!targetId) return;
     if (!confirm(`Are you sure you want to permanently delete this entry (${targetLabel})?`))
       return;
     setDeleting(true);
+    busy.current = true;
     try {
       // entry_downtimes and entry_area_owners both have ON DELETE CASCADE
       // on entry_id, so deleting daily_entries removes them automatically.
@@ -439,193 +698,219 @@ function EntryPage() {
 
       toast.success("Entry deleted successfully.");
       void logAudit("entry.delete", "entry", targetId, { label: targetLabel });
-      // invalidateQueries alone only force-refetches queries that are
-      // currently mounted/active; the Dashboard's entries/downtimes/
-      // area-owners queries are not active while on this page, so without
-      // an explicit refetch they'd just be marked stale and only refresh
-      // whenever next observed. refetchQueries forces the actual network
-      // refetch now, regardless of mount state, so every dashboard reflects
-      // the deletion immediately without needing a manual page reload.
-      await qc.invalidateQueries({ queryKey: ["entries"] });
-      await qc.invalidateQueries({ queryKey: ["entry-downtimes"] });
-      await qc.invalidateQueries({ queryKey: ["entry-area-owners"] });
-      await qc.invalidateQueries({ queryKey: ["all-entries"] });
-      await qc.refetchQueries({ queryKey: ["entries"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["entry-downtimes"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["entry-area-owners"], type: "all" });
-      await qc.refetchQueries({ queryKey: ["all-entries"], type: "all" });
+      await refreshDashboards();
 
       // If the deleted entry is the one currently loaded in the form, clear it.
-      if (targetId === existingEntryId) {
-        setExistingEntryId(null);
+      if (targetId === currentId) {
+        const blank = emptyValues();
+        applyValues(blank);
+        setBaseline(blank);
+        setSlot({ status: "empty" });
+        setEditingSaved(false);
         setReadOnly(false);
-        setMakingPlan("");
-        setMakingActual("");
-        setPackingPlan("");
-        setPackingActual("");
-        setAvailableMin("1440");
-        setReworkCooking("0");
-        setReworkMaking("0");
-        setReworkPacking("0");
-        setComments("");
-        setCustomValues({});
-        setDowntimes([]);
-        setAreaOwnerSelections({});
+        setErrors(null);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Delete failed: ${msg}`);
+      toast.error(`Delete failed: ${errMsg(err)}`);
     } finally {
+      busy.current = false;
       setDeleting(false);
     }
   }
 
-  // Used by the Entry History panel's View/Edit actions — reuses the exact
-  // same load-by-line/date/shift effect the form already has, just by
-  // pointing the pickers at a different row instead of duplicating any
-  // load logic.
+  // Entry History's View/Edit: the same guarded switch the line tabs and
+  // date/shift pickers use.
   function handleViewOrEdit(
     row: { line_id: string; entry_date: string; shift: string },
     mode: "view" | "edit",
   ) {
-    setReadOnly(mode === "view");
-    setLineId(row.line_id);
-    setDate(row.entry_date);
-    setShift(row.shift);
     setShowHistory(false);
+    void requestSwitch(
+      { lineId: row.line_id, date: row.entry_date, shift: row.shift },
+      { readOnly: mode === "view" },
+    );
   }
 
-  async function handleDuplicate(row: {
-    id: string;
-    line_id: string;
-    making_plan: number;
-    making_actual: number;
-    packing_plan: number;
-    packing_actual: number;
-    available_min: number;
-    rework_cooking: number;
-    rework_making: number;
-    rework_packing: number;
-    comments: string | null;
-    custom_fields: unknown;
-  }) {
+  // Copies an entry into a NEW unsaved entry for today, same line and shift.
+  // The copy stays on screen while the supervisor changes the day or shift
+  // (decideSwitch "carry"); before, the first date change wiped it.
+  async function handleDuplicate(row: EntryHistoryRow) {
+    if (busy.current) return toast.info("Wait for the save to finish first.");
+    if (latest.current.dirty && !confirm("Discard your unsaved changes and start a copy?")) return;
     try {
-      const { data: dts } = await supabase
-        .from("entry_downtimes")
-        .select("*")
-        .eq("entry_id", row.id);
-      const { data: owners } = await supabase
-        .from("entry_area_owners")
-        .select("*")
-        .eq("entry_id", row.id);
-
-      duplicatingRef.current = true;
+      const [dts, owners] = await Promise.all([
+        supabase.from("entry_downtimes").select("*").eq("entry_id", row.id).order("created_at"),
+        supabase.from("entry_area_owners").select("*").eq("entry_id", row.id),
+      ]);
+      if (dts.error) throw dts.error;
+      if (owners.error) throw owners.error;
+      const copied = valuesFromRows(row, dts.data ?? [], owners.data ?? []);
+      const target: Slot = { lineId: row.line_id, date: iso(new Date()), shift: row.shift };
+      const my = ++seq.current;
+      const lookup = await fetchSlot(target);
+      if (my !== seq.current) return;
+      setLineId(target.lineId);
+      setDate(target.date);
+      setShift(target.shift);
+      applyValues(copied);
+      setBaseline(emptyValues());
       setReadOnly(false);
-      setExistingEntryId(null);
-      setLineId(row.line_id);
-      setDate(iso(new Date()));
-      setShift("A");
-      setMakingPlan(String(row.making_plan));
-      setMakingActual(String(row.making_actual));
-      setPackingPlan(String(row.packing_plan));
-      setPackingActual(String(row.packing_actual));
-      setAvailableMin(String(row.available_min));
-      setReworkCooking(String(row.rework_cooking));
-      setReworkMaking(String(row.rework_making));
-      setReworkPacking(String(row.rework_packing));
-      setComments(row.comments ?? "");
-      setCustomValues(
-        Object.fromEntries(
-          Object.entries((row.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [
-            k,
-            String(v ?? ""),
-          ]),
-        ),
-      );
-      setDowntimes(
-        (dts ?? []).map((d) => ({
-          reason_id: d.reason_id ?? "",
-          reason_name: d.reason_name,
-          area: d.area,
-          minutes: Number(d.minutes),
-        })),
-      );
-      setAreaOwnerSelections(
-        Object.fromEntries(
-          (owners ?? []).map((o) => [
-            o.production_area_id,
-            {
-              ownerId: o.owner_id ?? "",
-              score: o.performance_score != null ? String(o.performance_score) : "",
-            },
-          ]),
-        ),
-      );
+      setErrors(null);
       setShowHistory(false);
-      toast.success("Entry duplicated successfully. Choose a Date, Shift, and Line, then Save.");
+      setEditingSaved(false);
+      if (lookup.kind === "existing") {
+        setSlot({ status: "existing", id: lookup.id, updatedAt: lookup.updatedAt });
+        toast.warning(
+          `${describe(target)} already has a saved entry. Pick another day or shift for the copy, then save.`,
+        );
+      } else {
+        setSlot({ status: "empty" });
+        toast.success("Copied as a new entry. Check the day and shift, then save.");
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Duplicate failed: ${msg}`);
+      toast.error(`Duplicate failed: ${errMsg(err)}`);
     }
   }
 
   const activeLineName = lines.find((l) => l.id === lineId)?.name ?? "—";
-  const saveDisabled = saving || deleting || readOnly || (!existingEntryId && !canCreate);
-  // Purely decorative — no gating, nothing else reads these. "Basics" is
-  // always considered done since Line/Date/Shift always have a default
-  // value; the other two light up once their section has something entered.
-  const step2Done = makingActual !== "" || packingActual !== "";
-  const step3Done = downtimes.length > 0;
+  const saveDisabled =
+    saving ||
+    deleting ||
+    readOnly ||
+    switching ||
+    slot.status === "loading" ||
+    slot.status === "error" ||
+    isConflict ||
+    (isNew && !canCreate);
+  const statusText =
+    slot.status === "loading" || switching
+      ? "Loading…"
+      : slot.status === "error"
+        ? "Couldn't load this entry"
+        : isConflict
+          ? "Copy — this day already has an entry"
+          : slot.status === "existing"
+            ? `Editing saved entry · saved ${formatSavedAt(slot.updatedAt)}`
+            : canCreate
+              ? "New entry"
+              : "No entry yet — your role can't create one";
+  const fieldErr = (k: keyof ValidationResult["fields"]) => errors?.fields[k];
+  const areaOwnersSummary = `${productionAreas.length} areas · ${
+    Object.values(areaOwnerSelections).filter((s) => s.ownerId).length
+  } assigned`;
+
+  // Same markup on desktop and mobile; `key` keeps the two copies' element ids
+  // apart (only one of them is ever visible).
+  function renderAreaOwners(key: "d" | "m") {
+    return (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {productionAreas.map((area) => {
+          const sel = areaOwnerSelections[area.id] ?? { ownerId: "", score: "" };
+          const ownerId = `owner-${key}-${area.id}`;
+          return (
+            <div key={area.id} className="rounded-lg border border-border p-3">
+              <p className="mb-2 text-sm font-semibold">{area.name}</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Field label="Owner" htmlFor={ownerId}>
+                  <Select
+                    value={sel.ownerId}
+                    onValueChange={(v) =>
+                      setAreaOwnerSelections((p) => ({
+                        ...p,
+                        [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" },
+                      }))
+                    }
+                    disabled={!canEditAreaOwners}
+                  >
+                    <SelectTrigger id={ownerId} className="max-md:h-11">
+                      <SelectValue placeholder="Unassigned" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {areaOwners.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Performance Score %" error={errors?.ownerScores[area.id]}>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    placeholder="0–100"
+                    className="max-md:h-11"
+                    value={sel.score}
+                    onChange={(e) =>
+                      setAreaOwnerSelections((p) => ({
+                        ...p,
+                        [area.id]: {
+                          ownerId: p[area.id]?.ownerId ?? "",
+                          score: e.target.value,
+                        },
+                      }))
+                    }
+                    disabled={!canEditAreaOwners}
+                  />
+                </Field>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <AppShell>
-      {/* Mobile-only compact header — title + line/date + a single accent
-          Save action in one row. Full desktop header (with Entry History)
-          below is unchanged, just gated to md+. */}
+      {/* Mobile-only compact header. Save lives in the sticky bar at the
+          bottom (with the live numbers), so it is not repeated here. */}
       <div className="mb-3 flex items-center justify-between gap-3 md:hidden">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight">Daily entry</h1>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {activeLineName} · {date}
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">
+            {activeLineName} · {date} · {shiftLabel(shift)}
+          </p>
+          <p
+            className={`text-xs font-medium ${
+              slot.status === "error" || isConflict ? "text-destructive-strong" : "text-primary"
+            }`}
+            aria-live="polite"
+          >
+            {statusText}
+            {dirty && !saving ? " · unsaved changes" : ""}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {/* Not in the approved mobile mockup for this header, but kept
-              accessible (icon-only, same toggle as the desktop button below)
-              rather than dropping History access entirely on mobile. */}
-          {canViewHistory && (
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label={showHistory ? "Hide Entry History" : "Entry History"}
-              onClick={() => setShowHistory((s) => !s)}
-            >
-              <History className="h-4 w-4" />
-            </Button>
-          )}
+        {canViewHistory && (
           <Button
-            size="sm"
-            className="bg-accent text-accent-foreground hover:bg-accent/90"
-            onClick={handleSave}
-            disabled={saveDisabled}
+            variant="outline"
+            className="h-11 shrink-0 px-3"
+            aria-expanded={showHistory}
+            onClick={() => setShowHistory((s) => !s)}
           >
-            <Save className="mr-1 h-4 w-4" /> {saving ? "Saving…" : "Save"}
+            <History className="h-4 w-4" /> History
           </Button>
-        </div>
-      </div>
-
-      {/* Mobile-only step indicator — 3 segments: Basics / Production / Downtime. */}
-      <div className="mb-4 flex gap-1 md:hidden">
-        <div className="h-[3px] flex-1 rounded-full bg-accent" />
-        <div className={`h-[3px] flex-1 rounded-full ${step2Done ? "bg-accent" : "bg-muted"}`} />
-        <div className={`h-[3px] flex-1 rounded-full ${step3Done ? "bg-accent" : "bg-muted"}`} />
+        )}
       </div>
 
       <div className="mb-6 hidden md:flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Daily Production Entry</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {activeLineName} · {date} · Shift {shift}
+          <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">
+            {activeLineName} · {date} · {shiftLabel(shift)} ·{" "}
+            <span
+              className={
+                slot.status === "error" || isConflict
+                  ? "font-medium text-destructive-strong"
+                  : "font-medium text-primary"
+              }
+            >
+              {statusText}
+            </span>
+            {dirty && !saving ? " · unsaved changes" : ""}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -653,6 +938,53 @@ function EntryPage() {
         </div>
       )}
 
+      {slot.status === "error" && (
+        <div
+          role="alert"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+        >
+          <span className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive-strong" />
+            <span>
+              <span className="font-semibold">This entry didn&apos;t load</span> ({slot.message}).
+              Saving is off so a blank form can&apos;t overwrite it.
+            </span>
+          </span>
+          <Button variant="outline" className="max-md:h-11" onClick={() => void reloadSlot()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {isConflict && (
+        <div
+          role="alert"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-sm"
+        >
+          <span className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning-strong" />
+            <span>
+              <span className="font-semibold">
+                {date} · {shiftLabel(shift)} already has a saved entry.
+              </span>{" "}
+              Change the day or shift for this copy, or open the saved one instead.
+            </span>
+          </span>
+          <Button
+            variant="outline"
+            className="max-md:h-11"
+            onClick={() => {
+              const blank = emptyValues();
+              applyValues(blank);
+              setBaseline(blank);
+              void reloadSlot();
+            }}
+          >
+            Discard copy, open saved entry
+          </Button>
+        </div>
+      )}
+
       {showHistory && canViewHistory && (
         <div className="mb-6">
           <EntryHistoryPanel
@@ -673,10 +1005,18 @@ function EntryPage() {
         </div>
       )}
 
-      <Tabs value={lineId} onValueChange={setLineId} className="mb-4">
-        <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto">
+      <Tabs
+        value={lineId}
+        onValueChange={(v) => void requestSwitch({ lineId: v })}
+        className="mb-4"
+      >
+        <TabsList className="flex w-full items-center justify-start gap-1 overflow-x-auto max-md:h-auto">
           {lines.map((l) => (
-            <TabsTrigger key={l.id} value={l.id} className="shrink-0 whitespace-nowrap">
+            <TabsTrigger
+              key={l.id}
+              value={l.id}
+              className="shrink-0 whitespace-nowrap max-md:min-h-11"
+            >
               <span
                 className="mr-2 inline-block h-2 w-2 rounded-full"
                 style={{ background: l.color }}
@@ -718,9 +1058,13 @@ function EntryPage() {
         />
       </div>
 
-      <div
-        className="grid grid-cols-1 gap-6 lg:grid-cols-3"
-        style={readOnly ? { pointerEvents: "none", opacity: 0.75 } : undefined}
+      {/* A disabled fieldset, not pointer-events: none — read-only must stop
+          the keyboard too. m-0/p-0/min-w-0 undo the fieldset defaults so the
+          grid lays out exactly as the old div did. */}
+      <fieldset
+        disabled={readOnly}
+        className="m-0 grid min-w-0 grid-cols-1 gap-6 border-0 p-0 lg:grid-cols-3"
+        style={readOnly ? { opacity: 0.75 } : undefined}
       >
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -732,18 +1076,18 @@ function EntryPage() {
                 (Plan next to Actual, Available next to the first Rework
                 field) instead of the desktop 3-column grid. Same state,
                 same onChange/disabled — just a different arrangement. */}
-            <div className="grid grid-cols-2 gap-2 md:hidden">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-3 md:hidden">
               <Field label="Date">
                 <Input
                   type="date"
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="rounded-md border bg-muted"
+                  onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Shift">
-                <Select value={shift} onValueChange={setShift}>
-                  <SelectTrigger className="rounded-md border bg-muted">
+              <Field label="Shift" htmlFor="entry-shift-m">
+                <Select value={shift} onValueChange={(v) => void requestSwitch({ shift: v })}>
+                  <SelectTrigger id="entry-shift-m" className="h-11 rounded-md border bg-muted">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -754,75 +1098,83 @@ function EntryPage() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Making Plan (kg)">
+              <Field label="Making Plan (kg)" error={fieldErr("makingPlan")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={makingPlan}
                   onChange={(e) => setMakingPlan(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Making Actual (kg)">
+              <Field label="Making Actual (kg)" error={fieldErr("makingActual")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={makingActual}
                   onChange={(e) => setMakingActual(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Packing Plan (kg)">
+              <Field label="Packing Plan (kg)" error={fieldErr("packingPlan")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={packingPlan}
                   onChange={(e) => setPackingPlan(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Packing Actual (kg)">
+              <Field label="Packing Actual (kg)" error={fieldErr("packingActual")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={packingActual}
                   onChange={(e) => setPackingActual(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Available Time (min)">
+              <Field label="Available Time (min)" error={fieldErr("availableMin")}>
                 <Input
                   type="number"
+                  inputMode="numeric"
                   value={availableMin}
                   onChange={(e) => setAvailableMin(e.target.value)}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Rework Cooking (kg)">
+              <Field label="Rework Cooking (kg)" error={fieldErr("reworkCooking")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={reworkCooking}
                   onChange={(e) => setReworkCooking(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Rework Making (kg)">
+              <Field label="Rework Making (kg)" error={fieldErr("reworkMaking")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={reworkMaking}
                   onChange={(e) => setReworkMaking(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
-              <Field label="Rework Packing (kg)">
+              <Field label="Rework Packing (kg)" error={fieldErr("reworkPacking")}>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   value={reworkPacking}
                   onChange={(e) => setReworkPacking(e.target.value)}
                   disabled={!canEditProduction}
-                  className="rounded-md border bg-muted"
+                  className="h-11 rounded-md border bg-muted"
                 />
               </Field>
             </div>
@@ -836,11 +1188,15 @@ function EntryPage() {
                 down. */}
             <div className="hidden gap-4 md:col-span-3 md:grid md:grid-cols-3">
               <Field label="Date">
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <Input
+                  type="date"
+                  value={date}
+                  onChange={(e) => e.target.value && void requestSwitch({ date: e.target.value })}
+                />
               </Field>
-              <Field label="Shift">
-                <Select value={shift} onValueChange={setShift}>
-                  <SelectTrigger>
+              <Field label="Shift" htmlFor="entry-shift-d">
+                <Select value={shift} onValueChange={(v) => void requestSwitch({ shift: v })}>
+                  <SelectTrigger id="entry-shift-d">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -851,9 +1207,10 @@ function EntryPage() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Available Time (min)">
+              <Field label="Available Time (min)" error={fieldErr("availableMin")}>
                 <Input
                   type="number"
+                  inputMode="numeric"
                   value={availableMin}
                   onChange={(e) => setAvailableMin(e.target.value)}
                 />
@@ -869,6 +1226,8 @@ function EntryPage() {
                 onActualChange={setMakingActual}
                 disabled={!canEditProduction}
                 pct={liveSummary.makingPct}
+                planError={fieldErr("makingPlan")}
+                actualError={fieldErr("makingActual")}
               />
               <AdherenceCard
                 title="Packing"
@@ -878,6 +1237,8 @@ function EntryPage() {
                 onActualChange={setPackingActual}
                 disabled={!canEditProduction}
                 pct={liveSummary.packingPct}
+                planError={fieldErr("packingPlan")}
+                actualError={fieldErr("packingActual")}
               />
             </div>
 
@@ -898,25 +1259,28 @@ function EntryPage() {
                 onToggle={() => setOpenRework((o) => !o)}
               >
                 <div className="grid grid-cols-3 gap-4">
-                  <Field label="Rework Cooking (kg)">
+                  <Field label="Rework Cooking (kg)" error={fieldErr("reworkCooking")}>
                     <Input
                       type="number"
+                      inputMode="decimal"
                       value={reworkCooking}
                       onChange={(e) => setReworkCooking(e.target.value)}
                       disabled={!canEditProduction}
                     />
                   </Field>
-                  <Field label="Rework Making (kg)">
+                  <Field label="Rework Making (kg)" error={fieldErr("reworkMaking")}>
                     <Input
                       type="number"
+                      inputMode="decimal"
                       value={reworkMaking}
                       onChange={(e) => setReworkMaking(e.target.value)}
                       disabled={!canEditProduction}
                     />
                   </Field>
-                  <Field label="Rework Packing (kg)">
+                  <Field label="Rework Packing (kg)" error={fieldErr("reworkPacking")}>
                     <Input
                       type="number"
+                      inputMode="decimal"
                       value={reworkPacking}
                       onChange={(e) => setReworkPacking(e.target.value)}
                       disabled={!canEditProduction}
@@ -929,67 +1293,11 @@ function EntryPage() {
                 <CollapsibleRow
                   icon={Users}
                   title="Area owners & performance"
-                  summary={`${productionAreas.length} areas · ${
-                    Object.values(areaOwnerSelections).filter((s) => s.ownerId).length
-                  } assigned`}
+                  summary={areaOwnersSummary}
                   open={openAreaOwners}
                   onToggle={() => setOpenAreaOwners((o) => !o)}
                 >
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {productionAreas.map((area) => {
-                      const sel = areaOwnerSelections[area.id] ?? { ownerId: "", score: "" };
-                      return (
-                        <div key={area.id} className="rounded-lg border border-border p-3">
-                          <p className="mb-2 text-sm font-semibold">{area.name}</p>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <Field label="Owner">
-                              <Select
-                                value={sel.ownerId}
-                                onValueChange={(v) =>
-                                  setAreaOwnerSelections((p) => ({
-                                    ...p,
-                                    [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" },
-                                  }))
-                                }
-                                disabled={!canEditAreaOwners}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Unassigned" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {areaOwners.map((o) => (
-                                    <SelectItem key={o.id} value={o.id}>
-                                      {o.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </Field>
-                            <Field label="Performance Score %">
-                              <Input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step="0.01"
-                                placeholder="0–100"
-                                value={sel.score}
-                                onChange={(e) =>
-                                  setAreaOwnerSelections((p) => ({
-                                    ...p,
-                                    [area.id]: {
-                                      ownerId: p[area.id]?.ownerId ?? "",
-                                      score: e.target.value,
-                                    },
-                                  }))
-                                }
-                                disabled={!canEditAreaOwners}
-                              />
-                            </Field>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {renderAreaOwners("d")}
                 </CollapsibleRow>
               )}
 
@@ -1000,6 +1308,7 @@ function EntryPage() {
                 onToggle={() => setOpenComments((o) => !o)}
               >
                 <Textarea
+                  aria-label="Comments"
                   value={comments}
                   onChange={(e) => setComments(e.target.value)}
                   rows={2}
@@ -1008,67 +1317,20 @@ function EntryPage() {
               </CollapsibleRow>
             </div>
 
-            {/* Mobile-only — unchanged, always-expanded Area owners block. */}
+            {/* Mobile — Area owners start collapsed like on desktop: they are
+                optional, and five always-open area cards pushed the downtime
+                log a long scroll away. */}
             {productionAreas.length > 0 && (
               <div className="col-span-1 md:hidden">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Area owners &amp; performance
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {productionAreas.map((area) => {
-                    const sel = areaOwnerSelections[area.id] ?? { ownerId: "", score: "" };
-                    return (
-                      <div key={area.id} className="rounded-lg border border-border p-3">
-                        <p className="mb-2 text-sm font-semibold">{area.name}</p>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <Field label="Owner">
-                            <Select
-                              value={sel.ownerId}
-                              onValueChange={(v) =>
-                                setAreaOwnerSelections((p) => ({
-                                  ...p,
-                                  [area.id]: { ownerId: v, score: p[area.id]?.score ?? "" },
-                                }))
-                              }
-                              disabled={!canEditAreaOwners}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Unassigned" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {areaOwners.map((o) => (
-                                  <SelectItem key={o.id} value={o.id}>
-                                    {o.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </Field>
-                          <Field label="Performance Score %">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={100}
-                              step="0.01"
-                              placeholder="0–100"
-                              value={sel.score}
-                              onChange={(e) =>
-                                setAreaOwnerSelections((p) => ({
-                                  ...p,
-                                  [area.id]: {
-                                    ownerId: p[area.id]?.ownerId ?? "",
-                                    score: e.target.value,
-                                  },
-                                }))
-                              }
-                              disabled={!canEditAreaOwners}
-                            />
-                          </Field>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <CollapsibleRow
+                  icon={Users}
+                  title="Area owners"
+                  summary={areaOwnersSummary}
+                  open={openAreaOwners}
+                  onToggle={() => setOpenAreaOwners((o) => !o)}
+                >
+                  {renderAreaOwners("m")}
+                </CollapsibleRow>
               </div>
             )}
 
@@ -1082,6 +1344,8 @@ function EntryPage() {
                     <Field key={f.id} label={`${f.label}${f.unit ? ` (${f.unit})` : ""}`}>
                       <Input
                         type="number"
+                        inputMode="decimal"
+                        className="max-md:h-11"
                         value={customValues[f.field_key] ?? ""}
                         onChange={(e) =>
                           setCustomValues((p) => ({ ...p, [f.field_key]: e.target.value }))
@@ -1093,16 +1357,24 @@ function EntryPage() {
               </div>
             )}
 
-            {/* Mobile-only — unchanged, always-expanded Comments block. */}
+            {/* Mobile — Comments collapsed too; the summary shows whether any
+                were written. */}
             <div className="md:hidden">
-              <Label className="text-xs">Comments</Label>
-              <Textarea
-                value={comments}
-                onChange={(e) => setComments(e.target.value)}
-                rows={2}
-                className="mt-1"
-                disabled={!canEditNotes}
-              />
+              <CollapsibleRow
+                icon={MessageSquare}
+                title="Comments"
+                summary={comments.trim() ? "Written" : "Empty"}
+                open={openComments}
+                onToggle={() => setOpenComments((o) => !o)}
+              >
+                <Textarea
+                  aria-label="Comments"
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  rows={3}
+                  disabled={!canEditNotes}
+                />
+              </CollapsibleRow>
             </div>
           </CardContent>
         </Card>
@@ -1113,12 +1385,13 @@ function EntryPage() {
               <CardTitle>Downtime Log</CardTitle>
               <CardDescription>
                 <b>{totalDowntime}</b> min ·{" "}
-                {liveSummary.lossPct !== null ? liveSummary.lossPct.toFixed(1) : "0"}% of available
+                {liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"} of
+                available
               </CardDescription>
             </div>
             <Button
               size="sm"
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
+              className="bg-accent text-accent-foreground hover:bg-accent/90 max-md:h-11 max-md:px-4"
               onClick={addDowntime}
               disabled={!canEditDowntime}
             >
@@ -1169,7 +1442,7 @@ function EntryPage() {
                   }}
                   disabled={!canEditDowntime}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label={`Downtime ${i + 1} reason`} className="max-md:h-11">
                     <SelectValue placeholder="Pick reason" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1183,6 +1456,8 @@ function EntryPage() {
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <Input
                     placeholder="Area"
+                    aria-label={`Downtime ${i + 1} area`}
+                    className="max-md:h-11"
                     value={d.area}
                     onChange={(e) =>
                       setDowntimes((arr) =>
@@ -1193,7 +1468,11 @@ function EntryPage() {
                   />
                   <Input
                     type="number"
+                    inputMode="numeric"
                     placeholder="Minutes"
+                    aria-label={`Downtime ${i + 1} minutes`}
+                    aria-invalid={errors?.downtimes[i] ? true : undefined}
+                    className="max-md:h-11"
                     value={d.minutes || ""}
                     onChange={(e) =>
                       setDowntimes((arr) =>
@@ -1205,10 +1484,16 @@ function EntryPage() {
                     disabled={!canEditDowntime}
                   />
                 </div>
+                {errors?.downtimes[i] && (
+                  <p className="text-xs font-medium text-destructive-strong" role="alert">
+                    {errors.downtimes[i]}
+                  </p>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-destructive"
+                  className="text-destructive max-md:h-11"
+                  aria-label={`Remove downtime ${i + 1}`}
                   onClick={() => setDowntimes((arr) => arr.filter((_, idx) => idx !== i))}
                   disabled={!canEditDowntime}
                 >
@@ -1236,20 +1521,17 @@ function EntryPage() {
                 />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {liveSummary.lossPct !== null ? liveSummary.lossPct.toFixed(1) : "0"}% of{" "}
+                {liveSummary.lossPct !== null ? `${liveSummary.lossPct.toFixed(1)}%` : "—"} of{" "}
                 {liveSummary.avail.toLocaleString()} available min
               </p>
             </div>
           </CardContent>
         </Card>
-      </div>
+      </fieldset>
 
-      {/* max-md:bottom-[72px]: clears the fixed mobile bottom nav
-          (AppShell.tsx, md:hidden) — bottom-4 on its own would sit under
-          it. No-op at md+, where that nav doesn't render and the original
-          bottom-4 offset applies. */}
-      <div className="sticky bottom-4 max-md:bottom-[72px] mt-6 flex justify-end gap-2">
-        {existingEntryId && canDelete && (
+      {/* Desktop Save/Delete row — unchanged apart from the guards. */}
+      <div className="sticky bottom-4 mt-6 hidden justify-end gap-2 md:flex">
+        {slot.status === "existing" && editingSaved && canDelete && (
           <Button
             size="lg"
             variant="outline"
@@ -1260,24 +1542,143 @@ function EntryPage() {
             <Trash2 className="mr-2 h-4 w-4" /> {deleting ? "Deleting…" : "Delete Entry"}
           </Button>
         )}
-        <Button
-          size="lg"
-          onClick={handleSave}
-          disabled={saving || deleting || readOnly || (!existingEntryId && !canCreate)}
-          className="shadow-elevated"
-        >
+        <Button size="lg" onClick={handleSave} disabled={saveDisabled} className="shadow-elevated">
           <Save className="mr-2 h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
         </Button>
       </div>
+
+      {/* Mobile: Delete sits at the end of the form, away from Save. */}
+      {slot.status === "existing" && editingSaved && canDelete && (
+        <Button
+          variant="ghost"
+          className="mt-4 h-11 w-full text-destructive hover:text-destructive md:hidden"
+          onClick={() => handleDelete()}
+          disabled={deleting || saving || readOnly}
+        >
+          <Trash2 className="mr-2 h-4 w-4" /> {deleting ? "Deleting…" : "Delete this entry…"}
+        </Button>
+      )}
+
+      {/* Mobile sticky bar: the live numbers the desktop shows in its summary
+          tiles (hidden below md, so adherence was never visible on a phone)
+          plus the one Save button. bottom-[72px] clears the fixed bottom nav
+          (AppShell.tsx, md:hidden). */}
+      <div className="sticky bottom-[72px] z-10 mt-4 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-elevated backdrop-blur md:hidden">
+        <div className="flex items-center gap-3">
+          <dl className="grid min-w-0 flex-1 grid-cols-3 gap-2">
+            {(
+              [
+                ["Making", liveSummary.makingPct, adherenceColor(liveSummary.makingPct)],
+                ["Packing", liveSummary.packingPct, adherenceColor(liveSummary.packingPct)],
+                ["Lost", liveSummary.lossPct, lossColor(liveSummary.lossPct)],
+              ] as const
+            ).map(([label, pct, color]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className={`text-base font-bold tabular-nums ${color}`}>
+                  {pct !== null ? `${pct.toFixed(1)}%` : "—"}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <Button
+            className="h-12 shrink-0 px-6 text-base"
+            onClick={handleSave}
+            disabled={saveDisabled}
+          >
+            <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+
+      <AlertDialog
+        open={pendingSwitch !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSwitch(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingSwitch?.decision === "confirm-load"
+                ? `${pendingSwitch ? describe(pendingSwitch.target) : ""} has a saved entry. Opening it replaces what you typed here, which is not saved.`
+                : "You edited this saved entry and haven't saved. Switching discards those changes."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmPendingSwitch}>Discard and switch</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={blocker.status === "blocked"}
+        onOpenChange={(open) => {
+          if (!open && blocker.status === "blocked") blocker.reset();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave without saving?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This entry has changes that are not saved. They will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Stay</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (blocker.status === "blocked") blocker.proceed();
+              }}
+            >
+              Leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// Label + control + optional error. The label is tied to the control: an
+// Input/Textarea child gets a generated id; a Select passes `htmlFor` and puts
+// the same id on its SelectTrigger.
+function Field({
+  label,
+  children,
+  htmlFor,
+  error,
+}: {
+  label: string;
+  children: React.ReactNode;
+  htmlFor?: string;
+  error?: string;
+}) {
+  const autoId = useId();
+  const errId = `${autoId}-err`;
+  let id = htmlFor;
+  let child = children;
+  if (!htmlFor && isValidElement<{ id?: string }>(children)) {
+    id = children.props.id ?? autoId;
+    child = cloneElement(children as React.ReactElement<Record<string, unknown>>, {
+      id,
+      "aria-invalid": error ? true : undefined,
+      "aria-describedby": error ? errId : undefined,
+    });
+  }
   return (
     <div>
-      <Label className="text-xs">{label}</Label>
-      <div className="mt-1">{children}</div>
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      <div className="mt-1">{child}</div>
+      {error && (
+        <p id={errId} role="alert" className="mt-1 text-xs font-medium text-destructive-strong">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -1314,6 +1715,8 @@ function AdherenceCard({
   onActualChange,
   disabled,
   pct,
+  planError,
+  actualError,
 }: {
   title: string;
   planValue: string;
@@ -1322,6 +1725,8 @@ function AdherenceCard({
   onActualChange: (v: string) => void;
   disabled: boolean;
   pct: number | null;
+  planError?: string;
+  actualError?: string;
 }) {
   return (
     <div className="rounded-lg border border-border bg-muted/50 p-3">
@@ -1332,17 +1737,21 @@ function AdherenceCard({
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Plan (kg)">
+        <Field label="Plan (kg)" error={planError}>
           <Input
             type="number"
+            inputMode="decimal"
+            aria-label={`${title} plan, kg`}
             value={planValue}
             onChange={(e) => onPlanChange(e.target.value)}
             disabled={disabled}
           />
         </Field>
-        <Field label="Actual (kg)">
+        <Field label="Actual (kg)" error={actualError}>
           <Input
             type="number"
+            inputMode="decimal"
+            aria-label={`${title} actual, kg`}
             value={actualValue}
             onChange={(e) => onActualChange(e.target.value)}
             disabled={disabled}
@@ -1386,7 +1795,7 @@ function CollapsibleRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left"
+        className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left max-md:min-h-12"
       >
         <span className="flex items-center gap-2 text-sm font-semibold">
           <Icon className="h-4 w-4 text-muted-foreground" />
@@ -1423,7 +1832,9 @@ function EntryPie({
   ].filter((d) => d.value > 0);
   if (data.length === 0) return null;
   return (
-    <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3">
+    // Desktop only: on a phone it mixed kg with minutes in one pie and pushed
+    // the Save bar down; the sticky bar there shows the numbers instead.
+    <div className="mt-2 hidden rounded-lg border border-border bg-muted/20 p-3 md:block">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Entry Composition
       </p>
