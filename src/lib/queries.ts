@@ -1300,3 +1300,67 @@ export const unplannedFaultCountQuery = (lineId: string | null, from: string, to
       return count ?? 0;
     },
   });
+
+
+// ---------------------------------------------------------------------------
+// Settings page
+// ---------------------------------------------------------------------------
+
+// Every downtime reason, switched-off ones included — reasonsQuery above is
+// active-only because it feeds the pickers. Keyed under ["reasons"] so every
+// existing invalidateQueries({ queryKey: ["reasons"] }) refreshes this too.
+export const allReasonsQuery = queryOptions({
+  queryKey: ["reasons", "all"],
+  queryFn: async (): Promise<DowntimeReason[]> => {
+    const { data, error } = await supabase.from("downtime_reasons").select("*").order("name");
+    if (error) throw error;
+    return data as DowntimeReason[];
+  },
+});
+
+// How many entry_downtimes rows point at each reason (reason_id → count).
+// One paged select of a single column, counted client-side; a reason with
+// no key here has never been used.
+export const reasonUsageQuery = queryOptions({
+  queryKey: ["reason-usage"],
+  queryFn: async (): Promise<Record<string, number>> => {
+    const rows = await selectAllRows<{ reason_id: string | null }>(() =>
+      supabase.from("entry_downtimes").select("reason_id").order("id"),
+    );
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.reason_id) counts[r.reason_id] = (counts[r.reason_id] ?? 0) + 1;
+    }
+    return counts;
+  },
+});
+
+// Custom-field count per line (line_id → count), for the Settings sidebar.
+export const lineFieldCountsQuery = queryOptions({
+  queryKey: ["line-field-counts"],
+  queryFn: async (): Promise<Record<string, number>> => {
+    const { data, error } = await supabase.from("line_field_definitions").select("line_id");
+    if (error) throw error;
+    const counts: Record<string, number> = {};
+    for (const r of data ?? []) counts[r.line_id] = (counts[r.line_id] ?? 0) + 1;
+    return counts;
+  },
+});
+
+// How many daily entries a production line has — deleting the line
+// cascades to all of them, so the confirm dialog states the number.
+export const lineEntryCountQuery = (lineId: string | null) =>
+  queryOptions({
+    queryKey: ["line-entry-count", lineId],
+    enabled: !!lineId,
+    staleTime: 0,
+    queryFn: async (): Promise<number> => {
+      if (!lineId) return 0;
+      const { count, error } = await supabase
+        .from("daily_entries")
+        .select("id", { count: "exact", head: true })
+        .eq("line_id", lineId);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
