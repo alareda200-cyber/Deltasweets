@@ -1,68 +1,91 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { cn } from "@/lib/utils";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { useState, useMemo, useRef, lazy, Suspense } from "react";
+import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AlertTriangle, FileDown, Inbox, Loader2, Plus } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
-import { MaintenanceEventsCard } from "@/components/MaintenanceEventsCard";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
-  linesQuery,
-  entriesQuery,
-  entryDowntimesForEntriesQuery,
-  maintenanceEventsAsDowntimes,
-  productionAreasQuery,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   areaOwnersQuery,
-  entryAreaOwnersForEntriesQuery,
-  departmentsQuery,
-  departmentCategoriesQuery,
   downtimeTypesQuery,
-  severityLevelsQuery,
-  maintenanceEventsQuery,
+  entriesQuery,
+  entryAreaOwnersForEntriesQuery,
+  entryDaysByLineQuery,
+  entryDowntimesForEntriesQuery,
+  linesQuery,
   openMaintenanceEventsQuery,
-  maintenanceStoppagesQuery,
+  productionAreasQuery,
+  severityLevelsQuery,
+  unplannedFaultCountQuery,
+  type DailyEntry,
+  type EntryDowntime,
+  type ProductionLine,
 } from "@/lib/queries";
-import { monthRange, pct } from "@/lib/date-utils";
+import { monthRange } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
-import { can } from "@/lib/permissions";
-import { PlusSquare, FileDown, Loader2, Factory, Bell, Inbox } from "lucide-react";
+import { can, type Role } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
+import { formatSavedAt, shiftLabel } from "@/lib/entry-form";
+import {
+  ADHERENCE_TARGET,
+  LOSS_ALERT_PCT,
+  addDays,
+  adherenceTone,
+  areaOwnerScores,
+  dailySeries,
+  downtimeKindResolver,
+  elapsedRange,
+  formatDayName,
+  formatRange,
+  formatRangeShort,
+  kg,
+  lossTone,
+  num,
+  pct1,
+  ratio,
+  reasonRows,
+  reworkTotal,
+  splitDowntime,
+  sumEntries,
+  summarizeRightNow,
+  todayIso,
+  type Totals,
+  type TimeSplit,
+} from "@/lib/dashboard-metrics";
+import { RightNowStrip } from "@/components/dashboard/RightNowStrip";
+import {
+  KpiTile,
+  KpiTilesSkeleton,
+  toneBar,
+  type KpiTileProps,
+} from "@/components/dashboard/KpiTiles";
+import {
+  AreaScoresCard,
+  Card,
+  LastDayCard,
+  MachineFaultsCard,
+  ReworkCard,
+  TimeLostCard,
+  type LastDay,
+} from "@/components/dashboard/DashboardCards";
+import { CARD, KIND_BAR } from "@/components/dashboard/tone";
 
-// recharts (the bulk of these components' weight) is code-split into its own
-// chunk; loading these lazily keeps it out of the main route bundle and lets
-// the dashboard shell (header, tabs) paint before charts finish downloading.
-const PerformanceSection = lazy(() =>
-  import("@/components/PerformanceSection").then((m) => ({ default: m.PerformanceSection })),
-);
-const DowntimeSection = lazy(() =>
-  import("@/components/DowntimeSection").then((m) => ({ default: m.DowntimeSection })),
-);
-const ReworkSection = lazy(() =>
-  import("@/components/ReworkSection").then((m) => ({ default: m.ReworkSection })),
-);
-const TopQualityAreaCard = lazy(() =>
-  import("@/components/TopQualityAreaCard").then((m) => ({ default: m.TopQualityAreaCard })),
-);
-const MaintenanceDowntimeCard = lazy(() =>
-  import("@/components/MaintenanceDowntimeCard").then((m) => ({
-    default: m.MaintenanceDowntimeCard,
-  })),
-);
-
-function ChartsSkeleton() {
-  return (
-    <div className="mt-6 grid grid-cols-1 gap-6">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="h-64 animate-pulse rounded-2xl border border-border bg-card" />
-      ))}
-    </div>
-  );
-}
+// Recharts is the bulk of the chart's weight; loading it lazily keeps it out of
+// the route bundle so the controls, Right now strip and KPI cards paint first.
+const DailyOutputChart = lazy(() => import("@/components/dashboard/DailyOutputChart"));
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -70,7 +93,7 @@ export const Route = createFileRoute("/")({
       { title: "Production Scorecard · Dashboard" },
       {
         name: "description",
-        content: "Live MTD + last-day plant performance across all production lines.",
+        content: "Plan against actual, time lost and rework for one production line.",
       },
     ],
   }),
@@ -80,8 +103,6 @@ export const Route = createFileRoute("/")({
       context.queryClient.ensureQueryData(linesQuery),
       context.queryClient.ensureQueryData(productionAreasQuery),
       context.queryClient.ensureQueryData(areaOwnersQuery),
-      context.queryClient.ensureQueryData(departmentsQuery),
-      context.queryClient.ensureQueryData(departmentCategoriesQuery),
       context.queryClient.ensureQueryData(downtimeTypesQuery),
       context.queryClient.ensureQueryData(severityLevelsQuery),
     ]),
@@ -92,10 +113,26 @@ export const Route = createFileRoute("/")({
   ),
 });
 
+type Preset = "month" | "7d" | "custom";
+
+const PRESET_LABEL: Record<Preset, string> = {
+  month: "This month",
+  "7d": "Last 7 days",
+  custom: "Custom…",
+};
+
+function presetRange(p: Exclude<Preset, "custom">): { from: string; to: string } {
+  if (p === "month") return monthRange();
+  const today = todayIso();
+  return { from: addDays(today, -6), to: today };
+}
+
 function Dashboard() {
   const navigate = useNavigate();
+  const { role } = useAuth();
   const { data: lines } = useSuspenseQuery(linesQuery);
   const initial = monthRange();
+  const [preset, setPreset] = useState<Preset>("month");
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [lineId, setLineId] = useState(lines[0]?.id ?? "");
@@ -103,28 +140,38 @@ function Dashboard() {
   const [exportProgress, setExportProgress] = useState("");
   const exportRef = useRef<HTMLDivElement>(null);
 
-  // Scoped to the currently selected line (see that component's comment) —
-  // not date-range filtered, so an open event stays visible regardless of
-  // the From/To window above it. Visible to every role that can reach the
-  // Dashboard at all (RequireAuth below already requires "dashboard.view"),
-  // unlike the standalone /maintenance page which stays gated behind
-  // "maintenance.view".
-  const { data: maintenanceEvents = [] } = useQuery(
-    maintenanceEventsQuery(lineId, null, null, null, null),
-  );
-  // Open-fault count comes from a dedicated status-filtered query rather
-  // than filtering maintenanceEvents, so it can never be lost to a row cap
-  // — see openMaintenanceEventsQuery in src/lib/queries.ts.
-  const { data: openFaults = [] } = useQuery(openMaintenanceEventsQuery(lineId));
-
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
-  // A count, not a boolean. The hero is the largest element on the page and
-  // said nothing measurable; the number of open faults is the one figure that
-  // is already in scope here, so it is the one the hero can honestly carry.
-  // (Adherence and Loss % are computed inside DashboardBody, a different
-  // component — putting those in the hero would mean lifting queries, which is
-  // a structural change, not a design one.)
-  const openFaultCount = openFaults.length;
+  const rangeValid = !!from && !!to && from <= to;
+
+  // Live, all lines, never filtered — see RightNowStrip.
+  const openQ = useQuery(openMaintenanceEventsQuery(null));
+  const rightNow = useMemo(() => (openQ.data ? summarizeRightNow(openQ.data) : null), [openQ.data]);
+
+  // Entry count per line for the tabs: one narrow request for every line.
+  const countsQ = useQuery({ ...entryDaysByLineQuery(from, to), enabled: rangeValid });
+  const counts = useMemo(() => {
+    if (!countsQ.data) return null;
+    const m = new Map<string, number>();
+    for (const r of countsQ.data) m.set(r.line_id, (m.get(r.line_id) ?? 0) + 1);
+    return m;
+  }, [countsQ.data]);
+  const countText = (id: string) => {
+    if (!counts) return "";
+    const n = counts.get(id) ?? 0;
+    return n === 0 ? "no entries" : String(n);
+  };
+
+  const canEntry = can(role, "entry.view");
+  const canMaintenance = can(role, "maintenance.view");
+
+  function choosePreset(p: Preset) {
+    setPreset(p);
+    if (p !== "custom") {
+      const r = presetRange(p);
+      setFrom(r.from);
+      setTo(r.to);
+    }
+  }
 
   async function handleExportPdf() {
     if (!activeLine || !exportRef.current) return;
@@ -155,373 +202,583 @@ function Dashboard() {
     }
   }
 
+  const exportLabel = exporting ? exportProgress || "Preparing PDF…" : "Export PDF";
+  const exportIcon = exporting ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : (
+    <FileDown className="h-4 w-4" />
+  );
+
+  if (lines.length === 0) {
+    return (
+      <AppShell>
+        <EmptyState onCreate={() => navigate({ to: "/settings" })} />
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
-      {lines.length === 0 ? (
-        <EmptyState onCreate={() => navigate({ to: "/settings" })} />
-      ) : (
-        <div ref={exportRef}>
-          <HeroHeader line={activeLine} from={from} to={to} openFaultCount={openFaultCount} />
-
-          <div
-            data-pdf-exclude="true"
-            className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 shadow-card md:flex-row md:items-end md:justify-between"
-          >
-            <Tabs value={lineId} onValueChange={setLineId} className="min-w-0 flex-1">
-              <Label className="text-xs">Line</Label>
-              {/* Wraps instead of scrolling. `overflow-x-auto` put the trailing
-                  lines behind scroll arrows even when they would have fit on a
-                  second row, and horizontally-scrolled content is easy to miss
-                  entirely — the row simply looked like it ended. */}
-              <TabsList className="flex h-auto w-full flex-wrap items-center justify-start gap-1 bg-muted/50 p-1">
-                {lines.map((l) => (
-                  <TabsTrigger
-                    key={l.id}
-                    value={l.id}
-                    className="shrink-0 whitespace-nowrap data-[state=active]:bg-card data-[state=active]:shadow-sm"
-                  >
-                    <span
-                      className="mr-2 inline-block h-2 w-2 rounded-full"
-                      style={{ background: l.color }}
-                    />
-                    {l.name}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:flex md:flex-wrap md:items-end">
-              {/* From/To as their own compact row on mobile — md:contents
-                  unwraps this div entirely at md+, so it has zero effect on
-                  the md:flex md:flex-wrap layout below: From/To become two
-                  independent flex items there again, exactly as before. */}
-              <div className="grid grid-cols-2 gap-2 sm:col-span-2 md:contents">
-                <div>
-                  <Label className="text-xs">From</Label>
-                  <Input
-                    type="date"
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    className="h-9 w-full sm:w-[150px]"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">To</Label>
-                  <Input
-                    type="date"
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    className="h-9 w-full sm:w-[150px]"
-                  />
-                </div>
-              </div>
-              {/* This Month + Export PDF as their own compact row on mobile —
-                  same md:contents unwrap as above. */}
-              <div className="grid grid-cols-2 gap-2 sm:col-span-2 md:contents">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full md:w-auto"
-                  onClick={() => {
-                    const m = monthRange();
-                    setFrom(m.from);
-                    setTo(m.to);
-                  }}
-                >
-                  This Month
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full md:w-auto"
-                  onClick={handleExportPdf}
-                  disabled={exporting}
-                >
-                  {exporting ? (
-                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileDown className="mr-1.5 h-4 w-4" />
+      <div ref={exportRef} className="flex flex-col gap-3.5 md:gap-5">
+        {/* Title + desktop controls */}
+        <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between md:gap-6">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight md:text-[30px]">Production</h1>
+            <p className="mt-1.5 hidden text-sm text-muted-foreground md:block">
+              Plan against actual, time lost and rework for one line.
+            </p>
+          </div>
+          <div className="hidden items-center gap-2 md:flex">
+            <div
+              role="group"
+              aria-label="Period"
+              className="flex gap-0.5 rounded-[10px] bg-muted p-[3px]"
+            >
+              {(Object.keys(PRESET_LABEL) as Preset[]).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  aria-pressed={preset === p}
+                  onClick={() => choosePreset(p)}
+                  className={cn(
+                    "h-[38px] rounded-lg px-3.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    preset === p
+                      ? "bg-card font-semibold text-foreground shadow-sm"
+                      : "text-foreground/80 hover:text-foreground",
                   )}
-                  {exporting ? exportProgress || "Preparing PDF…" : "Export PDF"}
-                </Button>
-              </div>
-              {/* New Entry: prominent full-width button below the two rows
-                  above on mobile (h-11); md:h-8 restores the exact original
-                  size="sm" height (32px) at md+, where it just flows inline
-                  again like every other control here. */}
-              <Button
-                size="sm"
-                className="h-11 w-full sm:col-span-2 md:h-8 md:w-auto"
-                onClick={() => navigate({ to: "/entry" })}
-              >
-                <PlusSquare className="mr-1.5 h-4 w-4" /> New Entry
-              </Button>
+                >
+                  {PRESET_LABEL[p]}
+                </button>
+              ))}
             </div>
+            <Button
+              variant="outline"
+              className="h-11 px-4"
+              onClick={handleExportPdf}
+              disabled={exporting}
+            >
+              {exportIcon}
+              {exportLabel}
+            </Button>
+            {canEntry && (
+              <Button asChild className="h-11 px-[18px] font-semibold">
+                <Link to="/entry">
+                  <Plus className="h-4 w-4" /> New entry
+                </Link>
+              </Button>
+            )}
           </div>
+        </div>
 
-          <div className="mt-6" data-pdf-section="maintenance-events">
-            <MaintenanceEventsCard events={maintenanceEvents} />
+        {/* Mobile controls: line + period, 48px each */}
+        <div className="grid grid-cols-2 gap-2 md:hidden">
+          <Select value={activeLine?.id ?? ""} onValueChange={setLineId}>
+            <SelectTrigger
+              aria-label="Line"
+              className="h-12 rounded-xl bg-card text-[15px] font-semibold"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {lines.map((l) => (
+                <SelectItem key={l.id} value={l.id}>
+                  {l.name}
+                  {counts && (
+                    <span className="ml-1 text-xs text-muted-foreground">· {countText(l.id)}</span>
+                  )}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={preset} onValueChange={(v) => choosePreset(v as Preset)}>
+            <SelectTrigger
+              aria-label="Period"
+              className="h-12 rounded-xl bg-card text-[15px] font-semibold"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="month">This month</SelectItem>
+              <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="custom">Custom range</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {preset === "custom" && (
+          <div className="grid grid-cols-2 gap-2 md:flex md:items-end md:justify-end md:gap-3">
+            <div>
+              <Label htmlFor="dash-from" className="text-xs">
+                From
+              </Label>
+              <Input
+                id="dash-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+                className="h-11 w-full md:h-10 md:w-[160px]"
+              />
+            </div>
+            <div>
+              <Label htmlFor="dash-to" className="text-xs">
+                To
+              </Label>
+              <Input
+                id="dash-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+                className="h-11 w-full md:h-10 md:w-[160px]"
+              />
+            </div>
+            {!rangeValid && (
+              <p role="alert" className="col-span-2 text-sm text-destructive-strong md:self-center">
+                Pick a From date on or before the To date.
+              </p>
+            )}
           </div>
+        )}
 
-          {activeLine && (
-            <DashboardBody lineId={activeLine.id} color={activeLine.color} from={from} to={to} />
+        {/* Desktop line tabs with entry counts */}
+        <Tabs value={activeLine?.id ?? ""} onValueChange={setLineId} className="hidden md:block">
+          <TabsList
+            aria-label="Line"
+            className="flex h-auto w-full flex-wrap justify-start gap-1.5 rounded-none border-b border-border bg-transparent p-0"
+          >
+            {lines.map((l) => (
+              <TabsTrigger
+                key={l.id}
+                value={l.id}
+                className="-mb-px h-11 gap-1.5 rounded-none border-b-[3px] border-transparent bg-transparent px-3.5 text-sm font-normal text-foreground/80 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                {l.name}
+                {counts && (
+                  <span className="rounded-full bg-muted px-[7px] py-px text-xs font-semibold text-muted-foreground">
+                    {countText(l.id)}
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+
+        <div data-pdf-section="right-now">
+          <RightNowStrip
+            summary={rightNow}
+            loading={openQ.isPending}
+            error={openQ.isError}
+            canOpenMaintenance={canMaintenance}
+          />
+        </div>
+
+        {activeLine &&
+          (rangeValid ? (
+            <PeriodBody
+              key={`${activeLine.id}|${from}|${to}`}
+              line={activeLine}
+              from={from}
+              to={to}
+              role={role}
+            />
+          ) : (
+            <p className="rounded-2xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+              Choose a valid period to see this line's numbers.
+            </p>
+          ))}
+
+        {/* Mobile: export + new entry at the end of the page */}
+        <div data-pdf-exclude="true" className="grid grid-cols-2 gap-2 md:hidden">
+          <Button
+            variant="outline"
+            className={cn("h-12 rounded-xl text-[15px]", !canEntry && "col-span-2")}
+            onClick={handleExportPdf}
+            disabled={exporting}
+          >
+            {exportIcon}
+            <span className="truncate">{exportLabel}</span>
+          </Button>
+          {canEntry && (
+            <Button asChild className="h-12 rounded-xl text-[15px] font-semibold">
+              <Link to="/entry">
+                <Plus className="h-4 w-4" /> New entry
+              </Link>
+            </Button>
           )}
         </div>
-      )}
+      </div>
     </AppShell>
   );
 }
 
-function HeroHeader({
+function PeriodBody({
   line,
   from,
   to,
-  openFaultCount,
+  role,
 }: {
-  line: { name: string; color: string } | undefined;
+  line: ProductionLine;
   from: string;
   to: string;
-  openFaultCount: number;
+  role: Role | null;
 }) {
-  const hasOpenFaults = openFaultCount > 0;
-  return (
-    <>
-      {/* Mobile-only compact replacement for the full hero below — brand mark
-          + line name on the left, a faults bell on the right, per the
-          approved mobile mockup. Not part of data-pdf-section="hero" (no
-          data-pdf-section attribute of its own), so it never appears in PDF
-          exports regardless of screen size. */}
-      <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-lg bg-accent">
-            <Factory className="h-3.5 w-3.5 text-accent-foreground" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-bold leading-tight">Scorecard OS</div>
-            <div className="truncate text-xs leading-tight text-muted-foreground">
-              {line?.name ?? "—"}
-            </div>
-          </div>
-        </div>
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
-          <Bell className="h-4 w-4 text-muted-foreground" />
-          {hasOpenFaults && (
-            <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-destructive" />
-          )}
-        </div>
-      </div>
-
-      {/* hidden md:block: the big gradient hero is replaced on mobile by the
-          compact header above. Still always captured by PDF export — see
-          pdf-export.ts's forced-visible handling of any display:none
-          data-pdf-section element. */}
-      <div
-        data-pdf-section="hero"
-        className="hidden overflow-hidden rounded-3xl gradient-hero p-8 text-white shadow-elevated md:block md:p-10"
-      >
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] opacity-80">
-          Daily Production Scorecard
-        </p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight md:text-5xl">
-          {line?.name ?? "—"} <span className="opacity-70">Production Line</span>
-        </h1>
-        <p className="mt-2 text-sm opacity-90">Making → Packing · Plant Performance Overview</p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur">
-            Reporting period · {from} → {to}
-          </span>
-          {/* Not colour alone: the wording changes too ("N open faults" vs
-              "No open faults"), so the state survives greyscale and the PDF
-              export. */}
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium backdrop-blur",
-              hasOpenFaults ? "bg-destructive/80" : "bg-white/15",
-            )}
-          >
-            <span
-              className={cn(
-                "h-2 w-2 shrink-0 rounded-full",
-                hasOpenFaults ? "bg-white" : "bg-white/70",
-              )}
-            />
-            {hasOpenFaults ? (
-              <>
-                <span className="font-mono tabular-nums">{openFaultCount}</span> open{" "}
-                {openFaultCount === 1 ? "fault" : "faults"}
-              </>
-            ) : (
-              "No open faults"
-            )}
-          </span>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function DashboardBody({
-  lineId,
-  color,
-  from,
-  to,
-}: {
-  lineId: string;
-  color: string;
-  from: string;
-  to: string;
-}) {
-  const { role } = useAuth();
-  const { data: entries = [] } = useSuspenseQuery(entriesQuery(lineId, from, to));
-  const entryIds = useMemo(() => entries.map((e) => e.id), [entries]);
-  const { data: entryDowntimes = [] } = useSuspenseQuery(entryDowntimesForEntriesQuery(entryIds));
-  // Merges in mechanical/electrical maintenance_events (same line_id/date
-  // range as the rest of the dashboard) so the downtime Pareto chart and the
-  // Maintenance card's Top Reasons list both show real maintenance downtime
-  // alongside entry_downtimes — see maintenanceEventsAsDowntimes.
-  const { data: lineMaintenanceEvents = [] } = useSuspenseQuery(
-    maintenanceEventsQuery(lineId, null, null, from, to),
-  );
-  // No date filter (unlike lineMaintenanceEvents above) — a stoppage
-  // referenced by an in-window event still needs its own started_at/
-  // resolved_at looked up regardless of whether those fall inside [from,
-  // to], see maintenanceEventsAsDowntimes.
-  const { data: lineMaintenanceStoppages = [] } = useSuspenseQuery(
-    maintenanceStoppagesQuery(lineId),
-  );
-  const { data: entryAreaOwners = [] } = useSuspenseQuery(entryAreaOwnersForEntriesQuery(entryIds));
-  const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
-  const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
-  const { data: departments } = useSuspenseQuery(departmentsQuery);
-  const { data: departmentCategories } = useSuspenseQuery(departmentCategoriesQuery);
+  const [stage, setStage] = useState<"making" | "packing">("making");
+  const entriesQ = useQuery(entriesQuery(line.id, from, to));
+  const entries = entriesQ.data;
+  const entryIds = useMemo(() => (entries ?? []).map((e) => e.id), [entries]);
+  const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entryIds));
+  const ownersQ = useQuery(entryAreaOwnersForEntriesQuery(entryIds));
+  const faultsQ = useQuery(unplannedFaultCountQuery(line.id, from, to));
   const { data: downtimeTypes } = useSuspenseQuery(downtimeTypesQuery);
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
-  const downtimes = useMemo(
-    () =>
-      [
-        ...entryDowntimes,
-        ...maintenanceEventsAsDowntimes(
-          lineMaintenanceEvents,
-          lineMaintenanceStoppages,
-          departments,
-          downtimeTypes,
-        ),
-      ].filter(
-        // Historical entry_downtimes rows can point at a downtime_reasons
-        // row that's since been deactivated in Settings (e.g. a retired
-        // "Preventive Maintenance" reason) — it stays in the DB for
-        // historical integrity, but shouldn't count in live downtime
-        // analysis. Filtering once here keeps every downstream consumer of
-        // `downtimes` (Pareto chart, Top Reasons, KPI totals) automatically
-        // consistent instead of drifting from each other.
-        (d) => d.is_active !== false,
-      ),
-    [entryDowntimes, lineMaintenanceEvents, lineMaintenanceStoppages, departments, downtimeTypes],
-  );
+  const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
+  const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
 
-  if (entries.length === 0) {
+  const canEntry = can(role, "entry.view");
+  const canMaintenance = can(role, "maintenance.view");
+
+  const hasIds = entryIds.length > 0;
+  const loading = entriesQ.isPending || (hasIds && downtimesQ.isPending);
+  const failed = entriesQ.isError || (hasIds && downtimesQ.isError);
+
+  // A retired downtime reason stays on old rows for history but does not count
+  // in live analysis — same rule the old downtime sections applied.
+  const downtimes = useMemo(
+    () => (downtimesQ.data ?? []).filter((d) => d.is_active !== false),
+    [downtimesQ.data],
+  );
+  const kindOf = useMemo(() => downtimeKindResolver(downtimeTypes), [downtimeTypes]);
+
+  // The period as far as it has happened, stretched to the last entry if one
+  // was saved for a later day.
+  const lastDate = entries && entries.length > 0 ? entries[entries.length - 1].entry_date : null;
+  const elapsed = elapsedRange(from, to);
+  const shownTo = lastDate && lastDate > elapsed.to ? lastDate : elapsed.to;
+  const rangeText = formatRange(from, shownTo);
+  const rangeShort = formatRangeShort(from, shownTo);
+
+  if (loading) {
     return (
-      <div className="mt-6 rounded-2xl border border-dashed border-border bg-card p-12 text-center">
-        <Inbox className="mx-auto h-8 w-8 text-muted-foreground" />
-        <p className="mt-3 text-base font-semibold text-foreground">No entries in this period</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add a daily entry to populate the dashboard.
-        </p>
+      <div className="flex flex-col gap-3.5 md:gap-5" aria-busy="true">
+        <span className="sr-only">Loading {line.name} numbers…</span>
+        <div className="h-6 w-72 max-w-full animate-pulse rounded-full bg-muted" />
+        <KpiTilesSkeleton />
+        <div className="grid gap-3.5 md:grid-cols-3 md:gap-4">
+          <div className={cn(CARD, "h-[290px] animate-pulse md:col-span-2 md:h-[360px]")} />
+          <div className={cn(CARD, "h-[200px] animate-pulse md:h-[360px]")} />
+        </div>
       </div>
     );
   }
 
-  // Same formulas as PerformanceSection's monthAdh (making/packing) and
-  // DowntimeSection's lossPct — recomputed here from the same entries/
-  // downtimes rather than imported, just to drive this compact mobile-only
-  // summary row; not a new source of truth, so it can't drift from the full
-  // sections below it.
-  const monthMakingPlan = entries.reduce((s, e) => s + Number(e.making_plan), 0);
-  const monthMakingActual = entries.reduce((s, e) => s + Number(e.making_actual), 0);
-  const makingAdh = monthMakingPlan > 0 ? monthMakingActual / monthMakingPlan : 0;
-  const monthPackingPlan = entries.reduce((s, e) => s + Number(e.packing_plan), 0);
-  const monthPackingActual = entries.reduce((s, e) => s + Number(e.packing_actual), 0);
-  const packingAdh = monthPackingPlan > 0 ? monthPackingActual / monthPackingPlan : 0;
-  const totalAvail = entries.reduce((s, e) => s + Number(e.available_min), 0);
-  const totalDown = downtimes.reduce((s, d) => s + Number(d.minutes), 0);
-  const lossPct = totalAvail > 0 ? (totalDown / totalAvail) * 100 : 0;
-  const adhColor = (v: number) =>
-    v >= 0.9 ? "text-success-strong" : v >= 0.7 ? "text-warning-strong" : "text-destructive-strong";
-  const lossColor =
-    lossPct < 10 ? "text-success-strong" : lossPct < 25 ? "text-warning-strong" : "text-destructive-strong";
+  if (failed) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col items-center gap-3 rounded-2xl border border-destructive/40 bg-destructive/10 p-8 text-center"
+      >
+        <AlertTriangle className="h-6 w-6 text-destructive-strong" aria-hidden="true" />
+        <p className="text-sm font-semibold text-destructive-strong">
+          Couldn't load {line.name}'s numbers for {rangeText}.
+        </p>
+        <Button
+          variant="outline"
+          className="h-11 md:h-9"
+          onClick={() => {
+            void entriesQ.refetch();
+            if (hasIds) void downtimesQ.refetch();
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  const list = entries ?? [];
+  if (list.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center md:p-12">
+        <Inbox className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
+        <p className="mt-3 text-base font-semibold">
+          No entries for {line.name}, {rangeText}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Plan, actual, time lost and rework appear here once a daily entry is saved for this line.
+        </p>
+        {canEntry && (
+          <Button asChild className="mt-5 h-11 md:h-9">
+            <Link to="/entry">
+              <Plus className="h-4 w-4" /> New entry
+            </Link>
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  const totals = sumEntries(list);
+  const days = new Set(list.map((e) => e.entry_date)).size;
+  const split = splitDowntime(downtimes, kindOf);
+  const reasons = reasonRows(downtimes, kindOf, severityLevels, productionAreas);
+  const lastDay = buildLastDay(list, downtimes, kindOf);
+  const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
+  const points = dailySeries(list, from, shownTo, stage);
+  const stageName = stage === "making" ? "Making" : "Packing";
 
   return (
     <>
-      {/* Mobile-only at-a-glance summary — the full Making/Packing/Downtime
-          sections below (in the Suspense boundary) carry the same numbers
-          plus charts; this is just a quick compact read before scrolling. */}
-      <div className="mt-6 rounded-2xl border border-border bg-card p-4 shadow-card md:hidden">
-        <p className="mb-3 text-sm font-semibold">Performance</p>
-        <div className="space-y-2 text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Making adherence</span>
-            <span className={`font-medium ${adhColor(makingAdh)}`}>{pct(makingAdh)}</span>
+      <div data-pdf-section="kpis" className="flex flex-col gap-3.5 md:gap-5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 className="hidden text-lg font-semibold md:block">This period</h2>
+          <span className="text-[13px] font-semibold text-primary md:rounded-full md:bg-primary/10 md:px-2 md:py-0.5 md:text-xs">
+            <span className="md:hidden">{rangeShort}</span>
+            <span className="hidden md:inline">{rangeText}</span> · {line.name} · {days} production{" "}
+            {days === 1 ? "day" : "days"}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-4">
+          {kpiTiles(totals, split).map((k) => (
+            <KpiTile key={k.title} {...k} />
+          ))}
+        </div>
+      </div>
+
+      {/* Each row is one PDF section so the export keeps the side-by-side
+          layout instead of blowing a one-third-width card up to a full page. */}
+      <div data-pdf-section="chart-and-last-day" className="grid gap-3.5 md:grid-cols-3 md:gap-4">
+        <div className="flex min-w-0 md:col-span-2">
+          <Card labelledBy="dash-chart" className="flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="dash-chart" className="text-[15px] font-semibold md:text-base">
+                <span className="md:hidden">{stageName} per day</span>
+                <span className="hidden md:inline">
+                  {stageName} — actual per day against plan (kg)
+                </span>
+              </h3>
+              <div
+                role="group"
+                aria-label="Stage"
+                data-pdf-exclude="true"
+                className="flex shrink-0 gap-0.5 rounded-[10px] bg-muted p-[3px]"
+              >
+                {(["making", "packing"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    aria-pressed={stage === s}
+                    onClick={() => setStage(s)}
+                    className={cn(
+                      "h-11 rounded-lg px-3 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-[34px]",
+                      stage === s
+                        ? "bg-card font-semibold text-foreground shadow-sm"
+                        : "text-foreground/80 hover:text-foreground",
+                    )}
+                  >
+                    {s === "making" ? "Making" : "Packing"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Suspense
+              fallback={
+                <div className="h-[220px] animate-pulse rounded-lg bg-muted md:h-[280px]" />
+              }
+            >
+              <DailyOutputChart points={points} stageLabel={stageName} />
+            </Suspense>
+          </Card>
+        </div>
+        {lastDay && (
+          <div className="flex min-w-0 [&>section]:flex-1">
+            <LastDayCard day={lastDay} canOpenEntry={canEntry} />
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Packing adherence</span>
-            <span className={`font-medium ${adhColor(packingAdh)}`}>{pct(packingAdh)}</span>
+        )}
+      </div>
+
+      <div
+        data-pdf-section="time-rework-faults"
+        className="grid gap-3.5 md:grid-cols-2 md:items-start md:gap-4"
+      >
+        <div className="min-w-0">
+          <TimeLostCard split={split} reasons={reasons} />
+        </div>
+        <div className="flex min-w-0 flex-col gap-3.5 md:gap-4">
+          <div>
+            <ReworkCard totals={totals} />
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Loss %</span>
-            <span className={`font-medium ${lossColor}`}>{lossPct.toFixed(1)}%</span>
+          {can(role, "dashboard.viewMaintenanceCard") && (
+            <div>
+              <MachineFaultsCard
+                lineName={line.name}
+                rangeText={rangeShort}
+                count={faultsQ.data}
+                loading={faultsQ.isPending}
+                error={faultsQ.isError}
+                canOpenMaintenance={canMaintenance}
+              />
+            </div>
+          )}
+          <div>
+            <AreaScoresCard rows={scores} loading={ownersQ.isPending} lineName={line.name} />
           </div>
         </div>
       </div>
 
-      <Suspense fallback={<ChartsSkeleton />}>
-        <div className="mt-6 grid grid-cols-1 gap-6">
-          <div data-pdf-section="performance-making">
-            <PerformanceSection
-              title="1. Making / Depositing Performance"
-              subtitle="Plan vs Actual — Weight (kg)"
-              entries={entries}
-              field="making"
-              accentColor={color}
-            />
-          </div>
-          <div data-pdf-section="performance-packing">
-            <PerformanceSection
-              title="2. Packing Performance"
-              subtitle="Plan vs Actual — Packed Quantity (kg)"
-              entries={entries}
-              field="packing"
-              accentColor={color}
-            />
-          </div>
-          <div data-pdf-section="quality">
-            <TopQualityAreaCard
-              productionAreas={productionAreas}
-              areaOwners={areaOwners}
-              entryAreaOwners={entryAreaOwners}
-            />
-          </div>
-          <div data-pdf-section="downtime">
-            <DowntimeSection entries={entries} downtimes={downtimes} />
-          </div>
-          {can(role, "dashboard.viewMaintenanceCard") && (
-            <div data-pdf-section="maintenance">
-              <MaintenanceDowntimeCard
-                downtimes={downtimes}
-                departments={departments}
-                departmentCategories={departmentCategories}
-                downtimeTypes={downtimeTypes}
-                severityLevels={severityLevels}
-                entries={entries}
-                maintenanceEvents={lineMaintenanceEvents}
-              />
-            </div>
-          )}
-          <div data-pdf-section="rework">
-            <ReworkSection entries={entries} />
-          </div>
-        </div>
-      </Suspense>
+      <p data-pdf-section="definitions" className="text-xs text-muted-foreground">
+        Adherence = actual ÷ plan. Time lost = downtime minutes ÷ available minutes, daily entries
+        only — machine faults from the Maintenance page are not added. Rework % = rework kg ÷ making
+        actual kg. Targets are fixed in the app for now: making and packing{" "}
+        {Math.round(ADHERENCE_TARGET * 100)}%, time lost alert above {LOSS_ALERT_PCT}%.
+      </p>
     </>
   );
+}
+
+function kpiTiles(t: Totals, split: TimeSplit): KpiTileProps[] {
+  const target = Math.round(ADHERENCE_TARGET * 100);
+  const adhTile = (title: string, actual: number, plan: number): KpiTileProps => {
+    if (plan <= 0) {
+      return {
+        title,
+        target: `target ${target}%`,
+        value: "—",
+        detail: `${kg(actual)} kg, no plan entered`,
+        segments: [],
+        barLabel: "No plan entered",
+        status: "No plan entered",
+        tone: "neutral",
+      };
+    }
+    const adh = actual / plan;
+    const tone = adherenceTone(adh);
+    const gap = Math.abs(adh - ADHERENCE_TARGET) * 100;
+    const below = adh < ADHERENCE_TARGET;
+    return {
+      title,
+      target: `target ${target}%`,
+      value: pct1(adh),
+      unit: "of plan",
+      detail: `${kg(actual)} of ${kg(plan)} kg`,
+      mobileDetail: `${kg(actual)} / ${kg(plan)} kg`,
+      segments: [{ pct: adh * 100, className: toneBar(tone) }],
+      barLabel: `${(adh * 100).toFixed(1)} percent of plan, target ${target}`,
+      status: below
+        ? `${gap.toFixed(1)} points below target`
+        : gap < 0.05
+          ? "On target"
+          : `${gap.toFixed(1)} points above target`,
+      mobileStatus: below ? `${gap.toFixed(1)} pts under ${target}%` : `At or above ${target}%`,
+      tone,
+    };
+  };
+
+  const avail = t.availableMin;
+  const lost = ratio(split.total, avail);
+  const share = (m: number) => ratio(m, avail);
+  const kinds = [
+    ["planned", split.planned],
+    ["unplanned", split.unplanned],
+    ["unclassified", split.unclassified],
+  ] as const;
+  const biggest = [...kinds].sort((a, b) => b[1] - a[1])[0];
+  const timeStatus =
+    split.total === 0
+      ? "No downtime recorded"
+      : biggest[0] === "planned"
+        ? "Mostly planned stops"
+        : biggest[0] === "unplanned"
+          ? "Mostly unplanned stops"
+          : "Mostly unclassified stops";
+  const timeTile: KpiTileProps =
+    avail <= 0
+      ? {
+          title: "Time lost",
+          target: `alert above ${LOSS_ALERT_PCT}%`,
+          value: "—",
+          detail: `${num(split.total)} min, no available minutes entered`,
+          segments: [],
+          barLabel: "No available minutes entered",
+          status: "No available minutes entered",
+          tone: "neutral",
+        }
+      : {
+          title: "Time lost",
+          target: `alert above ${LOSS_ALERT_PCT}%`,
+          value: pct1(lost),
+          unit: "of available",
+          detail:
+            `${num(split.total)} of ${num(avail)} min · planned ${pct1(share(split.planned))} · unplanned ${pct1(share(split.unplanned))}` +
+            (split.unclassified > 0 ? ` · unclassified ${pct1(share(split.unclassified))}` : ""),
+          mobileDetail: `${num(split.total)} min · ${pct1(share(split.unplanned))} unplanned`,
+          segments: kinds.map(([k, m]) => ({ pct: share(m) * 100, className: KIND_BAR[k] })),
+          barLabel: `Planned ${(share(split.planned) * 100).toFixed(1)} percent, unplanned ${(share(split.unplanned) * 100).toFixed(1)} percent, unclassified ${(share(split.unclassified) * 100).toFixed(1)} percent of available time`,
+          status: timeStatus,
+          mobileStatus: timeStatus.replace(" stops", ""),
+          tone: lossTone(lost * 100),
+        };
+
+  const rw = reworkTotal(t);
+  const rwParts = [
+    t.reworkCooking > 0 ? `cooking ${kg(t.reworkCooking)}` : null,
+    `making ${kg(t.reworkMaking)}`,
+    `packing ${kg(t.reworkPacking)}`,
+  ].filter(Boolean);
+  const reworkTile: KpiTileProps = {
+    title: "Rework",
+    target: "no target set",
+    value: t.makingActual > 0 ? pct1(rw / t.makingActual) : "—",
+    unit: "of making",
+    detail: `${kg(rw)} kg · ${rwParts.join(" · ")}`,
+    mobileDetail: `${kg(rw)} kg of making`,
+    segments: [
+      {
+        pct: t.makingActual > 0 ? (rw / t.makingActual) * 100 : 0,
+        className: "bg-muted-foreground",
+      },
+    ],
+    barLabel: `Rework ${t.makingActual > 0 ? ((rw / t.makingActual) * 100).toFixed(1) : 0} percent of making output`,
+    status: "Share of making output",
+    mobileStatus: "No target set",
+    tone: "neutral",
+  };
+
+  return [
+    adhTile("Making", t.makingActual, t.makingPlan),
+    adhTile("Packing", t.packingActual, t.packingPlan),
+    timeTile,
+    reworkTile,
+  ];
+}
+
+function buildLastDay(
+  entries: DailyEntry[],
+  downtimes: EntryDowntime[],
+  kindOf: ReturnType<typeof downtimeKindResolver>,
+): LastDay | null {
+  const last = entries[entries.length - 1];
+  if (!last) return null;
+  const rows = entries.filter((e) => e.entry_date === last.entry_date);
+  const ids = new Set(rows.map((e) => e.id));
+  const shifts = Array.from(new Set(rows.map((e) => e.shift))).sort((a, b) =>
+    a === "DAY" ? -1 : b === "DAY" ? 1 : a.localeCompare(b),
+  );
+  const saved = rows
+    .map((e) => e.updated_at || e.created_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  return {
+    dayName: formatDayName(last.entry_date),
+    shiftText: shifts.map(shiftLabel).join(" + "),
+    savedText: saved ? `saved ${formatSavedAt(saved)}` : null,
+    totals: sumEntries(rows),
+    time: splitDowntime(
+      downtimes.filter((d) => ids.has(d.entry_id)),
+      kindOf,
+    ),
+  };
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
