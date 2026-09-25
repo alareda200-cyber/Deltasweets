@@ -268,3 +268,80 @@ export function toDatetimeLocalValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------------------
+// Fault groups for the event log.
+//
+// On 25 Sep 2026, 1,012 of the last 30 days' 1,046 failure events were five
+// servos (Servo 1002–1007), one or two minutes each. Listed one per row that
+// was 53 pages, and the single event that cost the most time that month sat
+// somewhere inside them. Grouping by fault turns that into 22 rows.
+//
+// The key is the SAME one Top Losses aggregates on (title trimmed and
+// lower-cased — see aggregateByTitle), so a group's downtime can be read
+// straight from Top Losses' numbers and the two can never disagree. It also
+// merges spellings that differ only in case: "Pallets Belt 1" and "Pallets
+// belt 1" are both in the data.
+// ---------------------------------------------------------------------------
+
+export function faultKey(title: string): string {
+  return title.trim().toLowerCase();
+}
+
+export interface FaultGroup<E> {
+  key: string;
+  /** The spelling used by the most recent event in the group. */
+  title: string;
+  /** How many distinct spellings were merged (1 = none). */
+  spellings: number;
+  lineNames: string[];
+  count: number;
+  openCount: number;
+  lastStartedAt: string;
+  /** Newest first. */
+  events: E[];
+}
+
+export function groupEventsByFault<
+  E extends {
+    title: string;
+    started_at: string;
+    status: MaintenanceStatus;
+    production_lines: { name: string } | null;
+  },
+>(events: E[]): FaultGroup<E>[] {
+  const map = new Map<string, { events: E[]; spellings: Set<string>; lines: Set<string> }>();
+  for (const e of events) {
+    const key = faultKey(e.title);
+    let g = map.get(key);
+    if (!g) {
+      g = { events: [], spellings: new Set(), lines: new Set() };
+      map.set(key, g);
+    }
+    g.events.push(e);
+    g.spellings.add(e.title.trim());
+    g.lines.add(e.production_lines?.name ?? "—");
+  }
+  const groups: FaultGroup<E>[] = [];
+  for (const [key, g] of map) {
+    const sorted = [...g.events].sort(
+      (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+    );
+    groups.push({
+      key,
+      title: sorted[0].title.trim(),
+      spellings: g.spellings.size,
+      lineNames: Array.from(g.lines).sort(),
+      count: sorted.length,
+      openCount: sorted.filter((e) => e.status !== "resolved").length,
+      lastStartedAt: sorted[0].started_at,
+      events: sorted,
+    });
+  }
+  // Most frequent first, then most recent — the order a manager scans in.
+  return groups.sort(
+    (a, b) =>
+      b.count - a.count ||
+      new Date(b.lastStartedAt).getTime() - new Date(a.lastStartedAt).getTime(),
+  );
+}

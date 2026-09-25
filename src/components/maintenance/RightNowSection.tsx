@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, ChevronRight, Layers, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
+import { badgeVariants } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import type { MaintenanceEvent } from "@/lib/queries";
 import { TYPE_LABELS, typeBadgeVariant } from "@/lib/maintenance-format";
 
@@ -245,7 +246,9 @@ export function RightNowSection({
                       {e.production_lines?.name ?? "—"}
                     </span>
                     <span className="hidden md:block">
-                      <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                      <span className={badgeVariants({ variant: typeBadgeVariant(e.type) })}>
+                        {TYPE_LABELS[e.type]}
+                      </span>
                     </span>
                     <span
                       className={`hidden text-sm md:block ${e.stops_line ? "font-semibold text-destructive-strong" : "text-muted-foreground"}`}

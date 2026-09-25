@@ -56,6 +56,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSection";
+import { GroupedEventLog } from "@/components/maintenance/GroupedEventLog";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -104,6 +106,7 @@ import {
   eventElapsedMinutes,
   openEventCount,
   nonProductionDayLookup,
+  faultKey,
 } from "@/lib/maintenance-format";
 import type { ClosedDays } from "@/lib/maintenance-format";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
@@ -161,11 +164,20 @@ function MobileEventCard({ event: e, onClick }: { event: MaintenanceEvent; onCli
       : e.type === "electrical"
         ? "border-l-warning"
         : "border-l-border";
+  // The whole card is clickable through one real <button> stretched over it —
+  // it used to be a <div onClick>, which Tab skips and screen readers don't
+  // announce as actionable. The badges stay outside the button (a <div> is
+  // not valid inside one).
   return (
     <div
-      onClick={onClick}
-      className={`flex cursor-pointer items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3`}
+      className={`relative flex items-start justify-between gap-2 rounded-r-lg border border-border border-l-[3px] ${borderColor} bg-card p-3 focus-within:ring-2 focus-within:ring-ring`}
     >
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`${e.title}, ${e.production_lines?.name ?? "no line"}, ${STATUS_LABELS[e.status]}`}
+        className="absolute inset-0 rounded-r-lg focus-visible:outline-none"
+      />
       <div className="min-w-0">
         <p className="truncate text-sm font-medium leading-tight">{e.title}</p>
         <p className="truncate text-xs leading-tight text-muted-foreground">
@@ -272,7 +284,7 @@ function MiniKpiCard({
 
   return (
     <div className={`rounded-xl border border-border bg-gradient-to-br p-2 shadow-card ${tone}`}>
-      <p className="line-clamp-2 text-[9px] font-medium uppercase leading-tight tracking-wider text-muted-foreground">
+      <p className="line-clamp-2 text-[11px] font-medium uppercase leading-tight tracking-wider text-muted-foreground">
         {label}
       </p>
       <p className={`mt-1 whitespace-nowrap text-lg font-medium tabular-nums ${accent}`}>{value}</p>
@@ -792,6 +804,7 @@ function EventsListCard({
   isLoading,
   events,
   onSelectEvent,
+  downtimeByKey,
 }: {
   lines: { id: string; name: string }[];
   lineId: string;
@@ -807,7 +820,10 @@ function EventsListCard({
   isLoading: boolean;
   events: MaintenanceEvent[];
   onSelectEvent: (e: MaintenanceEvent) => void;
+  downtimeByKey: Map<string, number>;
 }) {
+  // Grouped by fault by default. One row per event is one switch away.
+  const [grouped, setGrouped] = useState(true);
   const PAGE_SIZE = 20;
   const [page, setPage] = useState(1);
   // Reset to page 1 whenever the actual filters change — not whenever
@@ -823,149 +839,186 @@ function EventsListCard({
 
   return (
     <Card>
-      <CardContent>
-        {/* Mobile: one card per event instead of the table below (which is
+      <CardContent className="pt-4">
+        <div className="mb-3 flex items-center justify-between gap-3 border-b border-border pb-3">
+          <Label
+            htmlFor="group-repeats"
+            className="flex min-h-[44px] cursor-pointer items-center gap-3 text-sm font-medium md:min-h-0"
+          >
+            <Switch id="group-repeats" checked={grouped} onCheckedChange={setGrouped} />
+            Group repeated faults
+          </Label>
+          <span className="text-xs text-muted-foreground">
+            {grouped ? "One row per fault" : "One row per event"}
+          </span>
+        </div>
+        {grouped ? (
+          <GroupedEventLog
+            events={events}
+            isLoading={isLoading}
+            downtimeByKey={downtimeByKey}
+            resetKey={filterKey}
+            onSelectEvent={onSelectEvent}
+            onShowAll={() => setGrouped(false)}
+          />
+        ) : (
+          <>
+            {/* Mobile: one card per event instead of the table below (which is
             desktop-only, hidden md:block, fully unchanged) — same
             events/isLoading data and the same durationMs/firstNote
             derivations as the table rows use. */}
-        <div className="space-y-2 md:hidden">
-          {isLoading && (
-            <div className="flex justify-center py-10">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          )}
-          {!isLoading && events.length === 0 && (
-            <div className="py-10 text-center">
-              <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
-              <p className="mt-2 text-sm text-muted-foreground">
-                No maintenance events match this filter.
-              </p>
-            </div>
-          )}
-          {pageRows.map((e) => (
-            <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
-          ))}
-        </div>
-
-        <div className="hidden md:block">
-          <Table stickyHeader>
-            <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
-              <TableRow>
-                <TableHead>Event</TableHead>
-                <TableHead className="hidden md:table-cell">Line</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="hidden sm:table-cell">Severity</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="hidden lg:table-cell">Started</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="hidden md:table-cell">Technician</TableHead>
-                <TableHead className="hidden md:table-cell">Notes</TableHead>
-                <TableHead className="hidden lg:table-cell">Closed by</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading && <TableSkeletonRows columns={10} />}
-              {!isLoading && events.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={10}
-                    className="py-10 text-center text-sm text-muted-foreground"
-                  >
-                    <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
-                    <p className="mt-2">No maintenance events match this filter.</p>
-                  </TableCell>
-                </TableRow>
+            <div className="space-y-2 md:hidden">
+              {isLoading && (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
               )}
-              {pageRows.map((e) => {
-                const durationMs = eventElapsedMinutes(e) * 60_000;
-                const firstNote = e.maintenance_notes[0]?.note;
-                return (
-                  <TableRow
-                    key={e.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => onSelectEvent(e)}
-                  >
-                    <TableCell>
-                      <p className="text-sm font-medium leading-tight">{e.title}</p>
-                      {e.description && (
-                        <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
-                          {e.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {e.production_lines?.name ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
-                        {e.stoppage_id && (
-                          <Badge variant="outline" className="text-[10px]">
-                            Part of Stoppage
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {e.severity_label ? (
-                        <Badge variant={severityBadgeVariant(e.severity_label)}>
-                          {e.severity_label}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusBadgeVariant(e.status)}>
-                        {STATUS_LABELS[e.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {new Date(e.started_at).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-sm tabular-nums">
-                      {formatDuration(durationMs)}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                      {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                      {firstNote ? truncateNote(firstNote) : "—"}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {e.status === "resolved"
-                        ? e.resolved_by_profile?.display_name || e.resolved_by_profile?.email || "—"
-                        : "—"}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+              {!isLoading && events.length === 0 && (
+                <div className="py-10 text-center">
+                  <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No maintenance events match this filter.
+                  </p>
+                </div>
+              )}
+              {pageRows.map((e) => (
+                <MobileEventCard key={e.id} event={e} onClick={() => onSelectEvent(e)} />
+              ))}
+            </div>
 
-        {events.length > 0 && (
-          <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
-            <span>
-              {events.length} event{events.length === 1 ? "" : "s"} · Page {page} of {totalPages}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
+            <div className="hidden md:block">
+              <Table stickyHeader>
+                <TableHeader className="sticky top-16 z-20 bg-card shadow-sm">
+                  <TableRow>
+                    <TableHead>Event</TableHead>
+                    <TableHead className="hidden md:table-cell">Line</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="hidden sm:table-cell">Severity</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden lg:table-cell">Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead className="hidden md:table-cell">Technician</TableHead>
+                    <TableHead className="hidden md:table-cell">Notes</TableHead>
+                    <TableHead className="hidden lg:table-cell">Closed by</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading && <TableSkeletonRows columns={10} />}
+                  {!isLoading && events.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={10}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        <Inbox className="mx-auto h-6 w-6 text-muted-foreground" />
+                        <p className="mt-2">No maintenance events match this filter.</p>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {pageRows.map((e) => {
+                    const durationMs = eventElapsedMinutes(e) * 60_000;
+                    const firstNote = e.maintenance_notes[0]?.note;
+                    return (
+                      <TableRow
+                        key={e.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => onSelectEvent(e)}
+                      >
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              onSelectEvent(e);
+                            }}
+                            className="text-left text-sm font-medium leading-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {e.title}
+                          </button>
+                          {e.description && (
+                            <p className="line-clamp-1 text-xs text-muted-foreground leading-tight">
+                              {e.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                          {e.production_lines?.name ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant={typeBadgeVariant(e.type)}>{TYPE_LABELS[e.type]}</Badge>
+                            {e.stoppage_id && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Part of Stoppage
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {e.severity_label ? (
+                            <Badge variant={severityBadgeVariant(e.severity_label)}>
+                              {e.severity_label}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusBadgeVariant(e.status)}>
+                            {STATUS_LABELS[e.status]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                          {new Date(e.started_at).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-sm tabular-nums">
+                          {formatDuration(durationMs)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                          {e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                          {firstNote ? truncateNote(firstNote) : "—"}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                          {e.status === "resolved"
+                            ? e.resolved_by_profile?.display_name ||
+                              e.resolved_by_profile?.email ||
+                              "—"
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {events.length > 0 && (
+              <div className="mt-3 flex items-center justify-end gap-3 text-sm text-muted-foreground">
+                <span>
+                  {events.length} event{events.length === 1 ? "" : "s"} · Page {page} of{" "}
+                  {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
@@ -1188,6 +1241,13 @@ function MaintenancePage() {
         closedDays,
       ),
     [collapsedEvents, closedDays],
+  );
+
+  // Top Losses' own per-title downtime, keyed the way it aggregates — the
+  // grouped event log reads "Time lost" from here so the two can't disagree.
+  const downtimeByKey = useMemo(
+    () => new Map(titleAggregates.map((t) => [faultKey(t.title), t.totalMinutes])),
+    [titleAggregates],
   );
 
   const topLossesByDowntime = useMemo(
@@ -1590,6 +1650,7 @@ function MaintenancePage() {
             isLoading={isLoading}
             events={events}
             onSelectEvent={setSelectedEvent}
+            downtimeByKey={downtimeByKey}
           />
         </MobileCollapsibleSection>
 
@@ -1706,6 +1767,7 @@ function MaintenancePage() {
                 isLoading={isLoading}
                 events={events}
                 onSelectEvent={setSelectedEvent}
+                downtimeByKey={downtimeByKey}
               />
             </section>
           )}
