@@ -446,13 +446,16 @@ function ReplayPage() {
               tone: "",
             },
           ].map((x) => (
-            <div key={x.k} className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
+            <div
+              key={x.k}
+              className="rounded-xl border border-border bg-card px-3 py-2.5 last:col-span-2 md:px-4 md:last:col-span-1"
+            >
               <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {x.k}
               </dt>
               <dd
                 className={cn(
-                  "mt-1 text-2xl font-extrabold tabular-nums leading-none md:text-3xl",
+                  "mt-1 whitespace-nowrap text-xl font-extrabold tabular-nums leading-none sm:text-2xl md:text-3xl",
                   x.tone,
                 )}
               >
