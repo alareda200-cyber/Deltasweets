@@ -72,6 +72,7 @@ import {
   KpiTile,
   KpiTilesSkeleton,
   toneBar,
+  type KpiMemory,
   type KpiTileProps,
 } from "@/components/dashboard/KpiTiles";
 import {
@@ -141,6 +142,9 @@ function Dashboard() {
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
   const exportRef = useRef<HTMLDivElement>(null);
+  // What each KPI tile last showed, so switching line or period rolls the
+  // odometers from the old numbers instead of from 0.
+  const kpiMemory: KpiMemory = useRef({});
 
   const activeLine = useMemo(() => lines.find((l) => l.id === lineId) ?? lines[0], [lines, lineId]);
   const rangeValid = !!from && !!to && from <= to;
@@ -179,6 +183,8 @@ function Dashboard() {
     if (!activeLine || !exportRef.current) return;
     setExporting(true);
     setExportProgress("Preparing PDF…");
+    // Freeze every animation at its final state for the capture (styles.css).
+    exportRef.current.dataset.pdfCapturing = "true";
     try {
       const { exportDashboardToPdf } = await import("@/lib/pdf-export");
       await exportDashboardToPdf({
@@ -199,6 +205,7 @@ function Dashboard() {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`PDF export failed: ${msg}`);
     } finally {
+      delete exportRef.current?.dataset.pdfCapturing;
       setExporting(false);
       setExportProgress("");
     }
@@ -383,6 +390,7 @@ function Dashboard() {
               from={from}
               to={to}
               role={role}
+              kpiMemory={kpiMemory}
             />
           ) : (
             <p className="rounded-2xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -419,11 +427,13 @@ function PeriodBody({
   from,
   to,
   role,
+  kpiMemory,
 }: {
   line: ProductionLine;
   from: string;
   to: string;
   role: Role | null;
+  kpiMemory: KpiMemory;
 }) {
   const [stage, setStage] = useState<"making" | "packing">("making");
   const entriesQ = useQuery(entriesQuery(line.id, from, to));
@@ -445,6 +455,8 @@ function PeriodBody({
 
   const hasIds = entryIds.length > 0;
   const loading = entriesQ.isPending || (hasIds && downtimesQ.isPending);
+  // Numbers already on screen while newer ones load in the background.
+  const refreshing = !loading && (entriesQ.isFetching || downtimesQ.isFetching);
   const failed = entriesQ.isError || (hasIds && downtimesQ.isError);
 
   // A retired downtime reason stays on old rows for history but does not count
@@ -467,11 +479,11 @@ function PeriodBody({
     return (
       <div className="flex flex-col gap-3.5 md:gap-5" aria-busy="true">
         <span className="sr-only">Loading {line.name} numbers…</span>
-        <div className="h-6 w-72 max-w-full animate-pulse rounded-full bg-muted" />
+        <div className="ds-shimmer h-5 w-72 max-w-full rounded-full md:h-7" />
         <KpiTilesSkeleton />
         <div className="grid gap-3.5 md:grid-cols-3 md:gap-4">
-          <div className={cn(CARD, "h-[290px] animate-pulse md:col-span-2 md:h-[360px]")} />
-          <div className={cn(CARD, "h-[200px] animate-pulse md:h-[360px]")} />
+          <div className={cn(CARD, "ds-shimmer h-[328px] md:col-span-2 md:h-[388px]")} />
+          <div className={cn(CARD, "ds-shimmer h-[288px] md:h-[388px]")} />
         </div>
       </div>
     );
@@ -542,10 +554,11 @@ function PeriodBody({
             <span className="hidden md:inline">{rangeText}</span> · {line.name} · {days} production{" "}
             {days === 1 ? "day" : "days"}
           </span>
+          {refreshing && <JellyDots />}
         </div>
         <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-4">
-          {kpiTiles(totals, split, targets).map((k) => (
-            <KpiTile key={k.title} {...k} />
+          {kpiTiles(totals, split, targets).map((k, i) => (
+            <KpiTile key={k.title} {...k} index={i} memory={kpiMemory} />
           ))}
         </div>
       </div>
@@ -586,12 +599,15 @@ function PeriodBody({
                 ))}
               </div>
             </div>
-            <Suspense
-              fallback={
-                <div className="h-[220px] animate-pulse rounded-lg bg-muted md:h-[280px]" />
-              }
-            >
-              <DailyOutputChart points={points} stageLabel={stageName} />
+            <Suspense fallback={<div className="ds-shimmer h-[236px] rounded-lg md:h-[280px]" />}>
+              {/* Keyed by stage: switching Making/Packing is new data, so the
+                  bars pop again. */}
+              <DailyOutputChart
+                key={stage}
+                points={points}
+                stageLabel={stageName}
+                targetPct={stage === "making" ? targets.makingPct : targets.packingPct}
+              />
             </Suspense>
           </Card>
         </div>
@@ -642,6 +658,32 @@ function PeriodBody({
   );
 }
 
+// A ratio as the percent the tile shows, rounded exactly as pct1 rounds it.
+const pctNum = (r: number) => Number((r * 100).toFixed(1));
+
+// Three jelly dots beside the period line while numbers already on screen are
+// being refreshed. Phone only; the live region says it once.
+function JellyDots() {
+  return (
+    <span role="status" className="flex items-center gap-[5px] md:hidden">
+      <span className="sr-only">Refreshing</span>
+      {[
+        ["var(--candy-1)", 0],
+        ["var(--candy-2)", 120],
+        ["var(--candy-3)", 240],
+      ].map(([bg, d]) => (
+        <span
+          key={d}
+          aria-hidden="true"
+          data-jelly-dot=""
+          className="ds-jelly-dot h-[9px] w-[9px] rounded-[4px]"
+          style={{ background: bg as string, animationDelay: `${d}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiTileProps[] {
   const lossAlert = targets.lossPct;
   const adhTile = (
@@ -654,7 +696,7 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
       return {
         title,
         target: `target ${target}%`,
-        value: "—",
+        value: null,
         detail: `${kg(actual)} kg, no plan entered`,
         segments: [],
         barLabel: "No plan entered",
@@ -669,7 +711,8 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
     return {
       title,
       target: `target ${target}%`,
-      value: pct1(adh),
+      targetPct: target,
+      value: pctNum(adh),
       unit: "of plan",
       detail: `${kg(actual)} of ${kg(plan)} kg`,
       mobileDetail: `${kg(actual)} / ${kg(plan)} kg`,
@@ -707,7 +750,7 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
       ? {
           title: "Time lost",
           target: `alert above ${lossAlert}%`,
-          value: "—",
+          value: null,
           detail: `${num(split.total)} min, no available minutes entered`,
           segments: [],
           barLabel: "No available minutes entered",
@@ -717,7 +760,8 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
       : {
           title: "Time lost",
           target: `alert above ${lossAlert}%`,
-          value: pct1(lost),
+          targetPct: lossAlert,
+          value: pctNum(lost),
           unit: "of available",
           detail:
             `${num(split.total)} of ${num(avail)} min · planned ${pct1(share(split.planned))} · unplanned ${pct1(share(split.unplanned))}` +
@@ -742,7 +786,8 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
   const reworkTile: KpiTileProps = {
     title: "Rework",
     target: rwTarget != null ? `at most ${rwTarget}%` : "no target set",
-    value: t.makingActual > 0 ? pct1(rw / t.makingActual) : "—",
+    targetPct: rwTarget,
+    value: t.makingActual > 0 ? pctNum(rw / t.makingActual) : null,
     unit: "of making",
     detail: `${kg(rw)} kg · ${rwParts.join(" · ")}`,
     mobileDetail: `${kg(rw)} kg of making`,

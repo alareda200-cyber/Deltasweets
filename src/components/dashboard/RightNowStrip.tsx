@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
+import { AlertTriangle, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RightNow } from "@/lib/dashboard-metrics";
 
@@ -75,14 +75,43 @@ export function RightNowStrip({
 
   const stopped = summary.stoppedLineNames.length > 0;
   const t = sentences(summary);
-  const Icon = stopped ? AlertTriangle : CheckCircle2;
   const tone = stopped
     ? "border-destructive/40 bg-destructive/10 text-destructive-strong"
     : "border-success/40 bg-success/10 text-success-strong";
 
   const body = (
     <>
-      <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+      {stopped ? (
+        <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
+      ) : (
+        // Every line running: a green dot that breathes (live) with a check
+        // that draws itself in.
+        <span
+          aria-hidden="true"
+          data-live-dot=""
+          className="ds-pulse-live grid h-5 w-5 shrink-0 place-items-center rounded-full bg-success"
+          style={{ animationDelay: "900ms" }}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="var(--color-card)"
+            strokeWidth={3}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path
+              d="M20 6 9 17l-5-5"
+              data-check=""
+              style={{
+                strokeDasharray: 26,
+                animation: "ds-check 520ms var(--ease-out-soft) 450ms both",
+              }}
+            />
+          </svg>
+        </span>
+      )}
       {/* Mobile: one short sentence, whole strip is the link. */}
       <span className="min-w-0 flex-1 md:hidden">
         <span className="font-semibold">{t.mobileLead}</span>
@@ -93,7 +122,15 @@ export function RightNowStrip({
         <span className="font-semibold">{t.lead}</span>
         {t.rest && <span className="text-foreground/80"> {t.rest}</span>}
       </span>
-      <span className="hidden shrink-0 rounded-full bg-card/70 px-2 py-0.5 text-xs font-semibold text-muted-foreground md:inline">
+      <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-card/70 px-2 py-0.5 text-xs font-semibold text-muted-foreground md:inline-flex">
+        <span
+          aria-hidden="true"
+          data-live-badge=""
+          className={cn(
+            "h-2 w-2 rounded-full",
+            stopped ? "ds-pulse-stop bg-destructive" : "ds-pulse-live bg-success",
+          )}
+        />
         Live · all lines
       </span>
     </>
@@ -117,7 +154,7 @@ export function RightNowStrip({
       <Link
         to="/maintenance"
         data-pdf-variant="mobile"
-        className={cn(shell, "md:hidden")}
+        className={cn(shell, "ds-lift md:hidden")}
         aria-label={`${t.mobileLead} ${t.mobileRest} Open Maintenance`}
       >
         {body}

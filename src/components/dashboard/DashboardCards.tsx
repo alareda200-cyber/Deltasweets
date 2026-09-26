@@ -165,7 +165,21 @@ function reasonMeta(r: ReasonRow): string {
   return [KIND_LABEL[r.kind], r.severity, r.area, `${r.count}×`].filter(Boolean).join(" · ");
 }
 
-function ReasonLine({ r, max, grey }: { r: ReasonRow; max: number; grey?: boolean }) {
+// Reason bars fill once, one after another, after the stacked bar above them.
+// Rows revealed later by "All other stops" fill at once (index -1).
+const reasonDelay = (i: number) => (i < 0 ? {} : { animationDelay: `${500 + i * 110}ms` });
+
+function ReasonLine({
+  r,
+  max,
+  grey,
+  index = 0,
+}: {
+  r: ReasonRow;
+  max: number;
+  grey?: boolean;
+  index?: number;
+}) {
   const width = max > 0 ? (r.minutes / max) * 100 : 0;
   return (
     <li className="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5rem] md:items-center md:gap-3">
@@ -180,8 +194,11 @@ function ReasonLine({ r, max, grey }: { r: ReasonRow; max: number; grey?: boolea
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-muted md:h-3">
         <div
-          className={cn("h-full rounded-full", grey ? KIND_BAR.unclassified : KIND_BAR[r.kind])}
-          style={{ width: `${width}%` }}
+          className={cn(
+            "ds-fill-x h-full rounded-full",
+            grey ? KIND_BAR.unclassified : KIND_BAR[r.kind],
+          )}
+          style={{ width: `${width}%`, ...reasonDelay(index) }}
         />
       </div>
       <p className="text-xs text-muted-foreground md:hidden">{reasonMeta(r)}</p>
@@ -232,7 +249,8 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
           <div
             role="img"
             aria-label={`Planned ${num(split.planned)} minutes, unplanned ${num(split.unplanned)}, unclassified ${num(split.unclassified)}`}
-            className="flex h-2.5 gap-0.5 overflow-hidden rounded-full md:h-7 md:rounded-lg"
+            className="ds-fill-x flex h-2.5 gap-0.5 overflow-hidden rounded-full md:h-7 md:rounded-lg"
+            style={{ animationDelay: "300ms" }}
           >
             {segs.map(([kind, m]) => (
               <div
@@ -255,8 +273,8 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
           </div>
 
           <ol className="flex flex-col gap-3 md:gap-2.5">
-            {(showAll ? reasons : top).map((r) => (
-              <ReasonLine key={r.key} r={r} max={max} />
+            {(showAll ? reasons : top).map((r, i) => (
+              <ReasonLine key={r.key} r={r} max={max} index={i < TOP_REASONS ? i : -1} />
             ))}
             {!showAll && rest.length > 0 && (
               <li className="hidden md:grid md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_5rem] md:items-center md:gap-3">
@@ -269,8 +287,11 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
                 </div>
                 <div className="h-3 overflow-hidden rounded-full bg-muted">
                   <div
-                    className={cn("h-full rounded-full", KIND_BAR.unclassified)}
-                    style={{ width: `${max > 0 ? Math.min(100, (restMinutes / max) * 100) : 0}%` }}
+                    className={cn("ds-fill-x h-full rounded-full", KIND_BAR.unclassified)}
+                    style={{
+                      width: `${max > 0 ? Math.min(100, (restMinutes / max) * 100) : 0}%`,
+                      ...reasonDelay(TOP_REASONS),
+                    }}
                   />
                 </div>
                 <p className="text-right text-sm font-semibold tabular-nums">
@@ -389,7 +410,7 @@ export function MachineFaultsCard({
         {canOpenMaintenance ? (
           <Link
             to="/maintenance"
-            className={cn(CARD, "flex min-h-11 items-center gap-3 p-3.5 text-foreground")}
+            className={cn(CARD, "ds-lift flex min-h-11 items-center gap-3 p-3.5 text-foreground")}
           >
             <MobileFaultsText
               countText={mobileCountText}
@@ -470,7 +491,7 @@ export function AreaScoresCard({
   lineName: string;
 }) {
   if (loading) {
-    return <div className={cn(CARD, "h-20 animate-pulse")} aria-hidden="true" />;
+    return <div className={cn(CARD, "ds-shimmer h-20")} aria-hidden="true" />;
   }
   if (rows.length === 0) {
     return (
