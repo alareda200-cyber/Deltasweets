@@ -8,12 +8,14 @@ export function EntrySection({
   unit,
   aside,
   className,
+  style,
   children,
 }: {
   title: string;
   unit?: string;
   aside?: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
   children: React.ReactNode;
 }) {
   const headingId = useId();
@@ -24,6 +26,7 @@ export function EntrySection({
         "flex flex-col gap-3 rounded-xl border border-border bg-card p-4 md:gap-3.5 md:px-5",
         className,
       )}
+      style={style}
     >
       <div className="flex items-baseline justify-between gap-2">
         <h2 id={headingId} className="text-base font-semibold md:text-lg">

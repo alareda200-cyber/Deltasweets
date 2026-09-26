@@ -34,6 +34,8 @@ export function DowntimeRowEditor({
   areaNames,
   typeName,
   error,
+  shakeKey = 0,
+  className,
   disabled,
   onReasonChange,
   onAreaChange,
@@ -46,6 +48,9 @@ export function DowntimeRowEditor({
   areaNames: string[];
   typeName: string | null;
   error?: string;
+  /** Changes each time Save finds this row wrong: the row shakes once. */
+  shakeKey?: number;
+  className?: string;
   disabled: boolean;
   onReasonChange: (reasonId: string) => void;
   onAreaChange: (area: string) => void;
@@ -61,11 +66,18 @@ export function DowntimeRowEditor({
   const areaOffList = !!row.area && !areaNames.includes(row.area);
 
   return (
-    <div className="rounded-lg border border-border p-2.5 md:rounded-none md:border-0 md:p-0">
+    <div
+      className={cn(
+        "rounded-lg border border-border p-2.5 md:rounded-none md:border-0 md:p-0",
+        className,
+      )}
+    >
       <div
+        key={shakeKey}
         className={cn(
           "grid grid-cols-[minmax(0,1fr)_5.5rem_2.75rem] items-center gap-2 md:gap-3",
           DOWNTIME_GRID_COLS,
+          shakeKey > 0 && "ds-shake",
         )}
       >
         <Select value={row.reason_id} onValueChange={onReasonChange} disabled={disabled}>
@@ -137,7 +149,11 @@ export function DowntimeRowEditor({
         </Button>
       </div>
       {error && (
-        <p id={errId} role="alert" className="mt-1.5 text-xs font-medium text-destructive-strong">
+        <p
+          id={errId}
+          role="alert"
+          className="ds-slide-in mt-1.5 text-xs font-medium text-destructive-strong"
+        >
           {error}
         </p>
       )}

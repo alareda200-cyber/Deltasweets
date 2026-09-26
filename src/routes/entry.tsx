@@ -16,6 +16,7 @@ import { EntryHistoryPanel } from "@/components/EntryHistoryPanel";
 import { CollapsibleRow } from "@/components/entry/CollapsibleRow";
 import { DOWNTIME_GRID_COLS, DowntimeRowEditor } from "@/components/entry/DowntimeRowEditor";
 import { EntrySection } from "@/components/entry/EntrySection";
+import { JellyJar, Odometer, useGummyBurst, useTilt, type JarMood } from "@/components/motion";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,7 +46,6 @@ import {
   History,
   ChevronDown,
   AlertTriangle,
-  AlertCircle,
   Pencil,
   FilePlus2,
   Loader2,
@@ -146,7 +146,6 @@ function lossColor(pct: number | null, alertPct: number) {
       ? "text-warning-strong"
       : "text-destructive-strong";
 }
-const fmtPct = (pct: number | null) => (pct !== null ? `${pct.toFixed(1)}%` : "—");
 const fmtNum = (n: number) => n.toLocaleString("en-US");
 
 // Desktop shift switch, in the order supervisors use them (Full day first:
@@ -333,6 +332,27 @@ function EntryPage() {
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [errors, setErrors] = useState<ValidationResult | null>(null);
 
+  // Motion. errorPulse changes on every Save that finds errors, so each wrong
+  // field shakes once (never on a keystroke). savedFlash: the Save button says
+  // "Saved" for a moment. party + celebrateKey + the gummy burst only ever run
+  // after a save at or above the Making target.
+  const [errorPulse, setErrorPulse] = useState(0);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [party, setParty] = useState(false);
+  const [celebrateKey, setCelebrateKey] = useState(0);
+  // Index of the downtime row just added with "Add downtime" (it slides in).
+  const [newDowntimeIdx, setNewDowntimeIdx] = useState<number | null>(null);
+  const gummy = useGummyBurst();
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const partyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (partyTimer.current) clearTimeout(partyTimer.current);
+    },
+    [],
+  );
+
   const { data: customFields = [] } = useQuery(fieldsQuery(lineId));
   // Only for the Planned / Unplanned tags and totals; if it fails they are
   // simply left out.
@@ -396,6 +416,7 @@ function EntryPage() {
     setCustomValues(v.customValues);
     setDowntimes(v.downtimes);
     setAreaOwnerSelections(v.areaOwners);
+    setNewDowntimeIdx(null);
   }
 
   function applyLookup(target: Slot, lookup: SlotLookup, decision: SwitchDecision) {
@@ -554,7 +575,8 @@ function EntryPage() {
     await qc.refetchQueries({ queryKey: ["all-entries"], type: "all" });
   }
 
-  async function handleSave() {
+  // `source` is the Save button pressed: a save at target bursts from it.
+  async function handleSave(source?: HTMLElement | null) {
     if (saving) return;
     if (!lineId) return toast.error("Pick a production line");
     if (slot.status === "loading" || switching) {
@@ -580,6 +602,7 @@ function EntryPage() {
     });
     if (check.count > 0) {
       setErrors(check);
+      setErrorPulse((n) => n + 1);
       // Open any collapsed section that holds an error, so it can be seen.
       if (Object.keys(check.ownerScores).length > 0) setOpenAreaOwners(true);
       if (check.fields.reworkCooking || check.fields.reworkMaking || check.fields.reworkPacking) {
@@ -726,6 +749,19 @@ function EntryPage() {
       // Dashboard). Not reloaded: that would drop anything typed while the
       // save was in flight, and the new updated_at is already in `slot`.
       setBaseline(values);
+      setSavedFlash(true);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setSavedFlash(false), 1600);
+      // Celebrate only what was saved, and only at or above the target.
+      const savedMakingPct =
+        payload.making_plan > 0 ? (payload.making_actual / payload.making_plan) * 100 : null;
+      if (savedMakingPct !== null && savedMakingPct >= targets.makingPct) {
+        gummy.burstFrom(source?.isConnected ? source : null);
+        setCelebrateKey((k) => k + 1);
+        setParty(true);
+        if (partyTimer.current) clearTimeout(partyTimer.current);
+        partyTimer.current = setTimeout(() => setParty(false), 2500);
+      }
       toast.success(`Saved ${describe({ lineId, date, shift })}`, {
         action: { label: "Dashboard", onClick: () => navigate({ to: "/" }) },
       });
@@ -738,6 +774,7 @@ function EntryPage() {
   }
 
   function addDowntime() {
+    setNewDowntimeIdx(downtimes.length);
     setDowntimes((d) => [...d, { reason_id: "", reason_name: "", area: "General", minutes: 0 }]);
   }
 
@@ -873,6 +910,24 @@ function EntryPage() {
         : FilePlus2;
   const unsavedNote = dirty && !saving;
   const fieldErr = (k: keyof ValidationResult["fields"]) => errors?.fields[k];
+  const shakeOf = (err: string | undefined) => (err ? errorPulse : 0);
+  // Typing a new number takes the "Saved" off the button at once.
+  const savePhase: SavePhase = saving ? "saving" : savedFlash && !dirty ? "saved" : "idle";
+  // The jar reacts while typing: a negative or non-numeric Making actual.
+  const makingActualInvalid = (() => {
+    const t = makingActual.trim();
+    if (t === "") return false;
+    const n = Number(t);
+    return !Number.isFinite(n) || n < 0;
+  })();
+  const jarPct = makingActualInvalid ? null : liveSummary.makingPct;
+  const jarMood: JarMood | undefined = saving
+    ? "saving"
+    : makingActualInvalid
+      ? "error"
+      : party
+        ? "party"
+        : undefined;
   const canDeleteThis = slot.status === "existing" && editingSaved && canDelete;
   const canDuplicateThis =
     slot.status === "existing" && editingSaved && canViewHistory && canCreate;
@@ -954,7 +1009,7 @@ function EntryPage() {
   ] as const;
   function renderReworkFields() {
     return reworkFields.map(([label, value, set, key]) => (
-      <Field key={key} label={label} error={fieldErr(key)}>
+      <Field key={key} label={label} error={fieldErr(key)} shakeKey={shakeOf(fieldErr(key))}>
         <Input
           type="number"
           inputMode="decimal"
@@ -1007,7 +1062,11 @@ function EntryPage() {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Performance Score %" error={errors?.ownerScores[area.id]}>
+                <Field
+                  label="Performance Score %"
+                  error={errors?.ownerScores[area.id]}
+                  shakeKey={shakeOf(errors?.ownerScores[area.id])}
+                >
                   <Input
                     type="number"
                     inputMode="decimal"
@@ -1084,7 +1143,13 @@ function EntryPage() {
             aria-live="polite"
           >
             {statusText}
-            {unsavedNote ? " · unsaved changes" : ""}
+            {unsavedNote && (
+              <>
+                {" · "}
+                <UnsavedDot />
+                unsaved changes
+              </>
+            )}
           </p>
           {openWhich && (
             <div id="entry-which-m" className="space-y-3 border-t border-border p-3">
@@ -1236,7 +1301,13 @@ function EntryPage() {
             <span className="block font-semibold">{statusText}</span>
             <span className="block text-xs opacity-90">
               {context}
-              {unsavedNote && <span className="font-semibold"> · unsaved changes</span>}
+              {unsavedNote && (
+                <span className="font-semibold">
+                  {" · "}
+                  <UnsavedDot />
+                  unsaved changes
+                </span>
+              )}
             </span>
           </p>
         </div>
@@ -1325,6 +1396,28 @@ function EntryPage() {
 
       <div className="gap-6 md:grid lg:grid-cols-3 lg:items-start">
         <div className="flex min-w-0 flex-col gap-3 md:gap-4 lg:col-span-2">
+          {/* Phone: the Making jar above the form, so it fills as you type.
+              md and up it lives in the summary beside / below the form. */}
+          <section
+            aria-labelledby="entry-jar-title-m"
+            className="ds-rise rounded-xl border border-border bg-card p-3 md:hidden"
+          >
+            <h2 id="entry-jar-title-m" className="sr-only">
+              This entry
+            </h2>
+            <MakingHero
+              compact
+              jarKey={`${lineId}|${date}|${shift}`}
+              pct={jarPct}
+              target={targets.makingPct}
+              mood={jarMood}
+              lineName={activeLineName}
+              celebrateKey={celebrateKey}
+              actual={liveSummary.mActual}
+              plan={liveSummary.mPlan}
+              actualInvalid={makingActualInvalid}
+            />
+          </section>
           {/* A disabled fieldset, not pointer-events: none — read-only must
               stop the keyboard too. The collapsible rows below carry their
               own fieldset so they can still be opened and read. */}
@@ -1333,19 +1426,33 @@ function EntryPage() {
             className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0 md:gap-4"
             style={readOnly ? { opacity: 0.75 } : undefined}
           >
-            <EntrySection title="1 · Output" unit="kg">
+            <EntrySection
+              title="1 · Output"
+              unit="kg"
+              className="ds-rise"
+              style={{ animationDelay: "80ms" }}
+            >
               {/* Phone: each stage with its live % and Plan / Actual side by side. */}
               <div className="flex flex-col gap-3 md:hidden">
                 {outputRows.map((o) => (
                   <div key={o.stage}>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-sm font-semibold">{o.stage}</span>
-                      <span className={cn("text-sm font-bold tabular-nums", adherenceColor(o.pct, o.target))}>
-                        {fmtPct(o.pct)} of plan
+                      <span
+                        className={cn(
+                          "text-sm font-bold tabular-nums",
+                          adherenceColor(o.pct, o.target),
+                        )}
+                      >
+                        <Pct value={o.pct} /> of plan
                       </span>
                     </div>
                     <div className="mt-1.5 grid grid-cols-2 gap-2">
-                      <Field label="Plan" error={fieldErr(o.planKey)}>
+                      <Field
+                        label="Plan"
+                        error={fieldErr(o.planKey)}
+                        shakeKey={shakeOf(fieldErr(o.planKey))}
+                      >
                         <Input
                           type="number"
                           inputMode="decimal"
@@ -1356,7 +1463,11 @@ function EntryPage() {
                           disabled={!canEditProduction}
                         />
                       </Field>
-                      <Field label="Actual" error={fieldErr(o.actualKey)}>
+                      <Field
+                        label="Actual"
+                        error={fieldErr(o.actualKey)}
+                        shakeKey={shakeOf(fieldErr(o.actualKey))}
+                      >
                         <Input
                           type="number"
                           inputMode="decimal"
@@ -1388,6 +1499,7 @@ function EntryPage() {
                       onChange={o.setPlan}
                       disabled={!canEditProduction}
                       error={fieldErr(o.planKey)}
+                      shakeKey={shakeOf(fieldErr(o.planKey))}
                     />
                     <GridInput
                       label={`${o.stage} actual, kg`}
@@ -1395,6 +1507,7 @@ function EntryPage() {
                       onChange={o.setActual}
                       disabled={!canEditProduction}
                       error={fieldErr(o.actualKey)}
+                      shakeKey={shakeOf(fieldErr(o.actualKey))}
                     />
                     <span
                       className={cn(
@@ -1402,7 +1515,7 @@ function EntryPage() {
                         adherenceColor(o.pct, o.target),
                       )}
                     >
-                      {fmtPct(o.pct)}
+                      <Pct value={o.pct} />
                     </span>
                   </Fragment>
                 ))}
@@ -1434,6 +1547,8 @@ function EntryPage() {
 
             <EntrySection
               title="2 · Time and downtime"
+              className="ds-rise"
+              style={{ animationDelay: "160ms" }}
               aside={
                 <span className="text-sm font-semibold tabular-nums md:hidden">
                   {fmtNum(totalDowntime)} min
@@ -1442,7 +1557,11 @@ function EntryPage() {
             >
               <div className="flex flex-col gap-1.5 md:flex-row md:items-end md:gap-4">
                 <div className="md:w-56">
-                  <Field label="Available time (min)" error={fieldErr("availableMin")}>
+                  <Field
+                    label="Available time (min)"
+                    error={fieldErr("availableMin")}
+                    shakeKey={shakeOf(fieldErr("availableMin"))}
+                  >
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -1486,6 +1605,8 @@ function EntryPage() {
                       areaNames={areaNames}
                       typeName={d.reason_id ? typeNameOfReason(d.reason_id) : null}
                       error={errors?.downtimes[i]}
+                      shakeKey={shakeOf(errors?.downtimes[i])}
+                      className={i === newDowntimeIdx ? "ds-slide-in" : undefined}
                       disabled={!canEditDowntime}
                       onReasonChange={(v) => {
                         const r = reasons.find((x) => x.id === v);
@@ -1537,7 +1658,12 @@ function EntryPage() {
             </EntrySection>
 
             {/* md and up: Rework as its own section. */}
-            <EntrySection title="3 · Rework" unit="kg" className="hidden md:flex">
+            <EntrySection
+              title="3 · Rework"
+              unit="kg"
+              className="ds-rise hidden md:flex"
+              style={{ animationDelay: "240ms" }}
+            >
               <div className="grid grid-cols-4 items-start gap-4">
                 {renderReworkFields()}
                 <p className="flex h-11 items-center self-end text-sm">
@@ -1552,7 +1678,8 @@ function EntryPage() {
 
           {/* Phone: Rework folds away; the summary keeps the numbers in view. */}
           <CollapsibleRow
-            className="md:hidden"
+            className="ds-rise md:hidden"
+            style={{ animationDelay: "240ms" }}
             title="3 · Rework (kg)"
             summary={`${fmtNum(reworkTotal)} kg${reworkParts.length > 0 ? ` · ${reworkParts.join(" · ")}` : ""}`}
             open={openRework}
@@ -1565,7 +1692,8 @@ function EntryPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
             {productionAreas.length > 0 && (
               <CollapsibleRow
-                className={openAreaOwners || openComments ? "md:col-span-2" : undefined}
+                className={cn("ds-rise", (openAreaOwners || openComments) && "md:col-span-2")}
+                style={{ animationDelay: "320ms" }}
                 title="4 · Area owners"
                 summary={areaOwnersSummary}
                 open={openAreaOwners}
@@ -1576,7 +1704,8 @@ function EntryPage() {
               </CollapsibleRow>
             )}
             <CollapsibleRow
-              className={openAreaOwners || openComments ? "md:col-span-2" : undefined}
+              className={cn("ds-rise", (openAreaOwners || openComments) && "md:col-span-2")}
+              style={{ animationDelay: "400ms" }}
               title="5 · Notes"
               summary={comments.trim() || "Empty"}
               open={openComments}
@@ -1596,9 +1725,10 @@ function EntryPage() {
 
         {/* md and up: the live summary and the one Save button. Beside the
             form (sticky) from lg; below it, stuck to the bottom, at md. */}
-        <aside
+        <TiltCard
           aria-labelledby="entry-summary-title"
-          className="z-10 hidden flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-elevated md:sticky md:bottom-4 md:mt-4 md:flex lg:bottom-auto lg:top-24 lg:mt-0"
+          className="ds-rise z-10 hidden flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-elevated md:sticky md:bottom-4 md:mt-4 md:flex lg:bottom-auto lg:top-24 lg:mt-0"
+          style={{ animationDelay: "140ms" }}
         >
           <div>
             <h2 id="entry-summary-title" className="text-lg font-semibold">
@@ -1606,52 +1736,61 @@ function EntryPage() {
             </h2>
             <p className="text-sm text-muted-foreground">{context}</p>
           </div>
-          <dl className="grid grid-cols-4 gap-4 lg:grid-cols-1 lg:gap-3">
-            {(
-              [
+          {/* md: jar and the other numbers side by side, so the panel stuck
+              to the bottom stays short; lg: stacked in the side column. */}
+          <div className="flex items-center gap-6 lg:flex-col lg:items-stretch lg:gap-4">
+            <MakingHero
+              jarKey={`${lineId}|${date}|${shift}`}
+              pct={jarPct}
+              target={targets.makingPct}
+              mood={jarMood}
+              lineName={activeLineName}
+              celebrateKey={celebrateKey}
+              actual={liveSummary.mActual}
+              plan={liveSummary.mPlan}
+              actualInvalid={makingActualInvalid}
+            />
+            <dl className="grid min-w-0 flex-1 grid-cols-3 gap-4 lg:grid-cols-1 lg:gap-3">
+              {(
                 [
-                  "Making",
-                  `target ${targets.makingPct}%`,
-                  fmtPct(liveSummary.makingPct),
-                  adherenceColor(liveSummary.makingPct, targets.makingPct),
-                ],
-                [
-                  "Packing",
-                  `target ${targets.packingPct}%`,
-                  fmtPct(liveSummary.packingPct),
-                  adherenceColor(liveSummary.packingPct, targets.packingPct),
-                ],
-                [
-                  "Time lost",
-                  `${fmtNum(totalDowntime)} of ${fmtNum(liveSummary.avail)} min`,
-                  fmtPct(liveSummary.lossPct),
-                  lossColor(liveSummary.lossPct, targets.lossPct),
-                ],
-                [
-                  "Rework",
-                  reworkPctOfMaking !== null
-                    ? `${reworkPctOfMaking.toFixed(1)}% of making`
-                    : "cooking + making + packing",
-                  `${fmtNum(reworkTotal)} kg`,
-                  "text-foreground",
-                ],
-              ] as const
-            ).map(([label, sub, value, color]) => (
-              <div
-                key={label}
-                className="flex flex-col gap-1 lg:flex-row lg:items-baseline lg:justify-between lg:border-b lg:border-border lg:pb-3"
-              >
-                <dt className="text-sm">
-                  {label}
-                  <span className="block text-xs text-muted-foreground">{sub}</span>
-                </dt>
-                <dd className={cn("text-xl font-bold tabular-nums lg:text-2xl", color)}>{value}</dd>
-              </div>
-            ))}
-          </dl>
+                  [
+                    "Packing",
+                    `target ${targets.packingPct}%`,
+                    liveSummary.packingPct,
+                    adherenceColor(liveSummary.packingPct, targets.packingPct),
+                  ],
+                  [
+                    "Time lost",
+                    `${fmtNum(totalDowntime)} of ${fmtNum(liveSummary.avail)} min`,
+                    liveSummary.lossPct,
+                    lossColor(liveSummary.lossPct, targets.lossPct),
+                  ],
+                  [
+                    "Rework",
+                    `${fmtNum(reworkTotal)} kg · % of making`,
+                    reworkPctOfMaking,
+                    "text-foreground",
+                  ],
+                ] as const
+              ).map(([label, sub, value, color]) => (
+                <div
+                  key={label}
+                  className="flex flex-col gap-1 lg:flex-row lg:items-baseline lg:justify-between lg:border-b lg:border-border lg:pb-3"
+                >
+                  <dt className="text-sm">
+                    {label}
+                    <span className="block text-xs text-muted-foreground">{sub}</span>
+                  </dt>
+                  <dd className={cn("text-xl font-bold tabular-nums lg:text-2xl", color)}>
+                    <Pct value={value} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
           {unsavedNote && (
             <p className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-warning-strong">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <UnsavedDot className="mt-1.5 shrink-0" />
               <span>
                 {changed.length} unsaved {changed.length === 1 ? "change" : "changes"}
                 {changed.length > 0 && ` · ${changed.join(", ")}`}
@@ -1659,13 +1798,13 @@ function EntryPage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2 lg:flex-col">
-            <Button
-              className="h-12 px-6 text-base lg:w-full"
-              onClick={handleSave}
+            <SaveButton
+              phase={savePhase}
+              label="Save Entry"
+              wrapperClassName="md:w-48 lg:w-full"
+              onClick={(e) => void handleSave(e.currentTarget)}
               disabled={saveDisabled}
-            >
-              <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save Entry"}
-            </Button>
+            />
             {canDuplicateThis && (
               <Button variant="outline" className="h-11 lg:w-full" onClick={openHistoryPanel}>
                 Duplicate to another day…
@@ -1682,7 +1821,7 @@ function EntryPage() {
               </Button>
             )}
           </div>
-        </aside>
+        </TiltCard>
       </div>
 
       {/* Phone: Delete sits at the end of the form, away from Save. */}
@@ -1721,20 +1860,22 @@ function EntryPage() {
               <div key={label} className="min-w-0">
                 <dt className="text-xs text-muted-foreground">{label}</dt>
                 <dd className={`text-base font-bold tabular-nums ${color}`}>
-                  {pct !== null ? `${pct.toFixed(1)}%` : "—"}
+                  <Pct value={pct} />
                 </dd>
               </div>
             ))}
           </dl>
-          <Button
-            className="h-12 shrink-0 px-6 text-base"
-            onClick={handleSave}
+          <SaveButton
+            phase={savePhase}
+            label="Save"
+            wrapperClassName="w-[6.5rem] shrink-0"
+            onClick={(e) => void handleSave(e.currentTarget)}
             disabled={saveDisabled}
-          >
-            <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save"}
-          </Button>
+          />
         </div>
       </div>
+
+      {gummy.layer}
 
       <AlertDialog
         open={pendingSwitch !== null}
@@ -1795,11 +1936,14 @@ function Field({
   children,
   htmlFor,
   error,
+  shakeKey = 0,
 }: {
   label: string;
   children: React.ReactNode;
   htmlFor?: string;
   error?: string;
+  /** Changes each time Save finds this field wrong: it shakes once. */
+  shakeKey?: number;
 }) {
   const autoId = useId();
   const errId = `${autoId}-err`;
@@ -1818,9 +1962,15 @@ function Field({
       <Label htmlFor={id} className="text-xs">
         {label}
       </Label>
-      <div className="mt-1">{child}</div>
+      <div key={shakeKey} className={cn("mt-1", shakeKey > 0 && "ds-shake")}>
+        {child}
+      </div>
       {error && (
-        <p id={errId} role="alert" className="mt-1 text-xs font-medium text-destructive-strong">
+        <p
+          id={errId}
+          role="alert"
+          className="ds-slide-in mt-1 text-xs font-medium text-destructive-strong"
+        >
           {error}
         </p>
       )}
@@ -1836,32 +1986,257 @@ function GridInput({
   onChange,
   disabled,
   error,
+  shakeKey = 0,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   disabled: boolean;
   error?: string;
+  shakeKey?: number;
 }) {
   const errId = useId();
   return (
     <div>
       <Input
+        key={shakeKey}
         type="number"
         inputMode="decimal"
         aria-label={label}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errId : undefined}
-        className="h-11 text-base tabular-nums md:text-base"
+        className={cn("h-11 text-base tabular-nums md:text-base", shakeKey > 0 && "ds-shake")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
       />
       {error && (
-        <p id={errId} role="alert" className="mt-1 text-xs font-medium text-destructive-strong">
+        <p
+          id={errId}
+          role="alert"
+          className="ds-slide-in mt-1 text-xs font-medium text-destructive-strong"
+        >
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Motion pieces (see MotionSystem: odometer = a number changed, jar = progress
+// to the Making target, pulse = waiting on you, burst = saved at target).
+// ---------------------------------------------------------------------------
+
+/** A % that rolls when it changes; "—" (no %) while there is no number. */
+function Pct({ value, className }: { value: number | null; className?: string }) {
+  return (
+    <Odometer
+      value={value}
+      decimals={1}
+      suffix={value === null ? undefined : "%"}
+      className={className}
+    />
+  );
+}
+
+/** Pulsing amber dot: this entry has changes that are not saved yet. */
+function UnsavedDot({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "ds-pulse-warn mr-1.5 inline-block h-2 w-2 rounded-full bg-warning align-middle",
+        className,
+      )}
+    />
+  );
+}
+
+/** The summary card tilts toward the mouse. Its own component, so a mouse
+ *  move re-renders only the card shell, not the whole form. */
+function TiltCard({ className, style, children, ...rest }: React.HTMLAttributes<HTMLElement>) {
+  const tilt = useTilt(6);
+  return (
+    <aside {...rest} {...tilt.handlers} className={className} style={{ ...style, ...tilt.style }}>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-[inherit]"
+        style={tilt.glareStyle}
+      />
+      {children}
+    </aside>
+  );
+}
+
+/** Making as a jar of jelly beside the big number, with where it stands
+ *  against the Making target. `compact` is the phone version. */
+function MakingHero({
+  compact = false,
+  jarKey,
+  pct,
+  target,
+  mood,
+  lineName,
+  celebrateKey,
+  actual,
+  plan,
+  actualInvalid,
+}: {
+  compact?: boolean;
+  jarKey: string;
+  pct: number | null;
+  target: number;
+  mood: JarMood | undefined;
+  lineName: string;
+  celebrateKey: number;
+  actual: number;
+  plan: number;
+  actualInvalid: boolean;
+}) {
+  const detail = actualInvalid
+    ? "Making actual isn't a valid number"
+    : plan > 0
+      ? `${fmtNum(actual)} of ${fmtNum(plan)} kg`
+      : "Enter the Making plan to see the %";
+  const gap = pct === null ? null : target - pct;
+  const band =
+    pct === null
+      ? { text: "Waiting for a number", tone: "bg-muted text-muted-foreground" }
+      : gap !== null && gap <= 0
+        ? { text: "At target", tone: "bg-success/10 text-success-strong" }
+        : {
+            text: `${(gap ?? 0).toFixed(1)} pts to the ${target}% target`,
+            tone:
+              (gap ?? 0) <= 20
+                ? "bg-warning/15 text-warning-strong"
+                : "bg-destructive/10 text-destructive-strong",
+          };
+  return (
+    <div className={cn("flex items-center", compact ? "gap-3" : "gap-4 lg:gap-2")}>
+      <JellyJar
+        key={jarKey}
+        pct={pct}
+        target={target}
+        mood={mood}
+        labelText={lineName}
+        celebrateKey={celebrateKey}
+        size={compact ? 120 : 184}
+        className={compact ? undefined : "h-[112px] w-[112px] lg:h-[184px] lg:w-[184px]"}
+      />
+      <div className="flex min-w-0 flex-col items-start gap-1.5">
+        <span className="text-sm font-semibold text-muted-foreground">Making · of plan</span>
+        <span
+          className={cn(
+            "font-extrabold",
+            compact ? "text-4xl" : "text-4xl lg:text-[2.5rem]",
+            adherenceColor(pct, target),
+          )}
+        >
+          <Pct value={pct} />
+        </span>
+        <span className="text-sm tabular-nums text-foreground">{detail}</span>
+        <span
+          className={cn(
+            "rounded-lg px-2.5 py-1 text-xs font-semibold leading-snug transition-colors",
+            band.tone,
+          )}
+        >
+          {band.text}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+type SavePhase = "idle" | "saving" | "saved";
+
+/** Save shrinks to a spinning circle while saving, then draws a check and
+ *  says "Saved" for a moment. Its accessible name follows the phase. */
+function SaveButton({
+  phase,
+  label,
+  wrapperClassName,
+  onClick,
+  disabled,
+}: {
+  phase: SavePhase;
+  label: string;
+  wrapperClassName?: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  disabled: boolean;
+}) {
+  // Only pop the label back in after a save, not on first render.
+  const cycled = useRef(false);
+  if (phase !== "idle") cycled.current = true;
+  return (
+    <div className={cn("flex h-12 justify-center", wrapperClassName)}>
+      <Button
+        className={cn(
+          "h-12 overflow-hidden text-base",
+          phase === "saving" ? "w-12 rounded-full px-0 disabled:opacity-100" : "w-full px-4",
+          phase === "saved" && "bg-success-strong hover:bg-success-strong",
+        )}
+        style={{
+          transition:
+            "width 460ms var(--ease-out-soft), border-radius 320ms ease, background-color 260ms ease, box-shadow 200ms ease, transform 150ms var(--ease-spring)",
+        }}
+        aria-label={phase === "saving" ? "Saving" : undefined}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {phase === "saving" ? (
+          <svg
+            viewBox="0 0 26 26"
+            aria-hidden="true"
+            className="animate-spin"
+            style={{ width: 24, height: 24 }}
+          >
+            <circle
+              cx="13"
+              cy="13"
+              r="10"
+              fill="none"
+              strokeWidth="3"
+              style={{ stroke: "currentColor", opacity: 0.3 }}
+            />
+            <circle
+              cx="13"
+              cy="13"
+              r="10"
+              fill="none"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="20 43"
+              style={{ stroke: "currentColor" }}
+            />
+          </svg>
+        ) : phase === "saved" ? (
+          <span key="saved" className="ds-pop-in flex items-center gap-2">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{ width: 20, height: 20, stroke: "currentColor" }}
+            >
+              <path
+                d="M5 12.5l4.5 4.5L19 7.5"
+                strokeDasharray="26"
+                style={{ animation: "ds-check 380ms var(--ease-out-soft) 80ms both" }}
+              />
+            </svg>
+            Saved
+          </span>
+        ) : (
+          <span key="idle" className={cn("flex items-center gap-2", cycled.current && "ds-pop-in")}>
+            <Save className="h-4 w-4" aria-hidden="true" />
+            {label}
+          </span>
+        )}
+      </Button>
     </div>
   );
 }

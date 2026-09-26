@@ -101,13 +101,20 @@ export function JellyJar({
 
   // Lid pop + hop when the target line is crossed upward, or on demand.
   const [pop, setPop] = React.useState(0);
+  // No number yet (null) is "unknown", not "below": a day that loads at
+  // target, or a first valid number, is not a crossing.
   const wasAt = React.useRef<boolean | null>(null);
   React.useEffect(() => {
     const at = pct != null && pct >= target;
     if (wasAt.current === false && at) setPop((n) => n + 1);
-    wasAt.current = at;
+    wasAt.current = pct == null ? null : at;
   }, [pct, target]);
+  // Only a change replays it — mounting with a non-zero key (the jar remounts
+  // when another entry opens) must not celebrate.
+  const lastCelebrate = React.useRef(celebrateKey);
   React.useEffect(() => {
+    if (celebrateKey === lastCelebrate.current) return;
+    lastCelebrate.current = celebrateKey;
     if (celebrateKey > 0) setPop((n) => n + 1);
   }, [celebrateKey]);
 
@@ -143,7 +150,8 @@ export function JellyJar({
   const lvlY = yOf(lvl);
   const amp = 1 + Math.min(2.4, Math.abs(velocity) / 45);
   const rot = Math.max(-9, Math.min(9, velocity * 0.05));
-  const band = pct == null ? "none" : pct >= target ? "good" : pct >= 70 ? "warn" : "bad";
+  // Same bands as the app (adherenceColor): amber from target − 20 points.
+  const band = pct == null ? "none" : pct >= target ? "good" : pct >= target - 20 ? "warn" : "bad";
   const tone =
     band === "good"
       ? "var(--success)"
@@ -159,7 +167,11 @@ export function JellyJar({
   const brows = BROWS[face];
   const pupil = face === "saving" ? { x: 2.4, y: 3.6 } : look;
   const targetY = yOf(Math.min(112, target));
-  const label = labelText.toUpperCase().slice(0, 12);
+  // At most 12 letters fit the label; cut at a word ("Packing Machines" →
+  // "PACKING", not "PACKING MACH").
+  const upper = labelText.trim().toUpperCase();
+  const cut = upper.lastIndexOf(" ", 12);
+  const label = upper.length <= 12 ? upper : upper.slice(0, cut > 0 ? cut : 12);
 
   return (
     <svg
@@ -167,6 +179,7 @@ export function JellyJar({
       height={size}
       viewBox="0 0 300 300"
       role="img"
+      data-mood={face}
       aria-label={
         pct == null
           ? `Jar is empty — no valid actual yet. Target ${target}%.`

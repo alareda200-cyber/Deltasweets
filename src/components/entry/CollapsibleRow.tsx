@@ -15,6 +15,7 @@ export function CollapsibleRow({
   onToggle,
   contentDisabled,
   className,
+  style,
   children,
 }: {
   title: string;
@@ -23,11 +24,12 @@ export function CollapsibleRow({
   onToggle: () => void;
   contentDisabled?: boolean;
   className?: string;
+  style?: React.CSSProperties;
   children: React.ReactNode;
 }) {
   const contentId = useId();
   return (
-    <div className={cn("rounded-xl border border-border bg-card", className)}>
+    <div className={cn("rounded-xl border border-border bg-card", className)} style={style}>
       <button
         type="button"
         onClick={onToggle}

@@ -87,6 +87,9 @@ export function useSpring(target: number, opts: SpringOptions = {}): SpringState
   React.useEffect(
     () => () => {
       if (raf.current != null) cancelAnimationFrame(raf.current);
+      // Cleared, or a remount (StrictMode runs mount → unmount → mount)
+      // sees a stale id, thinks the loop is running and never starts it.
+      raf.current = null;
     },
     [],
   );
