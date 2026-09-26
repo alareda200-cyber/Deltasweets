@@ -260,6 +260,9 @@ function Dashboard() {
                 </button>
               ))}
             </div>
+            <Button asChild variant="outline" className="h-11 px-4">
+              <Link to="/recap">Month recap</Link>
+            </Button>
             <Button
               variant="outline"
               className="h-11 px-4"
@@ -686,12 +689,7 @@ function JellyDots() {
 
 function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiTileProps[] {
   const lossAlert = targets.lossPct;
-  const adhTile = (
-    title: string,
-    actual: number,
-    plan: number,
-    target: number,
-  ): KpiTileProps => {
+  const adhTile = (title: string, actual: number, plan: number, target: number): KpiTileProps => {
     if (plan <= 0) {
       return {
         title,

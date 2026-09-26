@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as ReplayRouteImport } from './routes/replay'
+import { Route as RecapRouteImport } from './routes/recap'
 import { Route as MoreRouteImport } from './routes/more'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as LoginRouteImport } from './routes/login'
@@ -32,6 +34,16 @@ const SettingsRoute = SettingsRouteImport.update({
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReplayRoute = ReplayRouteImport.update({
+  id: '/replay',
+  path: '/replay',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecapRoute = RecapRouteImport.update({
+  id: '/recap',
+  path: '/recap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MoreRoute = MoreRouteImport.update({
@@ -72,6 +84,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/recap': typeof RecapRoute
+  '/replay': typeof ReplayRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -83,6 +97,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/recap': typeof RecapRoute
+  '/replay': typeof ReplayRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -95,6 +111,8 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/recap': typeof RecapRoute
+  '/replay': typeof ReplayRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -108,6 +126,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/recap'
+    | '/replay'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -119,6 +139,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/recap'
+    | '/replay'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -130,6 +152,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/recap'
+    | '/replay'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -142,6 +166,8 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MaintenanceRoute: typeof MaintenanceRoute
   MoreRoute: typeof MoreRoute
+  RecapRoute: typeof RecapRoute
+  ReplayRoute: typeof ReplayRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
@@ -168,6 +194,20 @@ declare module '@tanstack/react-router' {
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/replay': {
+      id: '/replay'
+      path: '/replay'
+      fullPath: '/replay'
+      preLoaderRoute: typeof ReplayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recap': {
+      id: '/recap'
+      path: '/recap'
+      fullPath: '/recap'
+      preLoaderRoute: typeof RecapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/more': {
@@ -222,6 +262,8 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MaintenanceRoute: MaintenanceRoute,
   MoreRoute: MoreRoute,
+  RecapRoute: RecapRoute,
+  ReplayRoute: ReplayRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,

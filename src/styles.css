@@ -610,3 +610,22 @@
     animation: none !important;
   }
 }
+
+/* Month-recap story cards: their own fixed palette (not themed), white text
+   on every one — contrast ≥ 4.5 checked at the lighter end of each. */
+:root {
+  --story-1a: oklch(0.36 0.17 262);
+  --story-1b: oklch(0.5 0.19 258);
+  --story-2a: oklch(0.34 0.1 155);
+  --story-2b: oklch(0.48 0.13 155);
+  --story-3a: oklch(0.4 0.11 60);
+  --story-3b: oklch(0.52 0.15 55);
+  --story-4a: oklch(0.32 0.09 240);
+  --story-4b: oklch(0.48 0.12 220);
+  --story-5a: oklch(0.3 0.12 20);
+  --story-5b: oklch(0.47 0.19 25);
+  --story-6a: oklch(0.28 0.11 300);
+  --story-6b: oklch(0.45 0.19 295);
+  --story-7a: oklch(0.2 0.04 255);
+  --story-7b: oklch(0.38 0.16 262);
+}

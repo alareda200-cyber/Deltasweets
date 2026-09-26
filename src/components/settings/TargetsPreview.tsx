@@ -128,7 +128,15 @@ export function TargetsPreview({
               size={104}
             />
             <div className="min-w-0 text-sm">
-              <p className="text-xs text-muted-foreground">Last day · {last?.date.slice(8)}</p>
+              <p className="text-xs text-muted-foreground">
+                Last day ·{" "}
+                {last
+                  ? new Date(`${last.date}T12:00:00`).toLocaleDateString("en-GB", {
+                      day: "numeric",
+                      month: "short",
+                    })
+                  : "—"}
+              </p>
               <p
                 className={cn(
                   "text-lg font-bold tabular-nums",

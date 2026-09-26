@@ -143,16 +143,24 @@ export function LastDayCard({
           tone="plain"
         />
       </dl>
-      {canOpenEntry && (
+      <div data-pdf-exclude="true" className="mt-auto flex flex-wrap gap-x-5">
+        {canOpenEntry && (
+          <Link
+            to="/entry"
+            search={day.link}
+            className="inline-flex min-h-11 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
+          >
+            Open this entry ›
+          </Link>
+        )}
         <Link
-          to="/entry"
-          search={day.link}
-          data-pdf-exclude="true"
-          className="mt-auto inline-flex min-h-11 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
+          to="/replay"
+          search={{ line: day.link.line, date: day.link.date }}
+          className="inline-flex min-h-11 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
         >
-          Open this entry ›
+          Replay this day ›
         </Link>
-      )}
+      </div>
     </Card>
   );
 }

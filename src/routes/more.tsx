@@ -55,7 +55,13 @@ type SettingsSection =
   | "reliability";
 
 type Item =
-  | { kind: "route"; key: string; name: string; sub?: string; to: "/users" | "/audit-log" }
+  | {
+      kind: "route";
+      key: string;
+      name: string;
+      sub?: string;
+      to: "/users" | "/audit-log" | "/recap" | "/replay";
+    }
   | { kind: "settings"; key: string; name: string; sub?: string; section: SettingsSection };
 
 interface Group {
@@ -111,7 +117,27 @@ function MorePage() {
   });
 
   const groups = useMemo<Group[]>(() => {
-    const out: Group[] = [];
+    const out: Group[] = [
+      {
+        title: "Stories",
+        items: [
+          {
+            kind: "route",
+            key: "recap",
+            name: "Month recap",
+            sub: "This month in 7 cards",
+            to: "/recap",
+          },
+          {
+            kind: "route",
+            key: "replay",
+            name: "Replay a day",
+            sub: "Watch a line's day, faults and all",
+            to: "/replay",
+          },
+        ],
+      },
+    ];
     if (canUsers) {
       out.push({
         title: "Admin",
