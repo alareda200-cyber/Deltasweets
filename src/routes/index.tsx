@@ -186,6 +186,11 @@ function Dashboard() {
     // Freeze every animation at its final state for the capture (styles.css).
     exportRef.current.dataset.pdfCapturing = "true";
     try {
+      // Let React add the Packing chart (pdfBothStages) and the charts measure
+      // themselves before anything is captured.
+      await new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))),
+      );
       const { exportDashboardToPdf } = await import("@/lib/pdf-export");
       await exportDashboardToPdf({
         container: exportRef.current,
@@ -394,6 +399,7 @@ function Dashboard() {
               to={to}
               role={role}
               kpiMemory={kpiMemory}
+              pdfBothStages={exporting}
             />
           ) : (
             <p className="rounded-2xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -431,14 +437,22 @@ function PeriodBody({
   to,
   role,
   kpiMemory,
+  pdfBothStages = false,
 }: {
   line: ProductionLine;
   from: string;
   to: string;
   role: Role | null;
   kpiMemory: KpiMemory;
+  /**
+   * PDF export in progress: the report always carries both daily charts —
+   * Making in the usual place and Packing in its own row below — whichever
+   * stage is picked on screen.
+   */
+  pdfBothStages?: boolean;
 }) {
-  const [stage, setStage] = useState<"making" | "packing">("making");
+  const [pickedStage, setStage] = useState<"making" | "packing">("making");
+  const stage = pdfBothStages ? "making" : pickedStage;
   const entriesQ = useQuery(entriesQuery(line.id, from, to));
   const entries = entriesQ.data;
   const entryIds = useMemo(() => (entries ?? []).map((e) => e.id), [entries]);
@@ -546,6 +560,7 @@ function PeriodBody({
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
   const stageName = stage === "making" ? "Making" : "Packing";
+  const packingPoints = pdfBothStages ? dailySeries(list, from, shownTo, "packing") : null;
 
   return (
     <>
@@ -620,6 +635,24 @@ function PeriodBody({
           </div>
         )}
       </div>
+
+      {packingPoints && (
+        <div data-pdf-section="packing-chart">
+          <Card labelledBy="dash-chart-packing">
+            <h3 id="dash-chart-packing" className="text-[15px] font-semibold md:text-base">
+              Packing — actual per day against plan (kg)
+            </h3>
+            <Suspense fallback={<div className="h-[236px] rounded-lg md:h-[280px]" />}>
+              <DailyOutputChart
+                key="pdf-packing"
+                points={packingPoints}
+                stageLabel="Packing"
+                targetPct={targets.packingPct}
+              />
+            </Suspense>
+          </Card>
+        </div>
+      )}
 
       <div
         data-pdf-section="time-rework-faults"

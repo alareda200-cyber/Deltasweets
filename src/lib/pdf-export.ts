@@ -177,6 +177,13 @@ export async function exportDashboardToPdf({
     el.style.display = el.dataset.pdfVariant === "mobile" ? "none" : "block";
   }
 
+  // Width and display changes above resize the charts (Recharts measures its
+  // box with a ResizeObserver, which reports on a later frame). Capture only
+  // once they have redrawn at the new size, or a chart can be cloned mid-resize.
+  await new Promise<void>((r) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250))),
+  );
+
   try {
     const backgroundColor = getComputedStyle(document.body).backgroundColor || "#ffffff";
     const captured: HTMLImageElement[] = [];
