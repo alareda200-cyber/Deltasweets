@@ -55,6 +55,11 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
+    // Page changes cross-fade, and elements that carry the same
+    // view-transition-name on both pages morph from one place to the other
+    // (styles.css: the "Last recorded day" card → the entry summary, the
+    // active nav pill). Browsers without the API just navigate.
+    defaultViewTransition: true,
   });
 
   return router;

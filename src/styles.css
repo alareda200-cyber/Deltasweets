@@ -569,3 +569,44 @@
 @utility ds-ripple {
   animation: ds-ripple 1800ms ease-out infinite;
 }
+
+/* Page transitions (router defaultViewTransition). The page itself fades and
+   rises a little; named elements morph between their places on the old and
+   new page — "entry-summary" (dashboard's Last recorded day → the entry's
+   summary) and "nav-pill" (the active tab). */
+@keyframes ds-vt-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ds-vt-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+::view-transition-old(root) {
+  animation: ds-vt-out 180ms ease both;
+}
+::view-transition-new(root) {
+  animation: ds-vt-in 320ms var(--ease-out-soft) both;
+}
+::view-transition-group(entry-summary) {
+  animation-duration: 560ms;
+  animation-timing-function: cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+::view-transition-group(nav-pill) {
+  animation-duration: 420ms;
+  animation-timing-function: var(--ease-spring);
+}
+::view-transition-old(nav-pill),
+::view-transition-new(nav-pill) {
+  height: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

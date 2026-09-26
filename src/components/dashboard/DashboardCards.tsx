@@ -105,7 +105,9 @@ export function LastDayCard({
     `packing ${kg(t.reworkPacking)}`,
   ].filter(Boolean);
   return (
-    <Card labelledBy="dash-lastday">
+    // Same view-transition name as the entry page's summary: "Open this
+    // entry" grows this card into it.
+    <Card labelledBy="dash-lastday" className="[view-transition-name:entry-summary]">
       <div>
         <h3 id="dash-lastday" className="text-[15px] font-semibold md:text-base">
           Last recorded day

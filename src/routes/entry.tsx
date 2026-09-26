@@ -1400,7 +1400,7 @@ function EntryPage() {
               md and up it lives in the summary beside / below the form. */}
           <section
             aria-labelledby="entry-jar-title-m"
-            className="ds-rise rounded-xl border border-border bg-card p-3 md:hidden"
+            className="ds-rise rounded-xl border border-border bg-card p-3 [view-transition-name:entry-summary] md:hidden md:[view-transition-name:none]"
           >
             <h2 id="entry-jar-title-m" className="sr-only">
               This entry
@@ -1727,7 +1727,7 @@ function EntryPage() {
             form (sticky) from lg; below it, stuck to the bottom, at md. */}
         <TiltCard
           aria-labelledby="entry-summary-title"
-          className="ds-rise z-10 hidden flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-elevated md:sticky md:bottom-4 md:mt-4 md:flex lg:bottom-auto lg:top-24 lg:mt-0"
+          className="ds-rise z-10 hidden flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-elevated md:sticky md:bottom-4 md:mt-4 md:flex md:[view-transition-name:entry-summary] lg:bottom-auto lg:top-24 lg:mt-0"
           style={{ animationDelay: "140ms" }}
         >
           <div>

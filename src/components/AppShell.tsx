@@ -215,7 +215,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   className={cn(
                     "flex h-10 shrink-0 items-center whitespace-nowrap rounded-[10px] px-3.5 text-sm transition-colors",
                     active
-                      ? "bg-primary/10 font-semibold text-primary"
+                      ? "bg-primary/10 font-semibold text-primary [view-transition-name:nav-pill]"
                       : "text-foreground hover:bg-muted",
                   )}
                 >
