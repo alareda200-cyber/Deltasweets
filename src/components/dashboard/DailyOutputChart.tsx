@@ -4,6 +4,7 @@ import {
   Cell,
   ComposedChart,
   Line,
+  Rectangle,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -14,6 +15,7 @@ import type { DayPoint } from "@/lib/dashboard-metrics";
 import { formatDayName, kg, parseDay, uniformPlan } from "@/lib/dashboard-metrics";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
+import { useEffect, useState, type ReactElement } from "react";
 
 // One bar per calendar day (every shift row of that day summed), a grey stub
 // for a day with no entry, and the plan drawn as a labelled dashed line —
@@ -25,6 +27,26 @@ interface Row {
   bar: number;
   plan: number | null;
   hasEntry: boolean;
+  /** Recorded day at or above the stage's target (actual ÷ plan). */
+  atTarget: boolean;
+}
+
+// Five-point star centred on 0,0, outer radius 1 — scaled where it's drawn.
+const STAR = Array.from({ length: 10 }, (_, i) => {
+  const r = i % 2 === 0 ? 1 : 0.42;
+  const a = -Math.PI / 2 + (i * Math.PI) / 5;
+  return `${(r * Math.cos(a)).toFixed(3)},${(r * Math.sin(a)).toFixed(3)}`;
+}).join(" ");
+
+interface BarShapeProps {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  index?: number;
+  fill?: string;
+  fillOpacity?: number;
+  payload?: Row;
 }
 
 // Round axis top and 3-4 even ticks (0, 10k, 20k, 30k) instead of whatever
@@ -48,12 +70,16 @@ function yTick(v: number): string {
 export function DailyOutputChart({
   points,
   stageLabel,
+  targetPct,
 }: {
   points: DayPoint[];
   stageLabel: string;
+  /** Settings › Targets for this stage (making or packing), in percent. */
+  targetPct: number;
 }) {
   const isMobile = useIsMobile();
   const reducedMotion = usePrefersReducedMotion();
+  const [hover, setHover] = useState<number | null>(null);
   const flatPlan = uniformPlan(points);
   const maxVal = Math.max(1, ...points.map((p) => Math.max(p.actual ?? 0, p.plan ?? 0)));
   // A visible sliver for "no entry" days, ~1.5% of the axis.
@@ -64,7 +90,65 @@ export function DailyOutputChart({
     bar: p.hasEntry ? (p.actual ?? 0) : stubHeight,
     plan: p.hasEntry && flatPlan == null ? p.plan : null,
     hasEntry: p.hasEntry,
+    atTarget:
+      p.hasEntry && (p.plan ?? 0) > 0 && ((p.actual ?? 0) / (p.plan ?? 1)) * 100 >= targetPct,
   }));
+  const stars = data.filter((d) => d.atTarget).length;
+  // Bars pop left to right, 45ms apart, the whole row inside ~0.9s.
+  const step = Math.min(45, 900 / Math.max(1, data.length));
+  // The pop runs once per data set. Hovering swaps a bar between Recharts'
+  // active and resting wrappers, which re-mounts it; once the row has landed
+  // the class is gone, so a hovered bar never pops (or sparkles) again.
+  const sig = data.map((d) => `${d.day}:${d.bar}:${d.atTarget ? 1 : 0}`).join("|");
+  const [landedSig, setLandedSig] = useState<string | null>(null);
+  const popping = !reducedMotion && landedSig !== sig;
+  useEffect(() => {
+    if (!popping) return;
+    const t = setTimeout(() => setLandedSig(sig), 120 + data.length * step + 1400);
+    return () => clearTimeout(t);
+  }, [popping, sig, data.length, step]);
+
+  // One bar: pops up from the axis (new data), dims while another bar is
+  // hovered, and carries a star when that day reached the target.
+  const barShape = (props: unknown): ReactElement => {
+    const { x = 0, y = 0, width = 0, height = 0, index = 0, payload } = props as BarShapeProps;
+    const recorded = payload?.hasEntry ?? false;
+    const delay = 120 + index * step;
+    const size = Math.max(7, Math.min(10, width * 0.6));
+    return (
+      <g
+        data-bar-index={index}
+        opacity={hover != null && hover !== index ? 0.35 : 1}
+        style={{ transition: "opacity 200ms ease" }}
+      >
+        <g
+          className={recorded && popping ? "ds-pop-y" : undefined}
+          style={recorded && popping ? { animationDelay: `${delay}ms` } : undefined}
+        >
+          <Rectangle {...(props as object)} radius={[3, 3, 0, 0]} />
+        </g>
+        {payload?.atTarget && (
+          <g transform={`translate(${x + width / 2} ${y - size - 4}) scale(${size})`}>
+            <polygon
+              data-star=""
+              aria-hidden="true"
+              points={STAR}
+              className="ds-sparkle"
+              fill="var(--color-warning)"
+              stroke="var(--color-card)"
+              strokeWidth={1.5 / size}
+              // Landed: keep only the twinkle, without the entrance.
+              style={
+                popping
+                  ? { animationDelay: `${delay + 560}ms, ${delay + 1460}ms` }
+                  : { animation: "ds-twinkle 1800ms ease-in-out infinite" }
+              }
+            />
+          </g>
+        )}
+      </g>
+    );
+  };
   const hasEntryByDay = new Map(data.map((d) => [d.day, d.hasEntry]));
   const { top, ticks } = niceAxis(maxVal);
 
@@ -76,6 +160,11 @@ export function DailyOutputChart({
             data={data}
             margin={{ top: 22, right: 4, left: isMobile ? -12 : 0, bottom: 0 }}
             barCategoryGap={data.length > 40 ? "10%" : "22%"}
+            onMouseMove={(st) => {
+              const i = st?.isTooltipActive ? Number(st.activeTooltipIndex) : NaN;
+              setHover(Number.isFinite(i) ? i : null);
+            }}
+            onMouseLeave={() => setHover(null)}
           >
             <CartesianGrid vertical={false} stroke="var(--color-border)" />
             <XAxis
@@ -111,6 +200,11 @@ export function DailyOutputChart({
             />
             <Tooltip
               cursor={{ fill: "var(--color-muted)" }}
+              isAnimationActive={!reducedMotion}
+              // Follows the pointer with a little overshoot instead of a flat ease.
+              wrapperStyle={
+                reducedMotion ? undefined : { transition: "transform 340ms var(--ease-spring)" }
+              }
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const row = payload[0].payload as Row;
@@ -137,7 +231,16 @@ export function DailyOutputChart({
                 );
               }}
             />
-            <Bar dataKey="bar" radius={[3, 3, 0, 0]} isAnimationActive={!reducedMotion}>
+            {/* Recharts' own tween is off: the pop is CSS (ds-pop-y, staggered
+                per bar), which reduced motion collapses — and the shape skips
+                it outright then. */}
+            <Bar
+              dataKey="bar"
+              radius={[3, 3, 0, 0]}
+              isAnimationActive={false}
+              shape={barShape}
+              activeBar={barShape}
+            >
               {data.map((d) => (
                 <Cell
                   key={d.day}
@@ -203,6 +306,7 @@ export function DailyOutputChart({
         {flatPlan != null
           ? "Dashed line = plan, the same on every recorded day · grey stub = no entry"
           : "Plan differs by day: each dark tick is that day's plan · grey stub = no entry"}
+        {stars > 0 && ` · ★ = at or above the ${targetPct}% target`}
       </p>
     </div>
   );

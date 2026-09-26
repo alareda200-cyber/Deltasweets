@@ -11,7 +11,8 @@ import {
   Ellipsis,
   Moon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { touchLastSeen } from "@/lib/presence";
@@ -78,6 +79,64 @@ const mobileNav = [
     match: ["/more", "/users", "/audit-log", "/settings"],
   },
 ];
+
+// Every route renders its own AppShell, so the bottom nav re-mounts on each
+// navigation — often while the old shell's pill is already on its way. The
+// pill leaves its drawn position behind (in tab widths, module scope, client
+// only) and the next shell's pill carries on from there to the new tab.
+let lastPillPos = -1;
+
+function BottomNavPill({ index, count }: { index: number; count: number }) {
+  const reduced = usePrefersReducedMotion();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [at, setAt] = useState(() =>
+    lastPillPos >= 0 && lastPillPos <= count - 1 ? lastPillPos : index,
+  );
+  useLayoutEffect(
+    () => () => {
+      // Runs before this shell's DOM is removed: record where the pill is
+      // drawn right now, mid-slide included.
+      const el = ref.current;
+      const nav = el?.parentElement;
+      if (!el || !nav) return;
+      const w = el.getBoundingClientRect().width;
+      if (w > 0)
+        lastPillPos = (el.getBoundingClientRect().left - nav.getBoundingClientRect().left) / w;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (at === index) {
+      lastPillPos = index;
+      return;
+    }
+    // Two frames: let the start position paint, then move.
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setAt(index));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [index, at]);
+  if (index < 0 || count === 0) return null;
+  return (
+    <span
+      ref={ref}
+      aria-hidden="true"
+      data-nav-pill=""
+      className="pointer-events-none absolute inset-y-0 left-0 px-2.5 py-2"
+      style={{
+        width: `${100 / count}%`,
+        transform: `translateX(${at * 100}%)`,
+        transition: reduced ? undefined : "transform 420ms var(--ease-spring)",
+      }}
+    >
+      <span className="block h-full w-full rounded-2xl bg-primary/10" />
+    </span>
+  );
+}
 
 function isActive(pathname: string, prefix: string) {
   return prefix === "/"
@@ -274,6 +333,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-card md:hidden"
       >
+        <BottomNavPill
+          index={visibleMobileNav.findIndex((n) => n.match.some((m) => isActive(pathname, m)))}
+          count={visibleMobileNav.length}
+        />
         {visibleMobileNav.map((n) => {
           const active = n.match.some((m) => isActive(pathname, m));
           return (
@@ -282,7 +345,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               to={n.to}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex h-[68px] min-w-0 flex-1 flex-col items-center justify-center gap-1 text-xs",
+                "relative flex h-[68px] min-w-0 flex-1 flex-col items-center justify-center gap-1 text-xs",
                 active ? "font-semibold text-primary" : "text-muted-foreground",
               )}
             >

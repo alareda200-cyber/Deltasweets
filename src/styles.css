@@ -197,6 +197,50 @@
   }
 }
 
+/* Dashboard motion (motion/dash). Reduced motion also drops delays, so a
+   staggered entrance shows its final state at once instead of sitting
+   invisible for its delay. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
+/* PDF export clones computed styles into an SVG image, where an entrance
+   animation would restart at its first frame (invisible tiles, flat bars).
+   While capturing, everything sits at its final state. */
+[data-pdf-capturing] *,
+[data-pdf-capturing] *::before,
+[data-pdf-capturing] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+/* Meter / reason bars fill from the left once, on mount. */
+@keyframes ds-fill-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@utility ds-fill-x {
+  transform-origin: left;
+  animation: ds-fill-x 900ms var(--ease-out-soft) backwards;
+}
+/* Live dot while a line is stopped: same beat as ds-pulse-live, red ring. */
+@keyframes ds-pulse-stop {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+@utility ds-pulse-stop {
+  animation: ds-pulse-stop 1600ms ease-in-out infinite;
+}
+
 /* ── Motion system ("jelly") ─────────────────────────────────────────────
    Spec: Delta Sweets — Motion canvas (25 Sep 2026). Every move says
    something: rise = the page arrived, pop = new data, odometer = a number

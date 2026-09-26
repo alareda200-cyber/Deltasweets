@@ -55,15 +55,16 @@ export function Odometer({
     return () => clearTimeout(t);
   }, [armed, delay]);
 
-  const text =
-    value == null ? "—" : (value < 0 ? "-" : "") + formatValue(value, decimals, grouping);
+  const sign = value != null && value < 0 ? "-" : "";
+  const digits = value == null ? "" : formatValue(value, decimals, grouping);
+  const text = value == null ? "—" : sign + digits;
+  // Before the first roll every digit sits at 0 in the final layout (same
+  // separators, same width) — the sign is not padded into a digit column.
   const shown =
-    value == null
-      ? "—"
-      : armed || reduced
-        ? text
-        : formatValue(0, decimals, grouping).padStart(text.length, "0");
+    value == null ? "—" : armed || reduced ? text : sign + digits.replace(/[0-9]/g, "0");
   const chars = shown.split("");
+  // No value: a plain dash, without the unit ("—", not "—%").
+  const unit = value == null ? "" : suffix;
 
   return (
     <span
@@ -72,7 +73,7 @@ export function Odometer({
         className,
       )}
     >
-      <span className="sr-only">{label ?? text + suffix}</span>
+      <span className="sr-only">{label ?? text + unit}</span>
       <span
         aria-hidden="true"
         className="inline-flex h-[1em] items-start overflow-hidden leading-none"
@@ -90,7 +91,7 @@ export function Odometer({
           return (
             <span
               key={"d" + key}
-              className="inline-block h-[1em] w-[0.6em] overflow-hidden text-center"
+              className="inline-block h-[1em] w-[0.6em] overflow-hidden text-center leading-none"
             >
               <span
                 className="flex flex-col"
@@ -110,7 +111,7 @@ export function Odometer({
             </span>
           );
         })}
-        {suffix ? <span className="inline-block h-[1em] leading-none">{suffix}</span> : null}
+        {unit ? <span className="inline-block h-[1em] leading-none">{unit}</span> : null}
       </span>
     </span>
   );
