@@ -3,8 +3,10 @@ import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 import { isAuthError, isClockSkewError, isRateLimitedError } from "@/lib/supabase-errors";
 import { handleAuthFailure } from "@/lib/auth-error-handler";
+import { guardViewTransitions } from "@/lib/view-transitions";
 
 export const getRouter = () => {
+  guardViewTransitions();
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {

@@ -46,12 +46,41 @@ export const Route = createFileRoute("/replay")({
 });
 
 const DAY = 1440;
-/** Replay speed: day-minutes per wall-clock second. 1× ≈ the day in 48 s. */
+/** Replay speed: day-minutes per wall-clock second (1× = 30, so 48 s of running time). */
 const SPEEDS = [
   { label: "1×", v: 30 },
   { label: "2×", v: 60 },
   { label: "4×", v: 120 },
 ] as const;
+/**
+ * Wall-clock seconds a stop of `len` minutes takes on screen, at any speed:
+ * slowed down so a one-minute stop is seen (≥ 0.55 s), capped so a long one
+ * doesn't drag (≤ 2.6 s).
+ */
+const stopSeconds = (len: number) => Math.max(0.55, Math.min(2.6, len * 0.22));
+
+/**
+ * Move the replay clock on by `dt` wall-clock seconds. Runs at `speed` while
+ * the line is running and slows to `stopSeconds` inside a stop window. Steps
+ * across window edges exactly, so a slow frame can't skip a short stop.
+ */
+function advance(t: number, dt: number, speed: number, windows: StopWindow[]) {
+  let rem = dt;
+  while (rem > 1e-6 && t < DAY) {
+    const w = windows.find((x) => t >= x.s && t < x.e);
+    const rate = w ? (w.e - w.s) / stopSeconds(w.e - w.s) : speed;
+    const edge = w ? w.e : (windows.find((x) => x.s > t)?.s ?? DAY);
+    const need = (edge - t) / rate;
+    if (need >= rem) {
+      t += rate * rem;
+      rem = 0;
+    } else {
+      t = edge;
+      rem -= need;
+    }
+  }
+  return Math.min(DAY, t);
+}
 
 interface Fault {
   s: number;
@@ -82,7 +111,13 @@ function ReplayPage() {
   const isMobile = useIsMobile();
   const { data: allLines } = useSuspenseQuery(linesQuery);
   const lines = allLines.filter((l) => l.is_active);
-  const line = lines.find((l) => l.id === search.line) ?? lines[0];
+  // `line` is the line id; a line name (any case) is accepted too, so a
+  // hand-typed link like ?line=gelatin still opens the right line.
+  const wanted = search.line?.trim().toLowerCase();
+  const line =
+    lines.find((l) => l.id === search.line) ??
+    lines.find((l) => l.name.trim().toLowerCase() === wanted) ??
+    lines[0];
   const date = search.date ?? shiftDate(iso(new Date()), -1);
   const canFaults = can(role, "dashboard.viewMaintenanceCard");
 
@@ -134,7 +169,12 @@ function ReplayPage() {
       (m, w) => (!m || w.e - w.s > m.e - m.s ? w : m),
       null,
     );
+    // How long the whole day takes to play at 1×: running time at the base
+    // speed plus the slowed-down stops (see the clock below).
+    const seconds =
+      (DAY - stopMin) / SPEEDS[0].v + windows.reduce((a, w) => a + stopSeconds(w.e - w.s), 0);
     return {
+      seconds,
       faults,
       windows,
       stopMin,
@@ -175,18 +215,18 @@ function ReplayPage() {
     let last: number | null = null;
     const step = (now: number) => {
       if (last == null) last = now;
-      const dt = Math.min(0.05, (now - last) / 1000);
+      // Follow the wall clock so a slow or busy device still plays the day
+      // at the stated speed; only a long gap (tab in the background) is cut
+      // short, so coming back doesn't jump hours ahead.
+      const gap = (now - last) / 1000;
+      const dt = gap > 1 ? 0 : Math.min(0.25, gap);
       last = now;
       const s = sim.current;
       const model = modelRef.current;
       s.real += dt;
       const w = model.windowAt(s.t);
       if (s.playing) {
-        // While the line is stopped the replay slows down, so a one-minute
-        // stop is seen (≥ 0.5 s) and a long one doesn't drag (≤ 2.6 s).
-        const len = w ? w.e - w.s : 0;
-        const rate = w ? len / Math.max(0.55, Math.min(2.6, len * 0.22)) : s.speed;
-        s.t = Math.min(DAY, s.t + rate * dt);
+        s.t = advance(s.t, dt, s.speed, model.windows);
         if (s.t >= DAY) s.playing = false;
       }
       const running = s.playing && !model.windowAt(s.t);
@@ -309,7 +349,8 @@ function ReplayPage() {
                 month: "short",
                 year: "numeric",
               })}{" "}
-              · the day in about 48 seconds. The line stops for every machine fault that stopped it.
+              · the day in about {Math.max(5, Math.round(model.seconds / 5) * 5)} seconds at 1×. The
+              line stops for every machine fault that stopped it.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
