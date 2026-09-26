@@ -395,7 +395,12 @@ export function AuthBrandPanel({ mascot }: { mascot?: ReactNode } = {}) {
         </span>
         <span className="text-[17px] font-bold md:text-lg">Delta Sweets</span>
       </div>
-      <div className={cn("flex max-w-[520px] flex-col gap-4 md:my-auto md:pb-16", mascot && "pr-24 md:pr-0")}>
+      <div
+        className={cn(
+          "flex max-w-[520px] flex-col gap-4 md:my-auto md:pb-16",
+          mascot && "pr-24 md:pr-0",
+        )}
+      >
         <p className="text-[28px] font-bold leading-[1.15] md:text-[44px] md:leading-[1.1]">
           Production scorecard
         </p>
