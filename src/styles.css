@@ -544,3 +544,28 @@
 @utility ds-jelly-dot {
   animation: ds-jelly-dot 900ms var(--ease-spring) infinite;
 }
+
+/* Maintenance motion (v3): a heartbeat per running line, a ripple around a
+   Critical defect's impact. */
+@keyframes ds-ekg {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+@utility ds-ekg {
+  stroke-dasharray: 60 60;
+  animation: ds-ekg 1500ms linear infinite;
+}
+@keyframes ds-ripple {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@utility ds-ripple {
+  animation: ds-ripple 1800ms ease-out infinite;
+}

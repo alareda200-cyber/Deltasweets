@@ -4,6 +4,23 @@ import { badgeVariants } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { MaintenanceEvent } from "@/lib/queries";
 import { TYPE_LABELS, typeBadgeVariant } from "@/lib/maintenance-format";
+import { useNow } from "@/hooks/use-now";
+import { LinePulse } from "./LinePulse";
+import { CriticalImpact, isCriticalDefect } from "./CriticalImpact";
+
+// "+09:59:58" past the whole hours of an age — ticks every second, so an open
+// defect visibly keeps costing time while you look at it.
+function LiveTail({ fromIso }: { fromIso: string }) {
+  const now = useNow(1000);
+  const ms = Math.max(0, now - new Date(fromIso).getTime());
+  const pad = (n: number) => String(Math.floor(n)).padStart(2, "0");
+  const rem = ms % 86_400_000;
+  return (
+    <span className="block font-mono text-xs tabular-nums text-muted-foreground" aria-hidden="true">
+      +{pad(rem / 3_600_000)}:{pad((rem % 3_600_000) / 60_000)}:{pad((rem % 60_000) / 1000)}
+    </span>
+  );
+}
 
 // "Is anything wrong right now?" — the first question anyone opens
 // /maintenance with, answered before any filter, chart or table.
@@ -123,11 +140,17 @@ export function RightNowSection({
   stoppages,
   onSelectEvent,
   now = Date.now(),
+  lines = [],
+  allEvents = [],
 }: {
   openFaults: MaintenanceEvent[];
   stoppages: { status: string }[];
   onSelectEvent: (e: MaintenanceEvent) => void;
   now?: number;
+  /** Lines for the per-line heartbeat strip. */
+  lines?: { id: string; name: string; is_active?: boolean }[];
+  /** Every event, for "faults since this Critical defect opened". */
+  allEvents?: MaintenanceEvent[];
 }) {
   const sorted = sortOpenFaults(openFaults);
   const stopping = sorted.filter((e) => e.stops_line);
@@ -147,6 +170,8 @@ export function RightNowSection({
         </h2>
         <ScopeChip>Live · all lines · not affected by filters</ScopeChip>
       </div>
+
+      <LinePulse lines={lines} openFaults={openFaults} />
 
       <div className="grid grid-cols-3 gap-2 md:gap-4">
         <StatusTile
@@ -238,7 +263,14 @@ export function RightNowSection({
                       </span>
                       {e.severity_label && (
                         <span className="hidden text-xs text-muted-foreground md:block">
-                          Severity: {e.severity_label}
+                          Severity:{" "}
+                          {isCriticalDefect(e) ? (
+                            <span className="font-semibold text-destructive-strong">
+                              Critical · drives other faults
+                            </span>
+                          ) : (
+                            e.severity_label
+                          )}
                         </span>
                       )}
                     </span>
@@ -259,6 +291,7 @@ export function RightNowSection({
                       <span className="block text-sm font-semibold tabular-nums">
                         {formatAge(e.started_at, now)}
                       </span>
+                      <LiveTail fromIso={e.started_at} />
                       <span className="block text-xs text-muted-foreground">
                         since {shortDate(e.started_at)}
                       </span>
@@ -274,6 +307,8 @@ export function RightNowSection({
           </>
         )}
       </div>
+
+      <CriticalImpact openFaults={openFaults} allEvents={allEvents} />
     </section>
   );
 }

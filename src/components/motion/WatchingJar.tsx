@@ -68,7 +68,14 @@ export function WatchingJar({
           animation: hopKey && !reduced ? "ds-hop 820ms var(--ease-out-soft)" : undefined,
         }}
       >
-        <rect x="78" y="16" width="144" height="28" rx="10" style={{ fill: "var(--destructive)" }} />
+        <rect
+          x="78"
+          y="16"
+          width="144"
+          height="28"
+          rx="10"
+          style={{ fill: "var(--destructive)" }}
+        />
         <rect
           x="78"
           y="16"
@@ -118,7 +125,14 @@ export function WatchingJar({
               }}
             >
               {[133, 167].map((cx) => (
-                <circle key={cx} cx={cx} cy="176" r="10" strokeWidth="2" style={{ fill: "var(--card)" }} />
+                <circle
+                  key={cx}
+                  cx={cx}
+                  cy="176"
+                  r="10"
+                  strokeWidth="2"
+                  style={{ fill: "var(--card)" }}
+                />
               ))}
               {[133, 167].map((cx) => (
                 <circle
@@ -143,7 +157,13 @@ export function WatchingJar({
             <>
               <path d="M123 178 Q133 186 143 178" strokeWidth="3" />
               <circle cx="167" cy="176" r="10" strokeWidth="2" style={{ fill: "var(--card)" }} />
-              <circle cx="169" cy="178" r="4.8" stroke="none" style={{ fill: "var(--foreground)" }} />
+              <circle
+                cx="169"
+                cy="178"
+                r="4.8"
+                stroke="none"
+                style={{ fill: "var(--foreground)" }}
+              />
             </>
           )}
           {gaze.kind === "happy" && (

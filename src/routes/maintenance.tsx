@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { KpiCard } from "@/components/KpiCard";
 import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSection";
+import { RankedLosses } from "@/components/maintenance/RankedLosses";
 import { GroupedEventLog } from "@/components/maintenance/GroupedEventLog";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -1620,6 +1621,8 @@ function MaintenancePage() {
         openFaults={openFaults}
         stoppages={stoppages}
         onSelectEvent={setSelectedEvent}
+        lines={lines}
+        allEvents={allEvents}
       />
 
       {/* Filter bar — page-scoped (outside both the mobile stack and the
@@ -2283,151 +2286,12 @@ function TopLossesGrid({
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <Card>
+      <Card className="lg:col-span-2">
         <CardHeader>
-          <h3 className="text-sm font-semibold">Top Losses by Downtime</h3>
+          <h3 className="text-sm font-semibold">Top losses</h3>
         </CardHeader>
         <CardContent>
-          {downtimeChartData.length === 0 ? (
-            <EmptyMiniState />
-          ) : (
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={downtimeChartData}
-                  layout="vertical"
-                  margin={{ top: 4, right: 58, left: 4, bottom: 4 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="var(--color-border)"
-                    horizontal={false}
-                  />
-                  {/* The app's signature three-stop gradient, walking one hue
-                      with rank — replaces a flat hard-coded #ef4444 that sat
-                      outside the token set and read as "danger" on every bar
-                      equally, including the smallest. */}
-                  <defs>
-                    {downtimeChartData.map((_, i) => {
-                      const hue = 260 - i * 6;
-                      return (
-                        <linearGradient key={i} id={`loss-dt-${i}`} x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor={`oklch(0.78 0.18 ${hue})`} />
-                          <stop offset="55%" stopColor={`oklch(0.6 0.18 ${hue})`} />
-                          <stop offset="100%" stopColor={`oklch(0.42 0.16 ${hue})`} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <XAxis
-                    type="number"
-                    tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={isMobile ? 78 : 150}
-                    tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--color-popover)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    formatter={(value: number) => [formatDuration(value * 60_000), "Downtime"]}
-                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                  />
-                  <Bar dataKey="minutes" radius={[0, 6, 6, 0]}>
-                    {downtimeChartData.map((_, i) => (
-                      <Cell key={i} fill={`url(#loss-dt-${i})`} />
-                    ))}
-                    <LabelList
-                      dataKey="minutes"
-                      position="right"
-                      formatter={(v: number) => formatDuration(v * 60_000)}
-                      style={{ fontSize: 10.5, fill: "var(--color-foreground)", fontWeight: 600 }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <h3 className="text-sm font-semibold">Top Losses by Frequency</h3>
-        </CardHeader>
-        <CardContent>
-          {frequencyChartData.length === 0 ? (
-            <EmptyMiniState />
-          ) : (
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={frequencyChartData}
-                  layout="vertical"
-                  margin={{ top: 4, right: 58, left: 4, bottom: 4 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="var(--color-border)"
-                    horizontal={false}
-                  />
-                  <defs>
-                    {frequencyChartData.map((_, i) => {
-                      const hue = 260 - i * 6;
-                      return (
-                        <linearGradient key={i} id={`loss-fq-${i}`} x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor={`oklch(0.78 0.18 ${hue})`} />
-                          <stop offset="55%" stopColor={`oklch(0.6 0.18 ${hue})`} />
-                          <stop offset="100%" stopColor={`oklch(0.42 0.16 ${hue})`} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <XAxis
-                    type="number"
-                    allowDecimals={false}
-                    tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={isMobile ? 78 : 150}
-                    tick={{ fontSize: 11, fill: "var(--color-foreground)" }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--color-popover)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                    formatter={(value: number) => [
-                      `${value} event${value === 1 ? "" : "s"}`,
-                      "Frequency",
-                    ]}
-                    labelFormatter={(_l, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                  />
-                  <Bar dataKey="count" radius={[0, 6, 6, 0]}>
-                    {frequencyChartData.map((_, i) => (
-                      <Cell key={i} fill={`url(#loss-fq-${i})`} />
-                    ))}
-                    <LabelList
-                      dataKey="count"
-                      position="right"
-                      formatter={(v: number) => `${v}x`}
-                      style={{ fontSize: 10.5, fill: "var(--color-foreground)", fontWeight: 600 }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+          <RankedLosses byDowntime={topLossesByDowntime} byFrequency={topLossesByFrequency} />
         </CardContent>
       </Card>
 

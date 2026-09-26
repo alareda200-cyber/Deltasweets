@@ -87,7 +87,11 @@ export function TargetsPreview({
       </div>
 
       {lines.length > 1 && (
-        <div role="group" aria-label="Line" className="scrollbar-hide -mx-1 flex gap-1.5 overflow-x-auto px-1">
+        <div
+          role="group"
+          aria-label="Line"
+          className="scrollbar-hide -mx-1 flex gap-1.5 overflow-x-auto px-1"
+        >
           {lines.map((l) => (
             <button
               key={l.id}
@@ -111,8 +115,8 @@ export function TargetsPreview({
         <div className="ds-shimmer h-40 rounded-lg" aria-hidden="true" />
       ) : days.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-          No {stageLabel.toLowerCase()} plan recorded for {line?.name ?? "this line"} this month
-          yet — nothing to judge against the target.
+          No {stageLabel.toLowerCase()} plan recorded for {line?.name ?? "this line"} this month yet
+          — nothing to judge against the target.
         </p>
       ) : (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -164,10 +168,7 @@ export function TargetsPreview({
                 return (
                   <div key={d.date} className="relative flex h-full min-w-0 flex-1 items-end">
                     <div
-                      className={cn(
-                        "w-full rounded-t-sm",
-                        hit ? "bg-warning" : "bg-primary/70",
-                      )}
+                      className={cn("w-full rounded-t-sm", hit ? "bg-warning" : "bg-primary/70")}
                       style={{
                         height: `${Math.min(100, (d.pct / top) * 100)}%`,
                         transition: "background-color 260ms ease",

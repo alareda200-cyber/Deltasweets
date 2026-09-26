@@ -61,7 +61,13 @@ function LoginPage() {
       : focus === "email"
         ? { kind: "look", x: -3.5 + Math.min(7, email.length * 0.28), y: 4 }
         : { kind: "look", x: 0, y: 0 };
-  const mouth: JarMouth = error ? "sad" : submitting ? "wait" : focus === "email" ? "curious" : "ok";
+  const mouth: JarMouth = error
+    ? "sad"
+    : submitting
+      ? "wait"
+      : focus === "email"
+        ? "curious"
+        : "ok";
   const fill = submitting ? 70 : Math.min(40, email.length * 1.5 + password.length * 3);
 
   return (
@@ -111,7 +117,10 @@ function LoginPage() {
               className="h-[52px] rounded-xl px-3.5 text-[17px] md:h-12 md:rounded-[10px] md:text-base"
             />
           </div>
-          <div key={shakeKey} className={shakeKey ? "ds-shake flex flex-col gap-1.5" : "flex flex-col gap-1.5"}>
+          <div
+            key={shakeKey}
+            className={shakeKey ? "ds-shake flex flex-col gap-1.5" : "flex flex-col gap-1.5"}
+          >
             <div className="flex items-center justify-between">
               <Label htmlFor="password" className="text-sm font-semibold">
                 Password
