@@ -4,7 +4,11 @@
 // from the maintenance_events INSERT trigger (see migration
 // 20260805121000_maintenance_events_push_trigger.sql), and can also be
 // invoked directly (e.g. from an admin tool) with a JSON body:
-//   { title: string, body: string, url?: string, user_ids?: string[] }
+//   { title: string, body: string, url?: string, user_ids?: string[],
+//     topic?: "fault" | "entry" }
+//
+// `topic` limits the send to devices that chose it (push_subscriptions.topics,
+// migration 20260926120000). Without a topic every device gets it.
 //
 // This function is NOT meant to be reachable from the browser: it can
 // message any user, so `verify_jwt = false` in config.toml plus the
@@ -19,11 +23,13 @@ interface SendPushRequest {
   body: string;
   url?: string;
   user_ids?: string[];
+  topic?: "fault" | "entry";
 }
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-function-secret",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-function-secret",
 };
 
 Deno.serve(async (req) => {
@@ -76,6 +82,9 @@ Deno.serve(async (req) => {
   let query = supabase.from("push_subscriptions").select("id, subscription");
   if (payload.user_ids && payload.user_ids.length > 0) {
     query = query.in("user_id", payload.user_ids);
+  }
+  if (payload.topic) {
+    query = query.contains("topics", [payload.topic]);
   }
   const { data: rows, error } = await query;
 

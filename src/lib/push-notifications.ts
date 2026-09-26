@@ -3,8 +3,38 @@ import type { Json } from "@/integrations/supabase/types";
 
 export type PushPermissionState = "granted" | "denied" | "default" | "unsupported";
 
+/** What a device hears about. Stored per device on push_subscriptions.topics. */
+export type PushTopic = "fault" | "entry";
+export const ALL_TOPICS: PushTopic[] = ["fault", "entry"];
+
 export function isPushSupported(): boolean {
   return typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
+}
+
+/** iPhone / iPad (iPadOS reports itself as a Mac with touch). */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return (
+    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
+/** Opened from the Home Screen icon rather than a Safari tab. */
+export function isStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.matchMedia?.("(display-mode: standalone)").matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}
+
+/**
+ * Safari on iPhone only offers web push to a site that was added to the Home
+ * Screen and opened from there — in a normal tab PushManager doesn't exist.
+ */
+export function iosNeedsHomeScreen(): boolean {
+  return isIOS() && !isStandalone() && !isPushSupported();
 }
 
 export function getPermissionState(): PushPermissionState {
@@ -39,7 +69,9 @@ export async function getCurrentSubscription(): Promise<PushSubscription | null>
   return registration.pushManager.getSubscription();
 }
 
-export async function subscribeToPush(): Promise<{ error: string | null }> {
+export async function subscribeToPush(
+  topics: PushTopic[] = ALL_TOPICS,
+): Promise<{ error: string | null }> {
   if (!isPushSupported()) return { error: "Push notifications are not supported in this browser." };
 
   const permission = await requestPermission();
@@ -74,6 +106,7 @@ export async function subscribeToPush(): Promise<{ error: string | null }> {
   const { error } = await supabase.from("push_subscriptions").insert({
     user_id: user.id,
     subscription: subscription.toJSON() as unknown as Json,
+    topics,
   });
 
   return { error: error ? error.message : null };
@@ -94,4 +127,32 @@ export async function unsubscribeFromPush(): Promise<{ error: string | null }> {
     .eq("subscription->>endpoint", endpoint);
 
   return { error: error ? error.message : null };
+}
+
+/** The topics saved for this device, or null when it isn't subscribed. */
+export async function getMyTopics(): Promise<PushTopic[] | null> {
+  const subscription = await getCurrentSubscription();
+  if (!subscription) return null;
+  const { data } = await supabase
+    .from("push_subscriptions")
+    .select("topics")
+    .eq("subscription->>endpoint", subscription.endpoint)
+    .maybeSingle();
+  return (data?.topics as PushTopic[] | undefined) ?? null;
+}
+
+/** Change what this (already subscribed) device hears about. */
+export async function updateTopics(topics: PushTopic[]): Promise<{ error: string | null }> {
+  const subscription = await getCurrentSubscription();
+  if (!subscription) return { error: "Notifications are not turned on on this device." };
+  const { data, error } = await supabase
+    .from("push_subscriptions")
+    .update({ topics })
+    .eq("subscription->>endpoint", subscription.endpoint)
+    .select("id");
+  if (error) return { error: error.message };
+  // The browser still has a subscription but the row is gone (cleared as
+  // stale, or saved by another account): save it again.
+  if (!data?.length) return subscribeToPush(topics);
+  return { error: null };
 }
