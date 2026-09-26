@@ -378,9 +378,14 @@ function ThemeToggle() {
 
 // Brand panel for the signed-out pages (/login, /reset-password): stacked on top on a phone, the
 // left half of a split layout from md up.
-export function AuthBrandPanel() {
+export function AuthBrandPanel({ mascot }: { mascot?: ReactNode } = {}) {
   return (
-    <div className="flex flex-col gap-5 bg-primary px-6 pb-8 pt-10 text-primary-foreground md:min-h-screen md:px-[72px] md:py-16">
+    <div className="relative flex flex-col gap-5 bg-primary px-6 pb-8 pt-10 text-primary-foreground md:min-h-screen md:px-[72px] md:py-16">
+      {mascot && (
+        <div className="absolute bottom-3 right-4 md:static md:order-last md:mt-auto md:self-start">
+          {mascot}
+        </div>
+      )}
       <div className="flex items-center gap-2.5 md:gap-3">
         <span
           aria-hidden="true"
@@ -390,7 +395,7 @@ export function AuthBrandPanel() {
         </span>
         <span className="text-[17px] font-bold md:text-lg">Delta Sweets</span>
       </div>
-      <div className="flex max-w-[520px] flex-col gap-4 md:my-auto md:pb-16">
+      <div className={cn("flex max-w-[520px] flex-col gap-4 md:my-auto md:pb-16", mascot && "pr-24 md:pr-0")}>
         <p className="text-[28px] font-bold leading-[1.15] md:text-[44px] md:leading-[1.1]">
           Production scorecard
         </p>
@@ -409,11 +414,17 @@ export function PasswordInput({
   autoComplete,
   value,
   onChange,
+  onVisibleChange,
+  onFocus,
+  onBlur,
 }: {
   id: string;
   autoComplete: string;
   value: string;
   onChange: (v: string) => void;
+  onVisibleChange?: (visible: boolean) => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }) {
   const [visible, setVisible] = useState(false);
   return (
@@ -425,11 +436,16 @@ export function PasswordInput({
         required
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
         className="h-[52px] rounded-xl pl-3.5 pr-16 text-[17px] md:h-12 md:rounded-[10px] md:text-base"
       />
       <button
         type="button"
-        onClick={() => setVisible((v) => !v)}
+        onClick={() => {
+          setVisible(!visible);
+          onVisibleChange?.(!visible);
+        }}
         aria-label={visible ? "Hide password" : "Show password"}
         aria-controls={id}
         className="absolute right-1 top-1 h-11 rounded-lg px-3 text-[15px] font-semibold text-primary hover:bg-muted md:right-0.5 md:top-0.5 md:text-sm"

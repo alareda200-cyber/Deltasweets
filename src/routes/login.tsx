@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { AuthBrandPanel, PasswordInput } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Loader2 } from "lucide-react";
+import { WatchingJar, type JarGaze, type JarMouth } from "@/components/motion";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -24,6 +25,11 @@ function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgotOpen, setForgotOpen] = useState(false);
+  // The jar in the brand panel reacts to the form: which field has focus,
+  // whether the password is shown, and how the sign-in went.
+  const [focus, setFocus] = useState<"email" | "password" | null>(null);
+  const [pwVisible, setPwVisible] = useState(false);
+  const [shakeKey, setShakeKey] = useState(0);
 
   useEffect(() => {
     if (!loading && session && !shouldSuppressRedirect("/")) navigate({ to: "/" });
@@ -38,14 +44,39 @@ function LoginPage() {
     setSubmitting(false);
     if (signInError) {
       setError(signInError);
+      // The field re-mounts to replay the shake, which resets its show/hide.
+      setPwVisible(false);
+      setShakeKey((k) => k + 1);
       return;
     }
     navigate({ to: "/" });
   }
 
+  const gaze: JarGaze = submitting
+    ? { kind: "look", x: 0, y: -3 }
+    : focus === "password"
+      ? pwVisible
+        ? { kind: "peek" }
+        : { kind: "closed" }
+      : focus === "email"
+        ? { kind: "look", x: -3.5 + Math.min(7, email.length * 0.28), y: 4 }
+        : { kind: "look", x: 0, y: 0 };
+  const mouth: JarMouth = error ? "sad" : submitting ? "wait" : focus === "email" ? "curious" : "ok";
+  const fill = submitting ? 70 : Math.min(40, email.length * 1.5 + password.length * 3);
+
   return (
     <div className="min-h-screen bg-background text-foreground md:grid md:grid-cols-2">
-      <AuthBrandPanel />
+      <AuthBrandPanel
+        mascot={
+          <WatchingJar
+            gaze={gaze}
+            mouth={mouth}
+            fillPct={fill}
+            tone={error ? "destructive" : "warning"}
+            className="h-24 w-24 md:h-56 md:w-56"
+          />
+        }
+      />
       <main className="px-6 py-7 md:flex md:items-center md:justify-center md:p-16">
         <form
           onSubmit={handleSubmit}
@@ -71,11 +102,16 @@ function LoginPage() {
               placeholder="name@company.com"
               required
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError(null);
+              }}
+              onFocus={() => setFocus("email")}
+              onBlur={() => setFocus(null)}
               className="h-[52px] rounded-xl px-3.5 text-[17px] md:h-12 md:rounded-[10px] md:text-base"
             />
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div key={shakeKey} className={shakeKey ? "ds-shake flex flex-col gap-1.5" : "flex flex-col gap-1.5"}>
             <div className="flex items-center justify-between">
               <Label htmlFor="password" className="text-sm font-semibold">
                 Password
@@ -92,11 +128,17 @@ function LoginPage() {
               id="password"
               autoComplete="current-password"
               value={password}
-              onChange={setPassword}
+              onChange={(v) => {
+                setPassword(v);
+                setError(null);
+              }}
+              onVisibleChange={setPwVisible}
+              onFocus={() => setFocus("password")}
+              onBlur={() => setFocus(null)}
             />
           </div>
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="ds-slide-in text-sm text-destructive">
               {error}
             </p>
           )}

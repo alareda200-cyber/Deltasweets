@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Upload } from "lucide-react";
+import { Check, Download, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import type { ProductionTargets } from "@/lib/queries";
+import { TargetsPreview } from "./TargetsPreview";
 import { ConfirmDialog, SectionHeader, WarningNote, type QC } from "./shared";
 
 const BACKUP_TABLES = [
@@ -401,6 +403,13 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
   });
   const [values, setValues] = useState<Record<TargetKey, string>>(() => toText(targets));
   const [saving, setSaving] = useState(false);
+  // Brief "Saved ✓" on the button after a successful save.
+  const [justSaved, setJustSaved] = useState(false);
+  useEffect(() => {
+    if (!justSaved) return;
+    const t = setTimeout(() => setJustSaved(false), 1600);
+    return () => clearTimeout(t);
+  }, [justSaved]);
 
   // Stay in sync if the row changes from outside (another admin, another tab).
   useEffect(() => {
@@ -442,6 +451,7 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
         .eq("id", true);
       if (error) throw error;
       toast.success("Targets saved");
+      setJustSaved(true);
       void logAudit("settings.update", "app_settings", "true", next);
       // Prefix match: refreshes ["app-settings", "targets"] on every page.
       qc.invalidateQueries({ queryKey: ["app-settings"] });
@@ -479,6 +489,19 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
                     aria-describedby={`${id}-hint`}
                     className="h-11 w-full md:h-9 md:w-40"
                   />
+                  {(f.key === "makingPct" || f.key === "packingPct") && (
+                    // Drag to try a target; the preview below re-judges the month live.
+                    <input
+                      type="range"
+                      min={50}
+                      max={100}
+                      step={1}
+                      aria-label={`${f.label} slider`}
+                      value={Number.isFinite(v) ? Math.min(100, Math.max(50, v)) : 90}
+                      onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
+                      className="h-11 w-full cursor-pointer accent-primary md:h-8 md:w-64"
+                    />
+                  )}
                   <p id={`${id}-hint`} className="text-xs text-muted-foreground">
                     {errors[f.key] ? (
                       <span className="font-medium text-destructive-strong">{errors[f.key]}</span>
@@ -492,13 +515,33 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
               );
             })}
           </div>
+          <TargetsPreview
+            makingPct={errors.makingPct ? null : Number(values.makingPct)}
+            packingPct={errors.packingPct ? null : Number(values.packingPct)}
+          />
           <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
             <Button
               onClick={handleSave}
               disabled={saving || !dirty || hasErrors}
-              className="h-11 md:h-9"
+              aria-live="polite"
+              className={cn(
+                "h-11 md:h-9",
+                justSaved && "bg-success text-success-foreground hover:bg-success/90",
+              )}
             >
-              {saving ? "Saving…" : "Save targets"}
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : justSaved ? (
+                <span className="ds-pop-in flex items-center gap-2">
+                  <Check aria-hidden="true" />
+                  Saved
+                </span>
+              ) : (
+                "Save targets"
+              )}
             </Button>
             {dirty && (
               <Button

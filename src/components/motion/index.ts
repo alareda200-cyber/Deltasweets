@@ -6,3 +6,5 @@ export { useGummyBurst } from "./useGummyBurst";
 export { useTilt } from "./useTilt";
 export { useSpring } from "./useSpring";
 export { GummyBearShape, CANDY } from "./GummyBear";
+export { WatchingJar } from "./WatchingJar";
+export type { JarGaze, JarMouth } from "./WatchingJar";
