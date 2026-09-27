@@ -19,6 +19,7 @@ import {
   entryDowntimesForEntriesQuery,
   linesQuery,
   maintenanceEventsQuery,
+  type MaintenanceEvent,
 } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
@@ -46,18 +47,25 @@ export const Route = createFileRoute("/replay")({
 });
 
 const DAY = 1440;
-/** Replay speed: day-minutes per wall-clock second (1× = 30, so 48 s of running time). */
+/**
+ * Replay speed: day-minutes per wall-clock second while the line runs.
+ * 1× = 15, so a running stretch of ~25 min (the usual gap between Gelatin's
+ * servo stops) takes ~1.7 s on screen instead of flashing past.
+ */
+const BASE_SPEED = 15;
 const SPEEDS = [
-  { label: "1×", v: 30 },
-  { label: "2×", v: 60 },
-  { label: "4×", v: 120 },
+  { label: "1×", v: BASE_SPEED },
+  { label: "2×", v: BASE_SPEED * 2 },
+  { label: "4×", v: BASE_SPEED * 4 },
 ] as const;
 /**
- * Wall-clock seconds a stop of `len` minutes takes on screen, at any speed:
- * slowed down so a one-minute stop is seen (≥ 0.55 s), capped so a long one
- * doesn't drag (≤ 2.6 s).
+ * Wall-clock seconds a stop of `len` minutes is held on screen at 1×: long
+ * enough to read the fault's name (≥ 1.3 s even for a 1-minute stop), capped
+ * so an 8-hour preventive job doesn't drag (≤ 3.5 s). Faster speeds shorten
+ * the hold in proportion, never below 0.4 s.
  */
-const stopSeconds = (len: number) => Math.max(0.55, Math.min(2.6, len * 0.22));
+const stopSeconds = (len: number, speed: number = BASE_SPEED) =>
+  Math.max(0.4, Math.max(1.3, Math.min(3.5, 1 + len * 0.1)) * (BASE_SPEED / speed));
 
 /**
  * Move the replay clock on by `dt` wall-clock seconds. Runs at `speed` while
@@ -68,7 +76,7 @@ function advance(t: number, dt: number, speed: number, windows: StopWindow[]) {
   let rem = dt;
   while (rem > 1e-6 && t < DAY) {
     const w = windows.find((x) => t >= x.s && t < x.e);
-    const rate = w ? (w.e - w.s) / stopSeconds(w.e - w.s) : speed;
+    const rate = w ? (w.e - w.s) / stopSeconds(w.e - w.s, speed) : speed;
     const edge = w ? w.e : (windows.find((x) => x.s > t)?.s ?? DAY);
     const need = (edge - t) / rate;
     if (need >= rem) {
@@ -92,6 +100,8 @@ interface StopWindow {
   s: number;
   e: number;
   titles: string[];
+  /** Only preventive work in this window — a planned stop, not a fault. */
+  planned: boolean;
 }
 
 function shiftDate(date: string, days: number): string {
@@ -134,41 +144,64 @@ function ReplayPage() {
     const dayStart = new Date(`${date}T00:00:00`).getTime();
     const now = Date.now();
     const toMin = (ms: number) => Math.max(0, Math.min(DAY, (ms - dayStart) / 60_000));
-    const faults: Fault[] = (eventsQ.data ?? [])
+    const toSpan = (e: MaintenanceEvent): Fault => ({
+      s: toMin(new Date(e.started_at).getTime()),
+      e: toMin(e.resolved_at ? new Date(e.resolved_at).getTime() : now),
+      title: e.title.trim(),
+      stops: e.stops_line,
+    });
+    const byStart = (a: Fault, b: Fault) => a.s - b.s;
+    const events = eventsQ.data ?? [];
+    // Faults are what the Faults count shows; preventive work is not a fault,
+    // but it does stop the line (when marked so), so it gets a window too.
+    const faults: Fault[] = events
       .filter((e) => e.type !== "preventive")
-      .map((e) => ({
-        s: toMin(new Date(e.started_at).getTime()),
-        e: toMin(e.resolved_at ? new Date(e.resolved_at).getTime() : now),
-        title: e.title.trim(),
-        stops: e.stops_line,
-      }))
+      .map(toSpan)
       .filter((f) => f.s < DAY)
-      .sort((a, b) => a.s - b.s);
-    // A stoppage is one time window: overlapping line-stopping faults are
-    // merged, never added up.
+      .sort(byStart);
+    const preventive: Fault[] = events
+      .filter((e) => e.type === "preventive")
+      .map(toSpan)
+      .filter((f) => f.s < DAY)
+      .sort(byStart);
+    // A stoppage is one time window: overlapping line-stopping events are
+    // merged, never added up. A window is "planned" only if nothing but
+    // preventive work is in it.
     const windows: StopWindow[] = [];
-    for (const f of faults.filter((x) => x.stops && x.e > x.s)) {
+    const stopping = [
+      ...faults.filter((x) => x.stops && x.e > x.s).map((f) => ({ ...f, planned: false })),
+      ...preventive.filter((x) => x.stops && x.e > x.s).map((f) => ({ ...f, planned: true })),
+    ].sort(byStart);
+    for (const f of stopping) {
       const last = windows[windows.length - 1];
       if (last && f.s <= last.e) {
         last.e = Math.max(last.e, f.e);
-        last.titles.push(f.title);
-      } else windows.push({ s: f.s, e: f.e, titles: [f.title] });
+        if (last.planned && !f.planned) last.titles.unshift(f.title);
+        else last.titles.push(f.title);
+        last.planned = last.planned && f.planned;
+      } else windows.push({ s: f.s, e: f.e, titles: [f.title], planned: f.planned });
     }
     const stopMin = windows.reduce((a, w) => a + (w.e - w.s), 0);
+    const plannedMin = windows.reduce((a, w) => a + (w.planned ? w.e - w.s : 0), 0);
     const entries = entriesQ.data ?? [];
     const actual = entries.reduce((a, e) => a + (e.making_actual ?? 0), 0);
     const plan = entries.reduce((a, e) => a + (e.making_plan ?? 0), 0);
     const rate = actual > 0 ? actual / Math.max(1, DAY - stopMin) : 0;
-    const stoppedBefore = (t: number) =>
-      windows.reduce((a, w) => a + Math.max(0, Math.min(t, w.e) - w.s), 0);
+    const stoppedBefore = (t: number, planned?: boolean) =>
+      windows.reduce(
+        (a, w) =>
+          planned === undefined || w.planned === planned
+            ? a + Math.max(0, Math.min(t, w.e) - w.s)
+            : a,
+        0,
+      );
     const windowAt = (t: number) => windows.find((w) => t >= w.s && t < w.e) ?? null;
     const byTitle = new Map<string, number>();
     for (const f of faults) byTitle.set(f.title, (byTitle.get(f.title) ?? 0) + 1);
     const topTitle = [...byTitle.entries()].sort((a, b) => b[1] - a[1])[0];
-    const longest = windows.reduce<StopWindow | null>(
-      (m, w) => (!m || w.e - w.s > m.e - m.s ? w : m),
-      null,
-    );
+    const longest = windows
+      .filter((w) => !w.planned)
+      .reduce<StopWindow | null>((m, w) => (!m || w.e - w.s > m.e - m.s ? w : m), null);
     // How long the whole day takes to play at 1×: running time at the base
     // speed plus the slowed-down stops (see the clock below).
     const seconds =
@@ -176,8 +209,10 @@ function ReplayPage() {
     return {
       seconds,
       faults,
+      preventive,
       windows,
       stopMin,
+      plannedMin,
       actual,
       plan,
       rate,
@@ -199,7 +234,7 @@ function ReplayPage() {
   const sim = useRef({
     t: 0,
     playing: false,
-    speed: 30,
+    speed: SPEEDS[0].v as number,
     real: 0,
     belt: 0,
     spawn: 0,
@@ -303,11 +338,14 @@ function ReplayPage() {
   const kg = model.kgAt(t);
   const passed = model.faults.filter((f) => f.s <= t);
   const stoppedSoFar = model.stoppedBefore(t);
+  const faultStopSoFar = model.stoppedBefore(t, false);
+  const plannedSoFar = model.stoppedBefore(t, true);
   const done = t >= DAY && !s.playing;
   const scene: SceneState = {
     running: s.playing && !w,
     faultTitle: w ? w.titles[0] + (w.titles.length > 1 ? ` +${w.titles.length - 1}` : "") : null,
     faultMinutes: w ? Math.max(1, Math.round(w.e - w.s)) : 0,
+    planned: !!w?.planned,
     real: s.real,
     belt: s.belt,
     gummies: s.gummies,
@@ -349,8 +387,12 @@ function ReplayPage() {
                 month: "short",
                 year: "numeric",
               })}{" "}
-              · the day in about {Math.max(5, Math.round(model.seconds / 5) * 5)} seconds at 1×. The
-              line stops for every machine fault that stopped it.
+              · the day in about{" "}
+              {model.seconds < 90
+                ? `${Math.max(5, Math.round(model.seconds / 5) * 5)} seconds`
+                : `${Math.round(model.seconds / 30) / 2} minutes`}{" "}
+              at 1×. The line stops for every machine fault that stopped it and for preventive
+              maintenance.
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -459,8 +501,14 @@ function ReplayPage() {
             {
               k: "Clock",
               v: clock(t),
-              sub: w ? "line stopped" : s.playing ? "running" : "paused",
-              tone: w ? "text-destructive-strong" : "",
+              sub: w
+                ? w.planned
+                  ? "preventive maintenance"
+                  : "line stopped"
+                : s.playing
+                  ? "running"
+                  : "paused",
+              tone: w ? (w.planned ? "text-chart-1" : "text-destructive-strong") : "",
             },
             {
               k: "Made so far",
@@ -483,7 +531,10 @@ function ReplayPage() {
             {
               k: "Stopped",
               v: canFaults ? `${Math.round(stoppedSoFar)} min` : "—",
-              sub: "by machine faults",
+              sub:
+                canFaults && model.plannedMin > 0
+                  ? `${Math.round(faultStopSoFar)} faults · ${Math.round(plannedSoFar)} preventive`
+                  : "by machine faults",
               tone: "",
             },
           ].map((x) => (
@@ -513,7 +564,11 @@ function ReplayPage() {
           style={{ animationDelay: "180ms" }}
         >
           <p className="sr-only" aria-live="polite">
-            {w ? `${clock(t)}: line stopped by ${scene.faultTitle}` : ""}
+            {w
+              ? w.planned
+                ? `${clock(t)}: line stopped for preventive maintenance, ${scene.faultTitle}`
+                : `${clock(t)}: line stopped by ${scene.faultTitle}`
+              : ""}
           </p>
           <ReplayScene s={scene} lineName={line?.name ?? ""} compact={isMobile} />
         </section>
@@ -528,8 +583,8 @@ function ReplayPage() {
               Kilograms through the day
             </h2>
             <span className="text-xs text-muted-foreground">
-              red = faults that stopped the line · amber = faults with the line running · the curve
-              is modelled from the day total
+              red = faults that stopped the line · amber = faults with the line running · blue =
+              preventive maintenance · the curve is modelled from the day total
             </span>
           </div>
           <svg
@@ -578,6 +633,18 @@ function ReplayPage() {
                 />
               </>
             )}
+            {model.preventive.map((f, i) => (
+              <rect
+                key={`pm-${i}`}
+                x={xOf(f.s)}
+                y="128"
+                width={Math.max(2.5, xOf(f.e) - xOf(f.s))}
+                height="14"
+                rx="1.5"
+                opacity={(f.s <= t ? 1 : 0.3) * (f.stops ? 1 : 0.5)}
+                style={{ fill: "var(--chart-1)" }}
+              />
+            ))}
             {model.faults.map((f, i) => (
               <rect
                 key={i}
@@ -674,7 +741,10 @@ function ReplayPage() {
                   {model.faults.length}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  faults · {Math.round(model.stopMin)} min stopped
+                  faults · {Math.round(model.stopMin - model.plannedMin)} min stopped
+                  {model.plannedMin > 0
+                    ? ` · + ${Math.round(model.plannedMin)} min preventive`
+                    : ""}
                 </div>
               </div>
               <div className="rounded-xl bg-muted p-3">

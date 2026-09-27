@@ -6,6 +6,8 @@ export interface SceneState {
   /** A fault is stopping the line right now. */
   faultTitle: string | null;
   faultMinutes: number;
+  /** The stop is preventive maintenance (planned), not a fault. */
+  planned?: boolean;
   /** Seconds of wall-clock time, for decorative motion. */
   real: number;
   /** Belt travel in px, advances only while running. */
@@ -33,12 +35,16 @@ export function ReplayScene({
   compact?: boolean;
 }) {
   const bob = s.running ? 7 * Math.abs(Math.sin(s.real * 7)) : 0;
-  const chipW = s.faultTitle ? Math.max(150, (s.faultTitle.length + 8) * 8 + 24) : 0;
+  // Title + " · NNN min" at 15px bold is ~9px a character, plus padding.
+  const chipW = s.faultTitle ? Math.max(150, (s.faultTitle.length + 11) * 9 + 24) : 0;
   const chipX = Math.max(170, 327 - chipW / 2);
   const rollers: number[] = [];
   for (let x = 244; x <= 1148; x += 100.4) rollers.push(x);
+  const stopFill = s.planned ? "var(--chart-1)" : "var(--destructive)";
   const lamp = s.faultTitle
-    ? "var(--warning)"
+    ? s.planned
+      ? "var(--chart-1)"
+      : "var(--warning)"
     : s.running
       ? "var(--success)"
       : "var(--muted-foreground)";
@@ -66,7 +72,9 @@ export function ReplayScene({
         {s.clock}
       </text>
       <text x="24" y="58" fontSize="13" style={{ fill: "var(--muted-foreground)" }}>
-        {s.faultTitle ? `stopped — ${s.faultTitle}` : `${lineName} line`}
+        {s.faultTitle
+          ? `${s.planned ? "planned stop" : "stopped"} — ${s.faultTitle}`
+          : `${lineName} line`}
       </text>
 
       {/* Cooking */}
@@ -124,7 +132,8 @@ export function ReplayScene({
         r="9"
         style={{
           fill: lamp,
-          animation: s.faultTitle ? "ds-twinkle 600ms ease-in-out infinite" : undefined,
+          animation:
+            s.faultTitle && !s.planned ? "ds-twinkle 600ms ease-in-out infinite" : undefined,
         }}
       />
       <g transform={`translate(0 ${bob.toFixed(1)})`}>
@@ -244,22 +253,15 @@ export function ReplayScene({
           className="ds-pop-in"
           style={{ transformBox: "fill-box", transformOrigin: "center bottom" }}
         >
-          <rect
-            x={chipX}
-            y="6"
-            width={chipW}
-            height="38"
-            rx="12"
-            style={{ fill: "var(--destructive)" }}
-          />
-          <path d="M320 44 l7 8 7 -8 Z" style={{ fill: "var(--destructive)" }} />
+          <rect x={chipX} y="6" width={chipW} height="38" rx="12" style={{ fill: stopFill }} />
+          <path d="M320 44 l7 8 7 -8 Z" style={{ fill: stopFill }} />
           <text
             x={chipX + chipW / 2}
             y="30"
             textAnchor="middle"
             fontSize="15"
             fontWeight="700"
-            style={{ fill: "var(--destructive-foreground)" }}
+            style={{ fill: s.planned ? "#ffffff" : "var(--destructive-foreground)" }}
           >
             {s.faultTitle} · {s.faultMinutes} min
           </text>
