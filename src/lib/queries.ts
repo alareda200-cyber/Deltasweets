@@ -31,6 +31,8 @@ export interface ProductionLine {
   color: string;
   sort_order: number;
   is_active: boolean;
+  /** The unit making is also counted in (e.g. "pallets"); null = kg only. */
+  making_count_unit: string | null;
 }
 
 export interface LineFieldDef {
@@ -211,6 +213,9 @@ export interface DailyEntry {
   comments: string | null;
   making_plan: number;
   making_actual: number;
+  /** Making in the line's count unit (pallets, pcs…); null = not counted. */
+  making_plan_count: number | null;
+  making_actual_count: number | null;
   packing_plan: number;
   packing_actual: number;
   available_min: number;
@@ -1381,6 +1386,8 @@ export interface ProductionTargets {
   lossPct: number;
   /** Rework ceiling, % of making output. null = no target set. */
   reworkPct: number | null;
+  /** Making count (pallets, pcs…) adherence target, % of plan. null = none. */
+  makingCountPct: number | null;
 }
 
 // What the app used before targets were editable — also the fallback when the
@@ -1390,6 +1397,7 @@ export const DEFAULT_TARGETS: ProductionTargets = {
   packingPct: 90,
   lossPct: 10,
   reworkPct: null,
+  makingCountPct: null,
 };
 
 function targetNumber(v: unknown): number | null {
@@ -1404,6 +1412,7 @@ export function targetsFromRow(row: Record<string, unknown> | null | undefined):
     packingPct: targetNumber(row.target_packing_pct) ?? DEFAULT_TARGETS.packingPct,
     lossPct: targetNumber(row.target_loss_pct) ?? DEFAULT_TARGETS.lossPct,
     reworkPct: targetNumber(row.target_rework_pct),
+    makingCountPct: targetNumber(row.target_making_count_pct),
   };
 }
 

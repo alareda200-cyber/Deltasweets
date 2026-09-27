@@ -17,6 +17,9 @@ export type OwnerSelections = Record<string, { ownerId: string; score: string }>
 export interface EntryFormValues {
   makingPlan: string;
   makingActual: string;
+  /** Making in the line's count unit (pallets, pcs…). "" = not counted. */
+  makingPlanCount: string;
+  makingActualCount: string;
   packingPlan: string;
   packingActual: string;
   availableMin: string;
@@ -38,6 +41,8 @@ export function emptyValues(): EntryFormValues {
   return {
     makingPlan: "",
     makingActual: "",
+    makingPlanCount: "",
+    makingActualCount: "",
     packingPlan: "",
     packingActual: "",
     availableMin: DEFAULT_AVAILABLE_MIN,
@@ -54,6 +59,8 @@ export function emptyValues(): EntryFormValues {
 export interface EntryRowLike {
   making_plan: number;
   making_actual: number;
+  making_plan_count?: number | string | null;
+  making_actual_count?: number | string | null;
   packing_plan: number;
   packing_actual: number;
   available_min: number;
@@ -85,6 +92,9 @@ export function valuesFromRows(
   return {
     makingPlan: String(entry.making_plan),
     makingActual: String(entry.making_actual),
+    makingPlanCount: entry.making_plan_count == null ? "" : String(Number(entry.making_plan_count)),
+    makingActualCount:
+      entry.making_actual_count == null ? "" : String(Number(entry.making_actual_count)),
     packingPlan: String(entry.packing_plan),
     packingActual: String(entry.packing_actual),
     availableMin: String(entry.available_min),
@@ -168,6 +178,8 @@ function customKey(c: Record<string, string>): string {
 const FIELD_NAMES: Record<keyof EntryFormValues, string> = {
   makingPlan: "Making plan",
   makingActual: "Making actual",
+  makingPlanCount: "Making count plan",
+  makingActualCount: "Making count actual",
   packingPlan: "Packing plan",
   packingActual: "Packing actual",
   availableMin: "Available time",
@@ -190,6 +202,8 @@ export function changedFields(a: EntryFormValues, b: EntryFormValues): string[] 
   const scalar = [
     "makingPlan",
     "makingActual",
+    "makingPlanCount",
+    "makingActualCount",
     "packingPlan",
     "packingActual",
     "availableMin",
@@ -254,6 +268,8 @@ export function decideSwitch(args: {
 export type NumericField =
   | "makingPlan"
   | "makingActual"
+  | "makingPlanCount"
+  | "makingActualCount"
   | "packingPlan"
   | "packingActual"
   | "availableMin"
@@ -292,6 +308,8 @@ export function validateValues(
     for (const k of [
       "makingPlan",
       "makingActual",
+      "makingPlanCount",
+      "makingActualCount",
       "packingPlan",
       "packingActual",
       "reworkCooking",
@@ -369,4 +387,12 @@ export function formatSavedAt(isoTs: string): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${day} ${month} ${hh}:${mm}`;
+}
+
+/** A count field as the database stores it: "" (not counted) is NULL. */
+export function countOrNull(v: string): number | null {
+  const t = v.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }

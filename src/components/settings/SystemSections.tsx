@@ -347,7 +347,7 @@ export function ReliabilitySection({
 // every signed-in user reads them, only admins update.
 // ---------------------------------------------------------------------------
 
-type TargetKey = "makingPct" | "packingPct" | "lossPct" | "reworkPct";
+type TargetKey = "makingPct" | "packingPct" | "lossPct" | "reworkPct" | "makingCountPct";
 
 const TARGET_FIELDS: {
   key: TargetKey;
@@ -381,6 +381,13 @@ const TARGET_FIELDS: {
     hint: "Leave empty for no rework target.",
     optional: true,
   },
+  {
+    key: "makingCountPct",
+    column: "target_making_count_pct",
+    label: "Making count target (% of plan, pallets / pcs…)",
+    hint: "For lines that also count making in a unit. Leave empty for no target.",
+    optional: true,
+  },
 ];
 
 function bandText(key: TargetKey, v: number): string {
@@ -400,6 +407,7 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
     packingPct: String(t.packingPct),
     lossPct: String(t.lossPct),
     reworkPct: t.reworkPct == null ? "" : String(t.reworkPct),
+    makingCountPct: t.makingCountPct == null ? "" : String(t.makingCountPct),
   });
   const [values, setValues] = useState<Record<TargetKey, string>>(() => toText(targets));
   const [saving, setSaving] = useState(false);
@@ -415,7 +423,13 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
   useEffect(() => {
     setValues(toText(targets));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targets.makingPct, targets.packingPct, targets.lossPct, targets.reworkPct]);
+  }, [
+    targets.makingPct,
+    targets.packingPct,
+    targets.lossPct,
+    targets.reworkPct,
+    targets.makingCountPct,
+  ]);
 
   const errors: Partial<Record<TargetKey, string>> = {};
   for (const f of TARGET_FIELDS) {
@@ -439,6 +453,8 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
         target_packing_pct: Number(values.packingPct),
         target_loss_pct: Number(values.lossPct),
         target_rework_pct: values.reworkPct.trim() === "" ? null : Number(values.reworkPct),
+        target_making_count_pct:
+          values.makingCountPct.trim() === "" ? null : Number(values.makingCountPct),
       };
       const { error } = await supabase
         .from("app_settings")

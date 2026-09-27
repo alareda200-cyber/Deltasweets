@@ -7,6 +7,7 @@ import {
   adherenceTone,
   kg,
   lossTone,
+  makingCountView,
   num,
   pct1,
   ratio,
@@ -102,12 +103,16 @@ export function LastDayCard({
   day,
   canOpenEntry,
   targets,
+  countUnit = null,
 }: {
   day: LastDay;
   canOpenEntry: boolean;
   targets: ProductionTargets;
+  /** The line's making count unit (pallets…); null = kg only, no extra row. */
+  countUnit?: string | null;
 }) {
   const t = day.totals;
+  const count = countUnit ? makingCountView(t, countUnit, targets.makingCountPct, 0) : null;
   const making = ratio(t.makingActual, t.makingPlan);
   const packing = ratio(t.packingActual, t.packingPlan);
   const lost = ratio(day.time.total, t.availableMin);
@@ -136,6 +141,14 @@ export function LastDayCard({
           value={t.makingPlan > 0 ? pct1(making) : "—"}
           tone={t.makingPlan > 0 ? adherenceTone(making, targets.makingPct) : "plain"}
         />
+        {count && (
+          <LastDayRow
+            label={`Making · ${countUnit}`}
+            sub={count.detail}
+            value={count.value == null ? "—" : `${count.value.toFixed(1)}%`}
+            tone={count.value == null || count.tone === "neutral" ? "plain" : count.tone}
+          />
+        )}
         <LastDayRow
           label="Packing"
           sub={`${kg(t.packingActual)} of ${kg(t.packingPlan)} kg`}

@@ -165,7 +165,9 @@ export type Database = {
           id: string
           line_id: string
           making_actual: number
+          making_actual_count: number | null
           making_plan: number
+          making_plan_count: number | null
           operator: string | null
           packing_actual: number
           packing_plan: number
@@ -186,7 +188,9 @@ export type Database = {
           id?: string
           line_id: string
           making_actual?: number
+          making_actual_count?: number | null
           making_plan?: number
+          making_plan_count?: number | null
           operator?: string | null
           packing_actual?: number
           packing_plan?: number
@@ -207,7 +211,9 @@ export type Database = {
           id?: string
           line_id?: string
           making_actual?: number
+          making_actual_count?: number | null
           making_plan?: number
+          making_plan_count?: number | null
           operator?: string | null
           packing_actual?: number
           packing_plan?: number
@@ -810,6 +816,7 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          making_count_unit: string | null
           name: string
           sort_order: number
         }
@@ -819,6 +826,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          making_count_unit?: string | null
           name: string
           sort_order?: number
         }
@@ -828,6 +836,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          making_count_unit?: string | null
           name?: string
           sort_order?: number
         }

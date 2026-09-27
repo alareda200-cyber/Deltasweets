@@ -142,6 +142,64 @@ const nf0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export const kg = (n: number) => nf0.format(Math.round(n));
 export const num = (n: number) => nf0.format(Math.round(n));
 export const pct1 = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
+const nf1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+/** Pallets, pieces…: whole numbers stay whole, a half pallet shows as .5. */
+export const countNum = (n: number) => nf1.format(n);
+
+/** "pallets" → "Pallets". */
+export const unitTitle = (unit: string) => unit.charAt(0).toUpperCase() + unit.slice(1);
+
+export interface MakingCountView {
+  label: string;
+  /** Percent of plan, one decimal; null = nothing counted (or no plan). */
+  value: number | null;
+  detail: string;
+  mobileDetail: string;
+  targetPct: number | null;
+  tone: Tone;
+  barLabel: string;
+}
+
+/**
+ * The making count (pallets, pcs…) of a set of entries, for a line whose unit
+ * is `unit`. Only entries carrying both a count plan and actual are in `t`'s
+ * count sums. `days` = production days in the set, to say when some days were
+ * not counted. The count has its own target; none = neutral, not judged.
+ */
+export function makingCountView(
+  t: Totals,
+  unit: string,
+  targetPct: number | null,
+  days: number,
+): MakingCountView {
+  const label = unitTitle(unit);
+  if (t.countedEntries === 0 || t.makingPlanCount <= 0) {
+    const none = t.countedEntries === 0 ? "not counted yet" : "no plan entered";
+    return {
+      label,
+      value: null,
+      detail: none,
+      mobileDetail: none,
+      targetPct,
+      tone: "neutral",
+      barLabel: `${label}: ${none}`,
+    };
+  }
+  const adh = t.makingActualCount / t.makingPlanCount;
+  const partial = days > 0 && t.countedDays < days;
+  const base = `${countNum(t.makingActualCount)} of ${countNum(t.makingPlanCount)} ${unit}`;
+  return {
+    label,
+    value: Math.round(adh * 1000) / 10,
+    detail: partial ? `${base} · counted on ${t.countedDays} of ${days} days` : base,
+    mobileDetail: `${countNum(t.makingActualCount)} / ${countNum(t.makingPlanCount)} ${unit}`,
+    targetPct,
+    tone: targetPct == null ? "neutral" : adherenceTone(adh, targetPct),
+    barLabel: `${label}: ${(adh * 100).toFixed(1)} percent of plan${
+      targetPct == null ? "" : `, target ${targetPct}`
+    }`,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Entries
@@ -150,6 +208,14 @@ export const pct1 = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
 export interface Totals {
   makingPlan: number;
   makingActual: number;
+  /** Making in the line's count unit, summed only over entries that have
+   * BOTH a count plan and a count actual — the rest were not counted. */
+  makingPlanCount: number;
+  makingActualCount: number;
+  /** Entries (shift rows) that carry a count; 0 = nothing counted. */
+  countedEntries: number;
+  /** Distinct days with at least one counted entry. */
+  countedDays: number;
   packingPlan: number;
   packingActual: number;
   availableMin: number;
@@ -162,6 +228,10 @@ export function sumEntries(entries: DailyEntry[]): Totals {
   const t: Totals = {
     makingPlan: 0,
     makingActual: 0,
+    makingPlanCount: 0,
+    makingActualCount: 0,
+    countedEntries: 0,
+    countedDays: 0,
     packingPlan: 0,
     packingActual: 0,
     availableMin: 0,
@@ -169,9 +239,16 @@ export function sumEntries(entries: DailyEntry[]): Totals {
     reworkMaking: 0,
     reworkPacking: 0,
   };
+  const countedDays = new Set<string>();
   for (const e of entries) {
     t.makingPlan += Number(e.making_plan) || 0;
     t.makingActual += Number(e.making_actual) || 0;
+    if (e.making_plan_count != null && e.making_actual_count != null) {
+      t.makingPlanCount += Number(e.making_plan_count) || 0;
+      t.makingActualCount += Number(e.making_actual_count) || 0;
+      t.countedEntries += 1;
+      countedDays.add(e.entry_date);
+    }
     t.packingPlan += Number(e.packing_plan) || 0;
     t.packingActual += Number(e.packing_actual) || 0;
     t.availableMin += Number(e.available_min) || 0;
@@ -179,6 +256,7 @@ export function sumEntries(entries: DailyEntry[]): Totals {
     t.reworkMaking += Number(e.rework_making) || 0;
     t.reworkPacking += Number(e.rework_packing) || 0;
   }
+  t.countedDays = countedDays.size;
   return t;
 }
 
@@ -213,13 +291,19 @@ export function dailySeries(
   entries: DailyEntry[],
   from: string,
   to: string,
-  stage: "making" | "packing",
+  stage: "making" | "packing" | "count",
 ): DayPoint[] {
   const byDay = entriesByDay(entries);
   return eachDay(from, to).map((day) => {
     const rows = byDay.get(day);
     if (!rows) return { day, hasEntry: false, plan: null, actual: null };
     const t = sumEntries(rows);
+    // Count view: a day whose entries carry no count is drawn like a day
+    // with no entry (grey stub), never as 0.
+    if (stage === "count") {
+      if (t.countedEntries === 0) return { day, hasEntry: false, plan: null, actual: null };
+      return { day, hasEntry: true, plan: t.makingPlanCount, actual: t.makingActualCount };
+    }
     return {
       day,
       hasEntry: true,

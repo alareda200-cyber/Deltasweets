@@ -31,6 +31,22 @@ export interface KpiTileProps {
   status: string;
   mobileStatus?: string;
   tone: Tone;
+  /** Making tile only, for a line that also counts in a unit (pallets…). */
+  count?: KpiCount;
+}
+
+export interface KpiCount {
+  /** "Pallets" */
+  label: string;
+  /** Percent of plan; null = nothing counted in the period. */
+  value: number | null;
+  /** "575 of 880 pallets" (+ "· counted on 12 of 22 days" when partial). */
+  detail: string;
+  mobileDetail?: string;
+  /** Own target (Settings › Targets); null = none, drawn neutral. */
+  targetPct: number | null;
+  tone: Tone;
+  barLabel: string;
 }
 
 export function KpiTile({
@@ -46,6 +62,7 @@ export function KpiTile({
   mobileStatus,
   tone,
   targetPct,
+  count,
   index = 0,
   memory,
 }: KpiTileProps & { index?: number; memory?: KpiMemory }) {
@@ -139,6 +156,56 @@ export function KpiTile({
           status
         )}
       </p>
+      {count && (
+        <div data-kpi-count="" className="flex flex-col gap-1 rounded-lg bg-primary/5 px-2.5 py-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs font-semibold text-primary md:text-[13px]">{count.label}</span>
+            <span
+              className={cn(
+                "text-base font-bold tabular-nums md:text-lg",
+                count.value == null
+                  ? "text-muted-foreground"
+                  : count.tone === "neutral"
+                    ? "text-foreground"
+                    : TONE_TEXT[count.tone],
+              )}
+            >
+              {count.value == null ? "—" : `${count.value.toFixed(1)}%`}
+            </span>
+          </div>
+          <p className="text-xs tabular-nums text-muted-foreground md:text-foreground">
+            {count.mobileDetail ? (
+              <>
+                <span className="md:hidden">{count.mobileDetail}</span>
+                <span className="hidden md:inline">{count.detail}</span>
+              </>
+            ) : (
+              count.detail
+            )}
+          </p>
+          {count.value != null && (
+            <div
+              role="img"
+              aria-label={count.barLabel}
+              className="relative h-1 overflow-hidden rounded-full bg-muted md:h-1.5"
+            >
+              <div
+                className={cn(
+                  "h-full",
+                  count.tone === "neutral" ? "bg-primary" : TONE_BAR[count.tone],
+                )}
+                style={{ width: `${Math.max(0, Math.min(100, count.value))}%` }}
+              />
+              {count.targetPct != null && count.targetPct > 0 && count.targetPct < 100 && (
+                <span
+                  className="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-foreground/55"
+                  style={{ left: `${count.targetPct}%` }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

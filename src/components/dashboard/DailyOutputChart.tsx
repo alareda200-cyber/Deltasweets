@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import type { DayPoint } from "@/lib/dashboard-metrics";
-import { formatDayName, kg, parseDay, uniformPlan } from "@/lib/dashboard-metrics";
+import { countNum, formatDayName, kg, parseDay, uniformPlan } from "@/lib/dashboard-metrics";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { useEffect, useState, type ReactElement } from "react";
@@ -71,12 +71,18 @@ export function DailyOutputChart({
   points,
   stageLabel,
   targetPct,
+  unit = "kg",
 }: {
   points: DayPoint[];
   stageLabel: string;
-  /** Settings › Targets for this stage (making or packing), in percent. */
-  targetPct: number;
+  /** Settings › Targets for this stage, in percent. null = no target (no stars). */
+  targetPct: number | null;
+  /** What the bars count: "kg", or a line's making count unit ("pallets"). */
+  unit?: string;
 }) {
+  const isKg = unit === "kg";
+  // Kilograms are whole; a count may be fractional (half a pallet).
+  const fmt = (n: number) => (isKg ? kg(n) : countNum(n));
   const isMobile = useIsMobile();
   const reducedMotion = usePrefersReducedMotion();
   const [hover, setHover] = useState<number | null>(null);
@@ -91,7 +97,10 @@ export function DailyOutputChart({
     plan: p.hasEntry && flatPlan == null ? p.plan : null,
     hasEntry: p.hasEntry,
     atTarget:
-      p.hasEntry && (p.plan ?? 0) > 0 && ((p.actual ?? 0) / (p.plan ?? 1)) * 100 >= targetPct,
+      targetPct != null &&
+      p.hasEntry &&
+      (p.plan ?? 0) > 0 &&
+      ((p.actual ?? 0) / (p.plan ?? 1)) * 100 >= targetPct,
   }));
   const stars = data.filter((d) => d.atTarget).length;
   // Bars pop left to right, 45ms apart, the whole row inside ~0.9s.
@@ -215,17 +224,17 @@ export function DailyOutputChart({
                     {point?.hasEntry ? (
                       <>
                         <p className="tabular-nums">
-                          {stageLabel}: {kg(point.actual ?? 0)} kg
+                          {stageLabel}: {fmt(point.actual ?? 0)} {unit}
                         </p>
                         <p className="tabular-nums text-muted-foreground">
-                          Plan: {kg(point.plan ?? 0)} kg
+                          Plan: {fmt(point.plan ?? 0)} {unit}
                           {point.plan
                             ? ` · ${(((point.actual ?? 0) / point.plan) * 100).toFixed(1)}%`
                             : ""}
                         </p>
                       </>
                     ) : (
-                      <p className="text-muted-foreground">No entry</p>
+                      <p className="text-muted-foreground">{isKg ? "No entry" : "Not counted"}</p>
                     )}
                   </div>
                 );
@@ -256,7 +265,7 @@ export function DailyOutputChart({
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 label={{
-                  value: isMobile ? `Plan ${kg(flatPlan)}` : `Plan ${kg(flatPlan)} kg / day`,
+                  value: isMobile ? `Plan ${fmt(flatPlan)}` : `Plan ${fmt(flatPlan)} ${unit} / day`,
                   position: "insideTopRight",
                   fontSize: 12,
                   fontWeight: 600,
@@ -304,8 +313,8 @@ export function DailyOutputChart({
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
         {flatPlan != null
-          ? "Dashed line = plan, the same on every recorded day · grey stub = no entry"
-          : "Plan differs by day: each dark tick is that day's plan · grey stub = no entry"}
+          ? `Dashed line = plan, the same on every recorded day · grey stub = ${isKg ? "no entry" : "not counted"}`
+          : `Plan differs by day: each dark tick is that day's plan · grey stub = ${isKg ? "no entry" : "not counted"}`}
         {stars > 0 && ` · ★ = at or above the ${targetPct}% target`}
       </p>
     </div>

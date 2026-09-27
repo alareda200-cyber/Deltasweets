@@ -86,6 +86,7 @@ import {
   shiftLabel,
   validateValues,
   valuesFromRows,
+  countOrNull,
 } from "@/lib/entry-form";
 
 // /entry?line=<id>&date=YYYY-MM-DD&shift=DAY opens that entry directly (the
@@ -130,8 +131,10 @@ export const Route = createFileRoute("/entry")({
 // is better. Same bands as the Dashboard (adherenceTone / lossTone in
 // src/lib/dashboard-metrics.ts), around the targets from Settings › Targets:
 // amber from target − 20 points, red below; loss amber up to 2.5 × the alert.
-function adherenceColor(pct: number | null, targetPct: number) {
+function adherenceColor(pct: number | null, targetPct: number | null) {
   if (pct === null) return "text-muted-foreground";
+  // A count with no target of its own (Settings › Targets): plain, not judged.
+  if (targetPct === null) return "text-foreground";
   return pct >= targetPct
     ? "text-success-strong"
     : pct >= targetPct - 20
@@ -299,6 +302,8 @@ function EntryPage() {
   const [comments, setComments] = useState(initial.comments);
   const [makingPlan, setMakingPlan] = useState(initial.makingPlan);
   const [makingActual, setMakingActual] = useState(initial.makingActual);
+  const [makingPlanCount, setMakingPlanCount] = useState(initial.makingPlanCount);
+  const [makingActualCount, setMakingActualCount] = useState(initial.makingActualCount);
   const [packingPlan, setPackingPlan] = useState(initial.packingPlan);
   const [packingActual, setPackingActual] = useState(initial.packingActual);
   const [availableMin, setAvailableMin] = useState(initial.availableMin);
@@ -363,6 +368,8 @@ function EntryPage() {
     () => ({
       makingPlan,
       makingActual,
+      makingPlanCount,
+      makingActualCount,
       packingPlan,
       packingActual,
       availableMin,
@@ -377,6 +384,8 @@ function EntryPage() {
     [
       makingPlan,
       makingActual,
+      makingPlanCount,
+      makingActualCount,
       packingPlan,
       packingActual,
       availableMin,
@@ -406,6 +415,8 @@ function EntryPage() {
   function applyValues(v: EntryFormValues) {
     setMakingPlan(v.makingPlan);
     setMakingActual(v.makingActual);
+    setMakingPlanCount(v.makingPlanCount);
+    setMakingActualCount(v.makingActualCount);
     setPackingPlan(v.packingPlan);
     setPackingActual(v.packingActual);
     setAvailableMin(v.availableMin);
@@ -630,6 +641,12 @@ function EntryPage() {
         comments: pick(canEditNotes, comments, orig.comments) || null,
         making_plan: Number(pick(canEditProduction, makingPlan, orig.makingPlan)) || 0,
         making_actual: Number(pick(canEditProduction, makingActual, orig.makingActual)) || 0,
+        making_plan_count: countOrNull(
+          pick(canEditProduction, makingPlanCount, orig.makingPlanCount),
+        ),
+        making_actual_count: countOrNull(
+          pick(canEditProduction, makingActualCount, orig.makingActualCount),
+        ),
         packing_plan: Number(pick(canEditProduction, packingPlan, orig.packingPlan)) || 0,
         packing_actual: Number(pick(canEditProduction, packingActual, orig.packingActual)) || 0,
         available_min: Number(availableMin) || 0,
@@ -977,10 +994,24 @@ function EntryPage() {
     assignedAreas > 0 ? ` · ${assignedAreas} owner${assignedAreas === 1 ? "" : "s"} set` : ""
   }`;
 
+  // Lines that also count making in a unit (Settings › Production lines) get a
+  // third row. Its % is plan vs actual in that unit, with its own target.
+  const countUnit = lines.find((l) => l.id === lineId)?.making_count_unit?.trim() || null;
+  const countPlanN = Number(makingPlanCount);
+  const countActualN = Number(makingActualCount);
+  const countPct =
+    makingPlanCount.trim() !== "" &&
+    makingActualCount.trim() !== "" &&
+    countPlanN > 0 &&
+    Number.isFinite(countActualN)
+      ? (countActualN / countPlanN) * 100
+      : null;
   const outputRows = [
     {
       stage: "Making",
-      target: targets.makingPct,
+      unit: "kg",
+      isCount: false,
+      target: targets.makingPct as number | null,
       plan: makingPlan,
       setPlan: setMakingPlan,
       actual: makingActual,
@@ -989,9 +1020,28 @@ function EntryPage() {
       planKey: "makingPlan",
       actualKey: "makingActual",
     },
+    ...(countUnit
+      ? [
+          {
+            stage: "Making",
+            unit: countUnit,
+            isCount: true,
+            target: targets.makingCountPct,
+            plan: makingPlanCount,
+            setPlan: setMakingPlanCount,
+            actual: makingActualCount,
+            setActual: setMakingActualCount,
+            pct: countPct,
+            planKey: "makingPlanCount",
+            actualKey: "makingActualCount",
+          } as const,
+        ]
+      : []),
     {
       stage: "Packing",
-      target: targets.packingPct,
+      unit: "kg",
+      isCount: false,
+      target: targets.packingPct as number | null,
       plan: packingPlan,
       setPlan: setPackingPlan,
       actual: packingActual,
@@ -1001,6 +1051,7 @@ function EntryPage() {
       actualKey: "packingActual",
     },
   ] as const;
+  const rowKey = (o: (typeof outputRows)[number]) => `${o.stage}-${o.unit}`;
 
   const reworkFields = [
     ["Cooking", reworkCooking, setReworkCooking, "reworkCooking"],
@@ -1435,9 +1486,17 @@ function EntryPage() {
               {/* Phone: each stage with its live % and Plan / Actual side by side. */}
               <div className="flex flex-col gap-3 md:hidden">
                 {outputRows.map((o) => (
-                  <div key={o.stage}>
+                  <div
+                    key={rowKey(o)}
+                    className={cn(o.isCount && "-mx-1.5 rounded-lg bg-primary/5 px-1.5 py-2")}
+                  >
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-sm font-semibold">{o.stage}</span>
+                      <span className="text-sm font-semibold">
+                        {o.stage}
+                        {o.isCount && (
+                          <span className="font-normal text-muted-foreground"> · {o.unit}</span>
+                        )}
+                      </span>
                       <span
                         className={cn(
                           "text-sm font-bold tabular-nums",
@@ -1456,7 +1515,7 @@ function EntryPage() {
                         <Input
                           type="number"
                           inputMode="decimal"
-                          aria-label={`${o.stage} plan, kg`}
+                          aria-label={`${o.stage} plan, ${o.unit}`}
                           className="h-11"
                           value={o.plan}
                           onChange={(e) => o.setPlan(e.target.value)}
@@ -1471,7 +1530,7 @@ function EntryPage() {
                         <Input
                           type="number"
                           inputMode="decimal"
-                          aria-label={`${o.stage} actual, kg`}
+                          aria-label={`${o.stage} actual, ${o.unit}`}
                           className="h-11"
                           value={o.actual}
                           onChange={(e) => o.setActual(e.target.value)}
@@ -1489,12 +1548,17 @@ function EntryPage() {
                 <span className="text-sm font-semibold text-muted-foreground">Actual</span>
                 <span className="text-sm font-semibold text-muted-foreground">Of plan</span>
                 {outputRows.map((o) => (
-                  <Fragment key={o.stage}>
-                    <span className="flex h-11 items-center text-base font-semibold">
+                  <Fragment key={rowKey(o)}>
+                    <span className="flex h-11 flex-col justify-center text-base font-semibold leading-tight">
                       {o.stage}
+                      {o.isCount && (
+                        <span className="text-xs font-medium text-muted-foreground">
+                          in {o.unit}
+                        </span>
+                      )}
                     </span>
                     <GridInput
-                      label={`${o.stage} plan, kg`}
+                      label={`${o.stage} plan, ${o.unit}`}
                       value={o.plan}
                       onChange={o.setPlan}
                       disabled={!canEditProduction}
@@ -1502,7 +1566,7 @@ function EntryPage() {
                       shakeKey={shakeOf(fieldErr(o.planKey))}
                     />
                     <GridInput
-                      label={`${o.stage} actual, kg`}
+                      label={`${o.stage} actual, ${o.unit}`}
                       value={o.actual}
                       onChange={o.setActual}
                       disabled={!canEditProduction}

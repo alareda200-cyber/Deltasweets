@@ -66,6 +66,8 @@ import {
   formatRangeShort,
   kg,
   lossTone,
+  makingCountView,
+  unitTitle,
   reworkTone,
   num,
   pct1,
@@ -466,8 +468,10 @@ function PeriodBody({
    */
   pdfBothStages?: boolean;
 }) {
-  const [pickedStage, setStage] = useState<"making" | "packing">("making");
-  const stage = pdfBothStages ? "making" : pickedStage;
+  const [pickedStage, setStage] = useState<"making" | "packing" | "count">("making");
+  // The unit this line also counts making in (Settings › Production lines).
+  const countUnit = line.making_count_unit?.trim() || null;
+  const stage = pdfBothStages || (pickedStage === "count" && !countUnit) ? "making" : pickedStage;
   const entriesQ = useQuery(entriesQuery(line.id, from, to));
   const entries = entriesQ.data;
   const entryIds = useMemo(() => (entries ?? []).map((e) => e.id), [entries]);
@@ -627,7 +631,16 @@ function PeriodBody({
   ).length;
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
-  const stageName = stage === "making" ? "Making" : "Packing";
+  const stageName = stage === "packing" ? "Packing" : "Making";
+  const chartUnit = stage === "count" && countUnit ? countUnit : "kg";
+  const stageOptions: { key: "making" | "packing" | "count"; label: string }[] = [
+    { key: "making", label: "Making" },
+    ...(countUnit ? [{ key: "count" as const, label: unitTitle(countUnit) }] : []),
+    { key: "packing", label: "Packing" },
+  ];
+  const countView = countUnit
+    ? makingCountView(totals, countUnit, targets.makingCountPct, days)
+    : undefined;
   const packingPoints = pdfBothStages ? dailySeries(list, from, shownTo, "packing") : null;
 
   return (
@@ -643,7 +656,7 @@ function PeriodBody({
           {refreshing && <JellyDots />}
         </div>
         <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-4">
-          {kpiTiles(totals, split, targets).map((k, i) => (
+          {kpiTiles(totals, split, targets, countView).map((k, i) => (
             <KpiTile key={k.title} {...k} index={i} memory={kpiMemory} />
           ))}
         </div>
@@ -656,9 +669,11 @@ function PeriodBody({
           <Card labelledBy="dash-chart" className="flex-1">
             <div className="flex items-center justify-between gap-3">
               <h3 id="dash-chart" className="text-[15px] font-semibold md:text-base">
-                <span className="md:hidden">{stageName} per day</span>
+                <span className="md:hidden">
+                  {chartUnit !== "kg" ? unitTitle(chartUnit) : stageName} per day
+                </span>
                 <span className="hidden md:inline">
-                  {stageName} — actual per day against plan (kg)
+                  {stageName} — actual per day against plan ({chartUnit})
                 </span>
               </h3>
               <div
@@ -667,20 +682,20 @@ function PeriodBody({
                 data-pdf-exclude="true"
                 className="flex shrink-0 gap-0.5 rounded-[10px] bg-muted p-[3px]"
               >
-                {(["making", "packing"] as const).map((s) => (
+                {stageOptions.map((o) => (
                   <button
-                    key={s}
+                    key={o.key}
                     type="button"
-                    aria-pressed={stage === s}
-                    onClick={() => setStage(s)}
+                    aria-pressed={stage === o.key}
+                    onClick={() => setStage(o.key)}
                     className={cn(
                       "h-11 rounded-lg px-3 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-[34px]",
-                      stage === s
+                      stage === o.key
                         ? "bg-card font-semibold text-foreground shadow-sm"
                         : "text-foreground/80 hover:text-foreground",
                     )}
                   >
-                    {s === "making" ? "Making" : "Packing"}
+                    {o.label}
                   </button>
                 ))}
               </div>
@@ -692,14 +707,26 @@ function PeriodBody({
                 key={stage}
                 points={points}
                 stageLabel={stageName}
-                targetPct={stage === "making" ? targets.makingPct : targets.packingPct}
+                unit={chartUnit}
+                targetPct={
+                  stage === "count"
+                    ? targets.makingCountPct
+                    : stage === "making"
+                      ? targets.makingPct
+                      : targets.packingPct
+                }
               />
             </Suspense>
           </Card>
         </div>
         {lastDay && (
           <div className="flex min-w-0 [&>section]:flex-1">
-            <LastDayCard day={lastDay} canOpenEntry={canEntry} targets={targets} />
+            <LastDayCard
+              day={lastDay}
+              canOpenEntry={canEntry}
+              targets={targets}
+              countUnit={countUnit}
+            />
           </div>
         )}
       </div>
@@ -827,7 +854,12 @@ function JellyDots() {
   );
 }
 
-function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiTileProps[] {
+function kpiTiles(
+  t: Totals,
+  split: TimeSplit,
+  targets: ProductionTargets,
+  count?: KpiTileProps["count"],
+): KpiTileProps[] {
   const lossAlert = targets.lossPct;
   const adhTile = (title: string, actual: number, plan: number, target: number): KpiTileProps => {
     if (plan <= 0) {
@@ -952,7 +984,7 @@ function kpiTiles(t: Totals, split: TimeSplit, targets: ProductionTargets): KpiT
   };
 
   return [
-    adhTile("Making", t.makingActual, t.makingPlan, targets.makingPct),
+    { ...adhTile("Making", t.makingActual, t.makingPlan, targets.makingPct), count },
     adhTile("Packing", t.packingActual, t.packingPlan, targets.packingPct),
     timeTile,
     reworkTile,

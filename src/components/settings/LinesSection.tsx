@@ -20,7 +20,6 @@ import {
   WarningNote,
   normalizeCode,
   plural,
-  validateMasterDataInput,
   type QC,
 } from "./shared";
 
@@ -40,6 +39,9 @@ export function LinesSection({
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [color, setColor] = useState(DEFAULT_LINE_COLOR);
+  // Optional: the unit making is also counted in ("pallets", "pcs"). Empty =
+  // kilograms only — Daily entry and the Dashboard show nothing extra.
+  const [countUnit, setCountUnit] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProductionLine | null>(null);
   const colorId = useId();
@@ -55,31 +57,39 @@ export function LinesSection({
     setName(l.name);
     setCode(l.code ?? "");
     setColor(l.color);
+    setCountUnit(l.making_count_unit ?? "");
   }
   function cancelEdit() {
     setEditingId(null);
     setName("");
     setCode("");
     setColor(DEFAULT_LINE_COLOR);
+    setCountUnit("");
   }
 
   async function saveLine() {
-    const validationError = validateMasterDataInput(name, code);
-    if (validationError) return toast.error(validationError);
+    // A line's code is optional (Pectin has none on live): requiring it meant a
+    // line without one could not be edited at all, not even to set its unit.
+    if (!name.trim()) return toast.error("Name is required");
+    const lineCode = normalizeCode(code) || null;
+    const unit = countUnit.trim().replace(/\s+/g, " ");
+    if (unit.length > 30) return toast.error("Count unit: 30 characters at most");
+    const making_count_unit = unit === "" ? null : unit;
     if (editingId) {
       const { error } = await supabase
         .from("production_lines")
-        .update({ name: name.trim(), code: normalizeCode(code), color })
+        .update({ name: name.trim(), code: lineCode, color, making_count_unit })
         .eq("id", editingId);
       if (error) return toast.error(error.message);
       toast.success(`Line "${name}" updated`);
-      void logAudit("settings.update", "production_line", editingId, { name });
+      void logAudit("settings.update", "production_line", editingId, { name, making_count_unit });
       cancelEdit();
     } else {
       const { error } = await supabase.from("production_lines").insert({
         name: name.trim(),
-        code: normalizeCode(code),
+        code: lineCode,
         color,
+        making_count_unit,
         sort_order: lines.length + 1,
       });
       if (error) return toast.error(error.message);
@@ -87,6 +97,7 @@ export function LinesSection({
       void logAudit("settings.create", "production_line", undefined, { name });
       setName("");
       setCode("");
+      setCountUnit("");
     }
     qc.invalidateQueries({ queryKey: ["lines"] });
   }
@@ -127,14 +138,20 @@ export function LinesSection({
       <SectionHeader id="lines" count={lines.length} />
       <Card>
         <CardContent className="space-y-4 p-4 md:p-6">
-          <div className="grid gap-3 sm:grid-cols-[1fr_8rem_4.5rem_auto] sm:items-end">
+          <div className="grid gap-3 sm:grid-cols-[1fr_7rem_9rem_4.5rem_auto] sm:items-end">
             <TextField
               label="Line name"
               value={name}
               onChange={setName}
               placeholder="e.g. Marshmallow"
             />
-            <TextField label="Code" value={code} onChange={setCode} placeholder="e.g. MSH" />
+            <TextField label="Code" value={code} onChange={setCode} placeholder="optional" />
+            <TextField
+              label="Also counted in"
+              value={countUnit}
+              onChange={setCountUnit}
+              placeholder="e.g. pallets"
+            />
             <div className="space-y-1.5">
               <Label htmlFor={colorId}>Colour</Label>
               <Input
@@ -180,6 +197,11 @@ export function LinesSection({
                   <span className="h-4 w-4 shrink-0 rounded" style={{ background: l.color }} />
                   <span className="truncate font-medium">{l.name}</span>
                   {l.code && <CodeChip>{l.code}</CodeChip>}
+                  {l.making_count_unit && (
+                    <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      counts {l.making_count_unit}
+                    </span>
+                  )}
                   <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                     {plural(fieldCounts[l.id] ?? 0, "field")}
                     <ChevronRight className="h-4 w-4" aria-hidden="true" />
@@ -198,7 +220,11 @@ export function LinesSection({
               <p className="p-4 text-center text-sm text-muted-foreground">No lines yet.</p>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">Open a line to manage its extra fields.</p>
+          <p className="text-xs text-muted-foreground">
+            Open a line to manage its extra fields. &ldquo;Also counted in&rdquo; adds a Making plan
+            / actual row in that unit (pallets, pcs…) to the line&rsquo;s daily entry and Dashboard;
+            leave it empty for kilograms only.
+          </p>
         </CardContent>
       </Card>
 
