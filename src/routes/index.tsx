@@ -91,7 +91,10 @@ import {
   AreaScoresCard,
   Card,
   LastDayCard,
+  LastDayTimeCard,
   MaintenanceCard,
+  MaintenanceLastDayCard,
+  SectionHeading,
   ReworkCard,
   TimeLostCard,
   type LastDay,
@@ -720,47 +723,68 @@ function PeriodBody({
       )}
 
       <div
-        data-pdf-section="time-rework-faults"
-        className="grid gap-3.5 md:grid-cols-2 md:items-start md:gap-4"
+        data-pdf-section="time"
+        className="grid gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4"
       >
-        <div className="min-w-0">
+        <SectionHeading>Time lost</SectionHeading>
+        <div className="flex min-w-0 [&>section]:flex-1">
           <TimeLostCard
             split={split}
             reasons={reasons}
             sources={{ entryMin: entrySplit.total, machineMin: mSplit.total, machineError }}
-            lastDay={lastDayTime}
           />
         </div>
-        <div className="flex min-w-0 flex-col gap-3.5 md:gap-4">
-          <div>
-            <ReworkCard totals={totals} />
+        {lastDayTime && (
+          <div className="flex min-w-0 [&>section]:flex-1">
+            <LastDayTimeCard lastDay={lastDayTime} />
           </div>
-          {can(role, "dashboard.viewMaintenanceCard") && (
-            <div>
-              <MaintenanceCard
+        )}
+      </div>
+
+      {can(role, "dashboard.viewMaintenanceCard") && (
+        <div
+          data-pdf-section="maintenance"
+          className="grid gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4"
+        >
+          <SectionHeading>Maintenance</SectionHeading>
+          <div className="flex min-w-0 [&>section]:flex-1">
+            <MaintenanceCard
+              lineName={line.name}
+              rangeText={rangeShort}
+              stops={stops}
+              faultCount={rawFaults.length}
+              loading={false}
+              error={machineError}
+              canOpenMaintenance={canMaintenance}
+            />
+          </div>
+          {lastDay && lastDate && (
+            <div className="flex min-w-0 [&>section]:flex-1">
+              <MaintenanceLastDayCard
                 lineName={line.name}
-                rangeText={rangeShort}
-                stops={stops}
-                faultCount={rawFaults.length}
-                lastDay={
-                  lastDay && lastDate
-                    ? {
-                        dayName: lastDay.dayName,
-                        date: lastDate,
-                        stops: stops.filter((st) => st.day === lastDate),
-                        faultCount: lastDayFaultCount,
-                      }
-                    : null
-                }
-                loading={false}
                 error={machineError}
-                canOpenMaintenance={canMaintenance}
+                day={{
+                  dayName: lastDay.dayName,
+                  date: lastDate,
+                  stops: stops.filter((st) => st.day === lastDate),
+                  faultCount: lastDayFaultCount,
+                }}
               />
             </div>
           )}
-          <div>
-            <AreaScoresCard rows={scores} loading={ownersQ.isPending} lineName={line.name} />
-          </div>
+        </div>
+      )}
+
+      <div
+        data-pdf-section="rework-scores"
+        className="grid gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4"
+      >
+        <SectionHeading>Rework and area owners</SectionHeading>
+        <div className="flex min-w-0 [&>section]:flex-1">
+          <ReworkCard totals={totals} />
+        </div>
+        <div className="flex min-w-0 [&>section]:flex-1">
+          <AreaScoresCard rows={scores} loading={ownersQ.isPending} lineName={line.name} />
         </div>
       </div>
 

@@ -42,6 +42,18 @@ export function Card({
   );
 }
 
+/** A group heading between rows of cards: what the row is about. */
+export function SectionHeading({ id, children }: { id?: string; children: ReactNode }) {
+  return (
+    <h2
+      id={id}
+      className="text-xs font-semibold uppercase tracking-wider text-muted-foreground md:col-span-2"
+    >
+      {children}
+    </h2>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Last recorded day
 // ---------------------------------------------------------------------------
@@ -279,12 +291,10 @@ export function TimeLostCard({
   split,
   reasons,
   sources,
-  lastDay,
 }: {
   split: TimeSplit;
   reasons: ReasonRow[];
   sources: TimeSources;
-  lastDay: LastDayTime | null;
 }) {
   const [showAll, setShowAll] = useState(false);
   const top = reasons.slice(0, TOP_REASONS);
@@ -292,8 +302,6 @@ export function TimeLostCard({
   const restMinutes = rest.reduce((s, r) => s + r.minutes, 0);
   const restStops = rest.reduce((s, r) => s + r.count, 0);
   const max = reasons[0]?.minutes ?? 0;
-  const dayTop = lastDay ? lastDay.reasons.slice(0, TOP_REASONS) : [];
-  const dayMax = dayTop[0]?.minutes ?? 0;
 
   return (
     <Card labelledBy="dash-time">
@@ -364,47 +372,50 @@ export function TimeLostCard({
           )}
         </>
       )}
+    </Card>
+  );
+}
 
-      {lastDay && (
-        <div
-          aria-labelledby="dash-time-lastday"
-          role="group"
-          className="flex flex-col gap-2.5 border-t border-border pt-3"
-        >
-          <div className="flex flex-col gap-0.5 md:flex-row md:items-baseline md:justify-between md:gap-3">
-            <h4 id="dash-time-lastday" className="text-sm font-semibold">
-              Last recorded day · {lastDay.dayName}
-            </h4>
-            <p className="text-xs text-muted-foreground md:shrink-0">
-              {num(lastDay.split.total)} min
-              {lastDay.split.total > 0 && (
-                <>
-                  {" "}
-                  · planned {num(lastDay.split.planned)} · unplanned {num(lastDay.split.unplanned)}
-                </>
-              )}
-            </p>
-          </div>
-          {lastDay.split.total === 0 ? (
-            <p className="text-sm text-muted-foreground">No time lost on this day.</p>
-          ) : (
+/** Time lost on the last recorded day: the same bar and reasons, one day. */
+export function LastDayTimeCard({ lastDay }: { lastDay: LastDayTime }) {
+  const dayTop = lastDay.reasons.slice(0, TOP_REASONS);
+  const dayMax = dayTop[0]?.minutes ?? 0;
+  const rest = lastDay.reasons.slice(TOP_REASONS);
+  return (
+    <Card labelledBy="dash-time-lastday">
+      <div className="md:flex md:items-baseline md:justify-between md:gap-3">
+        <h3 id="dash-time-lastday" className="text-[15px] font-semibold md:text-base">
+          Last recorded day · {lastDay.dayName}
+        </h3>
+        <p className="text-[13px] text-muted-foreground md:text-xs">
+          {num(lastDay.split.total)} min
+          {lastDay.split.total > 0 && (
             <>
-              <KindBar split={lastDay.split} tall={false} />
-              <ol className="flex flex-col gap-3 md:gap-2.5">
-                {dayTop.map((r, i) => (
-                  <ReasonLine key={r.key} r={r} max={dayMax} index={i + 2} />
-                ))}
-              </ol>
-              {lastDay.reasons.length > TOP_REASONS && (
-                <p className="text-xs text-muted-foreground">
-                  + {lastDay.reasons.length - TOP_REASONS} more{" "}
-                  {lastDay.reasons.length - TOP_REASONS === 1 ? "reason" : "reasons"} ·{" "}
-                  {num(lastDay.reasons.slice(TOP_REASONS).reduce((a, r) => a + r.minutes, 0))} min
-                </p>
-              )}
+              {" "}
+              · planned {num(lastDay.split.planned)} · unplanned {num(lastDay.split.unplanned)}
             </>
           )}
-        </div>
+        </p>
+      </div>
+      {lastDay.split.total === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+          No time lost on this day.
+        </p>
+      ) : (
+        <>
+          <KindBar split={lastDay.split} />
+          <ol className="flex flex-col gap-3 md:gap-2.5">
+            {dayTop.map((r, i) => (
+              <ReasonLine key={r.key} r={r} max={dayMax} index={i + 2} />
+            ))}
+          </ol>
+          {rest.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              + {rest.length} more {rest.length === 1 ? "reason" : "reasons"} ·{" "}
+              {num(rest.reduce((a, r) => a + r.minutes, 0))} min
+            </p>
+          )}
+        </>
       )}
     </Card>
   );
@@ -481,7 +492,6 @@ export function MaintenanceCard({
   rangeText,
   stops,
   faultCount,
-  lastDay,
   loading,
   error,
   canOpenMaintenance,
@@ -492,13 +502,6 @@ export function MaintenanceCard({
   stops: MachineStop[];
   /** Fault events logged in the period, preventive left out. */
   faultCount: number;
-  lastDay: {
-    dayName: string;
-    /** "YYYY-MM-DD" — the local day the timeline spans. */
-    date: string;
-    stops: MachineStop[];
-    faultCount: number;
-  } | null;
   loading: boolean;
   error: boolean;
   canOpenMaintenance: boolean;
@@ -510,16 +513,8 @@ export function MaintenanceCard({
   const pmMin = stops.filter((s) => !isFault(s.type)).reduce((a, s) => a + s.minutes, 0);
   const top = faultsByTitle(stops)
     .filter((f) => f.minutes > 0)
-    .slice(0, 4);
+    .slice(0, 5);
   const topMax = top[0]?.minutes ?? 0;
-  const dayFaults = lastDay
-    ? lastDay.stops
-        .filter((s) => isFault(s.type))
-        .sort((a, b) => Number(b.open) - Number(a.open) || b.minutes - a.minutes)
-    : [];
-  const dayFaultMin = dayFaults.reduce((a, s) => a + s.minutes, 0);
-  const dayPm = lastDay ? lastDay.stops.filter((s) => !isFault(s.type)) : [];
-  const dayPmMin = dayPm.reduce((a, s) => a + s.minutes, 0);
 
   return (
     <Card labelledBy="dash-maint">
@@ -606,30 +601,6 @@ export function MaintenanceCard({
                   </li>
                 ))}
               </ol>
-            </div>
-          )}
-
-          {lastDay && (
-            <div
-              role="group"
-              aria-labelledby="dash-maint-lastday"
-              className="flex flex-col gap-2 border-t border-border pt-3"
-            >
-              <div className="flex flex-col gap-0.5 md:flex-row md:items-baseline md:justify-between md:gap-3">
-                <h4 id="dash-maint-lastday" className="text-sm font-semibold">
-                  Last recorded day · {lastDay.dayName}
-                </h4>
-                <p className="text-xs text-muted-foreground md:shrink-0">
-                  {num(lastDay.faultCount)} {lastDay.faultCount === 1 ? "fault" : "faults"} ·{" "}
-                  {num(dayFaultMin)} min
-                  {dayPmMin > 0 && <> · preventive {num(dayPmMin)} min</>}
-                </p>
-              </div>
-              {dayFaults.length === 0 && dayPm.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No faults logged on this day.</p>
-              ) : (
-                <MaintenanceDayChart date={lastDay.date} faults={dayFaults} preventive={dayPm} />
-              )}
             </div>
           )}
         </>
@@ -806,6 +777,57 @@ function MaintenanceDayChart({
         </div>
       )}
     </div>
+  );
+}
+
+export interface MaintenanceDay {
+  dayName: string;
+  /** "YYYY-MM-DD" — the local day the timeline spans. */
+  date: string;
+  stops: MachineStop[];
+  /** Fault events that day, preventive left out. */
+  faultCount: number;
+}
+
+/** Maintenance on the last recorded day: when the line stopped, and why. */
+export function MaintenanceLastDayCard({
+  lineName,
+  day,
+  error,
+}: {
+  lineName: string;
+  day: MaintenanceDay;
+  error: boolean;
+}) {
+  const faults = day.stops
+    .filter((s) => isFault(s.type))
+    .sort((a, b) => Number(b.open) - Number(a.open) || b.minutes - a.minutes);
+  const faultMin = faults.reduce((a, s) => a + s.minutes, 0);
+  const pm = day.stops.filter((s) => !isFault(s.type));
+  const pmMin = pm.reduce((a, s) => a + s.minutes, 0);
+  return (
+    <Card labelledBy="dash-maint-lastday">
+      <div className="md:flex md:items-baseline md:justify-between md:gap-3">
+        <h3 id="dash-maint-lastday" className="text-[15px] font-semibold md:text-base">
+          Last recorded day · {day.dayName}
+        </h3>
+        <p className="text-[13px] text-muted-foreground md:text-xs">
+          {num(day.faultCount)} {day.faultCount === 1 ? "fault" : "faults"} · {num(faultMin)} min
+          {pmMin > 0 && <> · preventive {num(pmMin)} min</>}
+        </p>
+      </div>
+      {error ? (
+        <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning-strong">
+          Couldn't load the faults for {lineName}.
+        </p>
+      ) : faults.length === 0 && pm.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+          No faults logged on this day.
+        </p>
+      ) : (
+        <MaintenanceDayChart date={day.date} faults={faults} preventive={pm} />
+      )}
+    </Card>
   );
 }
 
