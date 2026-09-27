@@ -31,7 +31,7 @@ export function ReplayScene({
 }: {
   s: SceneState;
   lineName: string;
-  /** Phones: crop to the kettle, depositor and first metres of belt, bigger. */
+  /** Phones: the line folded into two rows so all of it fits, bigger. */
   compact?: boolean;
 }) {
   const bob = s.running ? 7 * Math.abs(Math.sin(s.real * 7)) : 0;
@@ -48,12 +48,10 @@ export function ReplayScene({
     : s.running
       ? "var(--success)"
       : "var(--muted-foreground)";
-  return (
-    <svg
-      viewBox={compact ? "0 0 760 330" : "0 0 1358 330"}
-      aria-hidden="true"
-      className="block h-auto w-full"
-    >
+  // The drawing, in one 1358 x 330 coordinate space. `k` keeps the crate's
+  // clip-path id unique when phones draw it twice (see below).
+  const drawing = (k: string) => (
+    <>
       <line
         x1="0"
         y1="286"
@@ -221,7 +219,7 @@ export function ReplayScene({
       </text>
 
       {/* Packing crate */}
-      <clipPath id="replay-crate">
+      <clipPath id={`replay-crate-${k}`}>
         <path d="M1168 196 L1180 286 H1318 L1330 196 Z" />
       </clipPath>
       <path
@@ -235,7 +233,7 @@ export function ReplayScene({
         width="180"
         height="120"
         opacity="0.85"
-        style={{ fill: "var(--warning)", clipPath: "url(#replay-crate)" }}
+        style={{ fill: "var(--warning)", clipPath: `url(#replay-crate-${k})` }}
       />
       <text
         x="1249"
@@ -267,6 +265,57 @@ export function ReplayScene({
           </text>
         </g>
       )}
+    </>
+  );
+
+  if (!compact) {
+    return (
+      <svg viewBox="0 0 1358 330" aria-hidden="true" className="block h-auto w-full">
+        {drawing("wide")}
+      </svg>
+    );
+  }
+  // Phones: the whole line in two rows, like wrapped text. Row 1 is cooking,
+  // depositor and the belt up to the tunnel's mouth (x 0–620); row 2 carries
+  // on from x 548, just before the tunnel, through to packing, its empty sky
+  // (y < 130) cropped. Both rows are the same drawing, so they move together.
+  const ROW1_W = 620;
+  const ROW2_X = 548;
+  const VIEW_W = 1358 - ROW2_X;
+  const ROW2_TOP = 130;
+  const ROW2_Y = 330 - ROW2_TOP + 12;
+  return (
+    <svg viewBox={`0 0 ${VIEW_W} 542`} aria-hidden="true" className="block h-auto w-full">
+      <defs>
+        <clipPath id="replay-row-1">
+          <rect x="0" y="0" width={ROW1_W} height="330" />
+        </clipPath>
+        <clipPath id="replay-row-2">
+          <rect x={ROW2_X} y={ROW2_TOP} width={1358 - ROW2_X} height={330 - ROW2_TOP} />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#replay-row-1)">{drawing("r1")}</g>
+      <text
+        x={VIEW_W - 8}
+        y="248"
+        textAnchor="end"
+        fontSize="13"
+        fontWeight="600"
+        style={{ fill: "var(--muted-foreground)" }}
+      >
+        continues below ↓
+      </text>
+      <line
+        x1="0"
+        y1={330 + 6}
+        x2={VIEW_W}
+        y2={330 + 6}
+        strokeDasharray="4 6"
+        style={{ stroke: "var(--border)" }}
+      />
+      <g transform={`translate(${-ROW2_X} ${ROW2_Y})`}>
+        <g clipPath="url(#replay-row-2)">{drawing("r2")}</g>
+      </g>
     </svg>
   );
 }
