@@ -31,6 +31,11 @@ export interface MachineStop {
   open: boolean;
   /** Events in this stop: 1 for a standalone fault, n for a stoppage. */
   members: number;
+  /** When the stop began and ended (ISO); ended is null while it is open. */
+  startedAt: string;
+  endedAt: string | null;
+  /** The line kept producing through it (stops_line = false). */
+  keptRunning: boolean;
 }
 
 export function machineStops(
@@ -50,6 +55,9 @@ export function machineStops(
     day: iso(new Date(e.started_at)),
     open: e.status !== "resolved" || !e.resolved_at,
     members: e.stoppage_id ? (members.get(e.stoppage_id) ?? 1) : 1,
+    startedAt: e.started_at,
+    endedAt: e.status === "resolved" ? e.resolved_at : null,
+    keptRunning: !e.stops_line,
   }));
 }
 

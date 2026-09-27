@@ -746,6 +746,7 @@ function PeriodBody({
                   lastDay && lastDate
                     ? {
                         dayName: lastDay.dayName,
+                        date: lastDate,
                         stops: stops.filter((st) => st.day === lastDate),
                         faultCount: lastDayFaultCount,
                       }

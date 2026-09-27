@@ -494,6 +494,8 @@ export function MaintenanceCard({
   faultCount: number;
   lastDay: {
     dayName: string;
+    /** "YYYY-MM-DD" — the local day the timeline spans. */
+    date: string;
     stops: MachineStop[];
     faultCount: number;
   } | null;
@@ -518,7 +520,6 @@ export function MaintenanceCard({
   const dayFaultMin = dayFaults.reduce((a, s) => a + s.minutes, 0);
   const dayPm = lastDay ? lastDay.stops.filter((s) => !isFault(s.type)) : [];
   const dayPmMin = dayPm.reduce((a, s) => a + s.minutes, 0);
-  const SHOWN = 8;
 
   return (
     <Card labelledBy="dash-maint">
@@ -627,40 +628,184 @@ export function MaintenanceCard({
               {dayFaults.length === 0 && dayPm.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No faults logged on this day.</p>
               ) : (
-                <ul className="flex flex-wrap gap-1.5">
-                  {[...dayFaults.slice(0, SHOWN), ...dayPm].map((st) => (
-                    <li
-                      key={st.id}
-                      className={cn(
-                        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
-                        !isFault(st.type)
-                          ? "border-primary/30 bg-primary/5"
-                          : st.open
-                            ? "border-destructive/40 bg-destructive/10"
-                            : "border-border bg-card",
-                      )}
-                    >
-                      <span className="min-w-0 truncate font-medium">{st.title}</span>
-                      {st.members > 1 && (
-                        <span className="shrink-0 text-muted-foreground">
-                          · {st.members} together
-                        </span>
-                      )}
-                      <span className="shrink-0 font-semibold tabular-nums">{fmtMin(st)}</span>
-                    </li>
-                  ))}
-                  {dayFaults.length > SHOWN && (
-                    <li className="inline-flex items-center px-1 text-xs text-muted-foreground">
-                      + {dayFaults.length - SHOWN} more
-                    </li>
-                  )}
-                </ul>
+                <MaintenanceDayChart date={lastDay.date} faults={dayFaults} preventive={dayPm} />
               )}
             </div>
           )}
         </>
       )}
     </Card>
+  );
+}
+
+const DAY_MIN = 1440;
+
+/**
+ * The last recorded day on the Maintenance card: a 24-hour strip showing when
+ * the line was stopped (and by what), then the day's faults as bars by
+ * downtime. Faults that cost no time — still open, or the line kept running —
+ * are listed under the bars rather than drawn as zero-length ones.
+ */
+function MaintenanceDayChart({
+  date,
+  faults,
+  preventive,
+}: {
+  date: string;
+  faults: MachineStop[];
+  preventive: MachineStop[];
+}) {
+  const dayStart = new Date(`${date}T00:00:00`).getTime();
+  const pos = (iso: string) =>
+    Math.max(0, Math.min(DAY_MIN, (new Date(iso).getTime() - dayStart) / 60_000));
+  const blocks = [...preventive, ...faults]
+    .filter((st) => !st.keptRunning)
+    .map((st) => {
+      const a = pos(st.startedAt);
+      const b = st.endedAt ? pos(st.endedAt) : DAY_MIN;
+      return { st, a, b: Math.max(b, a) };
+    });
+
+  // Bars: faults grouped by title on this day, longest downtime first.
+  const byTitle = new Map<string, { title: string; count: number; minutes: number }>();
+  for (const st of [...faults, ...preventive]) {
+    if (st.minutes <= 0) continue;
+    const key = `${isFault(st.type) ? "f" : "p"}:${st.title.toLowerCase()}`;
+    const cur = byTitle.get(key);
+    if (cur) {
+      cur.count += st.members;
+      cur.minutes += st.minutes;
+    } else byTitle.set(key, { title: st.title, count: st.members, minutes: st.minutes });
+  }
+  const bars = Array.from(byTitle.entries())
+    .map(([key, v]) => ({ key, planned: key.startsWith("p:"), ...v }))
+    .sort((x, y) => y.minutes - x.minutes);
+  const SHOWN = 6;
+  const shown = bars.slice(0, SHOWN);
+  const rest = bars.slice(SHOWN);
+  const max = shown[0]?.minutes ?? 0;
+  const noTime = faults.filter((st) => st.minutes <= 0);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div
+          role="img"
+          aria-label={`When the line was stopped on this day: ${blocks.length} ${blocks.length === 1 ? "stop" : "stops"}`}
+          className="relative h-6 overflow-hidden rounded-md bg-muted md:h-7"
+        >
+          {[6, 12, 18].map((h) => (
+            <span
+              key={h}
+              aria-hidden="true"
+              className="absolute inset-y-0 w-px bg-border"
+              style={{ left: `${(h / 24) * 100}%` }}
+            />
+          ))}
+          {blocks.map(({ st, a, b }) => (
+            <span
+              key={st.id}
+              title={`${st.title} · ${fmtMin(st)}`}
+              className={cn(
+                "absolute inset-y-0.5 rounded-sm",
+                !isFault(st.type)
+                  ? KIND_BAR.planned
+                  : st.open
+                    ? "bg-destructive"
+                    : KIND_BAR.unplanned,
+              )}
+              style={{
+                left: `${(a / DAY_MIN) * 100}%`,
+                width: `max(3px, ${((b - a) / DAY_MIN) * 100}%)`,
+              }}
+            />
+          ))}
+        </div>
+        <div
+          aria-hidden="true"
+          className="mt-1 flex justify-between text-[11px] tabular-nums text-muted-foreground"
+        >
+          <span>00:00</span>
+          <span>06:00</span>
+          <span>12:00</span>
+          <span>18:00</span>
+          <span>24:00</span>
+        </div>
+        <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className={cn("h-2 w-2 rounded-sm", KIND_BAR.unplanned)} /> fault
+          </span>
+          {preventive.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className={cn("h-2 w-2 rounded-sm", KIND_BAR.planned)} /> preventive
+            </span>
+          )}
+          {faults.some((st) => st.open) && (
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-destructive" /> still open
+            </span>
+          )}
+        </p>
+      </div>
+
+      {shown.length > 0 && (
+        <ol className="flex flex-col gap-2">
+          {shown.map((b, i) => (
+            <li
+              key={b.key}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1"
+            >
+              <span className="truncate text-sm font-medium" title={b.title}>
+                {b.title}
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  {b.planned ? "preventive" : `${b.count}×`}
+                </span>
+              </span>
+              <span className="text-right text-sm font-semibold tabular-nums">
+                {num(b.minutes)} min
+              </span>
+              <div className="col-span-2 h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn(
+                    "ds-fill-x h-full rounded-full",
+                    b.planned ? KIND_BAR.planned : KIND_BAR.unplanned,
+                  )}
+                  style={{
+                    width: `${max > 0 ? (b.minutes / max) * 100 : 0}%`,
+                    animationDelay: `${600 + i * 110}ms`,
+                  }}
+                />
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {rest.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          + {rest.length} more · {num(rest.reduce((a, r) => a + r.minutes, 0))} min
+        </p>
+      )}
+
+      {noTime.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-xs font-semibold text-muted-foreground">No downtime charged</p>
+          <ul className="flex flex-wrap gap-1.5">
+            {noTime.map((st) => (
+              <li
+                key={st.id}
+                className={cn(
+                  "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
+                  st.open ? "border-destructive/40 bg-destructive/10" : "border-border bg-card",
+                )}
+              >
+                <span className="min-w-0 truncate font-medium">{st.title}</span>
+                <span className="shrink-0 font-semibold">{fmtMin(st)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
