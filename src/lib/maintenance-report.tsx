@@ -11,12 +11,41 @@ const PAGE_MARGIN = 24; // pt
 const FOOTER_HEIGHT = 24; // pt — reserved at the bottom of every page
 const SECTION_GAP = 12; // pt
 const JPEG_QUALITY = 0.85;
+// Plain black-on-white table text stays sharp at a lower JPEG quality and a
+// 60-page events table stays a sensible file size.
+const TABLE_JPEG_QUALITY = 0.7;
 const CAPTURE_PIXEL_RATIO = 1.5;
 // Narrower than the main dashboard export (1280px) — this report is a
 // handful of dense tables/cards, not a full dashboard of charts, and
 // doesn't need to match any live viewport since it's built off-screen
 // specifically for this export.
 const CAPTURE_WIDTH = 1000; // px
+// Long tables are split into blocks of this many rows, each captured on its
+// own. One block per table made a single image as tall as the whole table:
+// with ~1,700 events (the page's default "all time" view) that is a
+// ~50,000 px canvas, past what browsers allow, and the tab crashed. 30 rows
+// stays under one A4 page even when titles wrap.
+const TABLE_ROWS_PER_BLOCK = 30;
+
+function chunkRows<T>(rows: T[], size = TABLE_ROWS_PER_BLOCK): T[][] {
+  if (rows.length === 0) return [[]];
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
+function blockTitle(
+  title: string,
+  index: number,
+  blockCount: number,
+  rowsBefore: number,
+  rowsHere: number,
+  total: number,
+): string {
+  if (blockCount <= 1) return title;
+  if (index === 0) return `${title} — rows 1–${rowsHere} of ${total}`;
+  return `${title} (continued) — rows ${rowsBefore + 1}–${rowsBefore + rowsHere} of ${total}`;
+}
 
 export interface MaintenanceReportOptions {
   lineName: string;
@@ -324,6 +353,234 @@ function FrequencyBar({ label, count, pct, color }: { label: string; count: numb
   );
 }
 
+// --- Events table, drawn natively ---
+// html-to-image copies every computed style of every cell, ~2 ms per element:
+// the "all time" view (~1,700 events, ~15,000 cells) took over a minute and,
+// as one block, froze the page for ~20 s and built a ~80,000 px canvas that
+// crashed phones. Drawing the rows with the canvas API is ~100x cheaper,
+// keeps the browser's own text shaping (Arabic included), and is cut into
+// page-sized blocks so no canvas is ever taller than one A4 page.
+const EV_SECTION_WIDTH = CAPTURE_WIDTH - 40; // same box as the other sections (margin 0 20px)
+const EV_PAD = 20;
+const EV_CELL_PAD_X = 10;
+const EV_LINE_H = 15;
+const EV_ROW_PAD_Y = 8;
+const EV_MAX_LINES = 2;
+// A4 content box is 547 x 770 pt; sections are scaled to 547 pt wide, so
+// one page holds 770 * (960 / 547) ≈ 1,351 CSS px. Leave some slack.
+const EV_MAX_BLOCK_HEIGHT = 1300;
+const EV_FONT = "12px Arial, Helvetica, sans-serif";
+const EV_HEAD_FONT = "bold 10px Arial, Helvetica, sans-serif";
+const EV_TITLE_FONT = "800 15px Arial, Helvetica, sans-serif";
+const EV_COLUMNS: { label: string; share: number }[] = [
+  { label: "EVENT", share: 0.28 },
+  { label: "TYPE", share: 0.12 },
+  { label: "SEVERITY", share: 0.1 },
+  { label: "STATUS", share: 0.08 },
+  { label: "STARTED", share: 0.14 },
+  { label: "DURATION", share: 0.1 },
+  { label: "TECHNICIAN", share: 0.1 },
+  { label: "CLOSED BY", share: 0.08 },
+];
+
+function eventCells(e: MaintenanceEvent): { text: string; muted?: string }[] {
+  return [
+    { text: e.title },
+    { text: TYPE_LABELS[e.type], muted: e.stoppage_id ? " · Stoppage" : undefined },
+    { text: e.severity_label || "Unclassified" },
+    { text: STATUS_LABELS[e.status] },
+    {
+      text: new Date(e.started_at).toLocaleString(undefined, {
+        dateStyle: "short",
+        timeStyle: "short",
+      }),
+    },
+    {
+      text: formatDuration(eventElapsedMinutes(e) * 60_000),
+      muted: e.resolved_at ? undefined : " · open",
+    },
+    { text: e.technician_names.length > 0 ? e.technician_names.join(", ") : "—" },
+    { text: e.status === "resolved" ? personLabel(e.resolved_by_profile) : "—" },
+  ];
+}
+
+// Word-wraps to at most EV_MAX_LINES lines; the last line gets an ellipsis
+// if the text still doesn't fit.
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  let i = 0;
+  for (; i < words.length; i++) {
+    const next = line ? `${line} ${words[i]}` : words[i];
+    if (ctx.measureText(next).width <= maxWidth || !line) {
+      line = next;
+    } else {
+      lines.push(line);
+      line = words[i];
+      if (lines.length === EV_MAX_LINES - 1) {
+        line = words.slice(i).join(" ");
+        i = words.length;
+        break;
+      }
+    }
+  }
+  if (line) lines.push(line);
+  return lines.map((l) => {
+    if (ctx.measureText(l).width <= maxWidth) return l;
+    let cut = l;
+    while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxWidth) cut = cut.slice(0, -1);
+    return `${cut}…`;
+  });
+}
+
+interface EvRow {
+  // mutedOwnLine: the grey suffix (" · Stoppage", " · open") didn't fit
+  // after the last text line, so it gets a line of its own.
+  cells: { lines: string[]; muted?: string; mutedOwnLine: boolean }[];
+  height: number;
+}
+
+// Lays the table out once, then draws one page-sized block at a time on
+// request, so only one canvas (~11 MB at 1.5x) is alive at any moment.
+export function layoutEventsTable(
+  events: MaintenanceEvent[],
+  pixelRatio: number,
+): { blockCount: number; drawBlock: (index: number) => HTMLCanvasElement } {
+  const measure = document.createElement("canvas").getContext("2d");
+  if (!measure) throw new Error("Canvas 2D context unavailable");
+  const innerWidth = EV_SECTION_WIDTH - EV_PAD * 2;
+  const colX: number[] = [];
+  const colW: number[] = [];
+  let x = EV_PAD;
+  for (const c of EV_COLUMNS) {
+    colX.push(x);
+    const w = Math.round(innerWidth * c.share);
+    colW.push(w);
+    x += w;
+  }
+
+  measure.font = EV_FONT;
+  const rows: EvRow[] = events.map((e) => {
+    const cells = eventCells(e).map((c, ci) => {
+      const width = colW[ci] - EV_CELL_PAD_X * 2;
+      const lines = wrapText(measure, c.text, width);
+      const muted = c.muted?.replace(/^ · /, "· ");
+      const mutedOwnLine =
+        !!c.muted && measure.measureText(`${lines[lines.length - 1]}${c.muted}`).width > width;
+      return { lines, muted: mutedOwnLine ? muted : c.muted, mutedOwnLine };
+    });
+    const lineCount = Math.max(1, ...cells.map((c) => c.lines.length + (c.mutedOwnLine ? 1 : 0)));
+    return { cells, height: lineCount * EV_LINE_H + EV_ROW_PAD_Y * 2 };
+  });
+
+  const titleH = 15 + 12; // title line + gap
+  const headH = 10 + 16 + 2; // label + padding + 2px rule
+  const emptyRowH = EV_LINE_H + EV_ROW_PAD_Y * 2;
+
+  // Split rows into blocks that each fit on one page.
+  const blocks: EvRow[][] = [];
+  let current: EvRow[] = [];
+  let h = EV_PAD * 2 + titleH + headH;
+  for (const r of rows) {
+    if (current.length > 0 && h + r.height > EV_MAX_BLOCK_HEIGHT) {
+      blocks.push(current);
+      current = [];
+      h = EV_PAD * 2 + titleH + headH;
+    }
+    current.push(r);
+    h += r.height;
+  }
+  blocks.push(current);
+
+  const rowsBeforeBlock: number[] = [];
+  blocks.reduce((n, b) => (rowsBeforeBlock.push(n), n + b.length), 0);
+
+  const drawBlock = (bi: number): HTMLCanvasElement => {
+    const block = blocks[bi];
+    const rowsBefore = rowsBeforeBlock[bi];
+    const bodyH = block.length === 0 ? emptyRowH : block.reduce((sum, r) => sum + r.height, 0);
+    const height = EV_PAD * 2 + titleH + headH + bodyH;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(EV_SECTION_WIDTH * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 2D context unavailable");
+    ctx.scale(pixelRatio, pixelRatio);
+    ctx.textBaseline = "top";
+
+    // Card: white, 1px #e2e8f0 border, 12px radius (same as the DOM sections).
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, EV_SECTION_WIDTH, height);
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // roundRect is missing on older Safari (< 16); a square corner is fine there.
+    if (typeof ctx.roundRect === "function")
+      ctx.roundRect(0.5, 0.5, EV_SECTION_WIDTH - 1, height - 1, 12);
+    else ctx.rect(0.5, 0.5, EV_SECTION_WIDTH - 1, height - 1);
+    ctx.stroke();
+
+    let y = EV_PAD;
+    ctx.fillStyle = "#1e293b";
+    ctx.font = EV_TITLE_FONT;
+    ctx.fillText(
+      blockTitle(
+        `Events (${events.length})`,
+        bi,
+        blocks.length,
+        rowsBefore,
+        block.length,
+        events.length,
+      ),
+      EV_PAD,
+      y,
+    );
+    y += titleH;
+
+    ctx.font = EV_HEAD_FONT;
+    ctx.fillStyle = "#64748b";
+    EV_COLUMNS.forEach((c, ci) => ctx.fillText(c.label, colX[ci] + EV_CELL_PAD_X, y + 8));
+    y += headH - 2;
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(EV_PAD, y, innerWidth, 2);
+    y += 2;
+
+    ctx.font = EV_FONT;
+    if (block.length === 0) {
+      ctx.fillStyle = "#1e293b";
+      ctx.fillText(
+        "No events match the current filters.",
+        EV_PAD + EV_CELL_PAD_X,
+        y + EV_ROW_PAD_Y,
+      );
+    }
+    for (const r of block) {
+      r.cells.forEach((c, ci) => {
+        const cx = colX[ci] + EV_CELL_PAD_X;
+        c.lines.forEach((line, li) => {
+          const ly = y + EV_ROW_PAD_Y + li * EV_LINE_H;
+          ctx.fillStyle = "#1e293b";
+          ctx.fillText(line, cx, ly);
+          if (c.muted && !c.mutedOwnLine && li === c.lines.length - 1) {
+            ctx.fillStyle = "#64748b";
+            ctx.fillText(c.muted, cx + ctx.measureText(line).width, ly);
+          }
+        });
+        if (c.muted && c.mutedOwnLine) {
+          ctx.fillStyle = "#64748b";
+          ctx.fillText(c.muted, cx, y + EV_ROW_PAD_Y + c.lines.length * EV_LINE_H);
+        }
+      });
+      y += r.height;
+      ctx.fillStyle = "#f1f5f9";
+      ctx.fillRect(EV_PAD, y - 1, innerWidth, 1);
+    }
+    return canvas;
+  };
+  return { blockCount: blocks.length, drawBlock };
+}
+
 function ReportLayout({
   events,
   collapsedEvents,
@@ -495,54 +752,10 @@ function ReportLayout({
         )}
       </div>
 
-      <div
-        data-pdf-section="events-table"
-        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
-      >
-        <p style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 800 }}>Events ({events.length})</p>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={th}>Event</th>
-              <th style={th}>Type</th>
-              <th style={th}>Severity</th>
-              <th style={th}>Status</th>
-              <th style={th}>Started</th>
-              <th style={th}>Duration</th>
-              <th style={th}>Technician</th>
-              <th style={th}>Closed by</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.length === 0 ? (
-              <tr>
-                <td style={td} colSpan={8}>
-                  No events match the current filters.
-                </td>
-              </tr>
-            ) : (
-              events.map((e) => (
-                <tr key={e.id}>
-                  <td style={td}>{e.title}</td>
-                  <td style={td}>
-                    {TYPE_LABELS[e.type]}
-                    {e.stoppage_id && <span style={{ color: "#64748b" }}> · Stoppage</span>}
-                  </td>
-                  <td style={td}>{e.severity_label || "Unclassified"}</td>
-                  <td style={td}>{STATUS_LABELS[e.status]}</td>
-                  <td style={td}>{new Date(e.started_at).toLocaleString()}</td>
-                  <td style={td}>
-                    {formatDuration(eventElapsedMinutes(e) * 60_000)}
-                    {!e.resolved_at && <span style={{ color: "#64748b" }}> · open</span>}
-                  </td>
-                  <td style={td}>{e.technician_names.length > 0 ? e.technician_names.join(", ") : "—"}</td>
-                  <td style={td}>{e.status === "resolved" ? personLabel(e.resolved_by_profile) : "—"}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* The events table is drawn straight onto canvases at export time
+          (see layoutEventsTable) — this placeholder only marks where it
+          goes in the section order. */}
+      <div data-pdf-section="events-table" data-pdf-native="events" />
 
       <div
         data-pdf-section="reliability-kpis"
@@ -676,48 +889,55 @@ function ReportLayout({
         </table>
       </div>
 
-      <div
-        data-pdf-section="stoppages-summary"
-        style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
-      >
-        <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>Stoppages</p>
-        <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>
-          Groups of maintenance events that make up a single downtime window — each row's duration is the stoppage's own
-          window, not the sum of its member events (see the "Part of Stoppage" events above).
-        </p>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={th}>Line</th>
-              <th style={th}>Type</th>
-              <th style={th}>Events</th>
-              <th style={th}>Started</th>
-              <th style={th}>Status</th>
-              <th style={th}>Duration</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stoppagesSummary.length === 0 ? (
+      {chunkRows(stoppagesSummary).map((block, bi, blocks) => (
+        <div
+          key={`stoppages-${bi}`}
+          data-pdf-section={bi === 0 ? "stoppages-summary" : `stoppages-summary-${bi + 1}`}
+          style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+        >
+          <p style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800 }}>
+            {blockTitle("Stoppages", bi, blocks.length, bi * TABLE_ROWS_PER_BLOCK, block.length, stoppagesSummary.length)}
+          </p>
+          {bi === 0 && (
+            <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b" }}>
+              Groups of maintenance events that make up a single downtime window — each row's duration is the stoppage's own
+              window, not the sum of its member events (see the "Part of Stoppage" events above).
+            </p>
+          )}
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: bi === 0 ? 0 : 8 }}>
+            <thead>
               <tr>
-                <td style={td} colSpan={6}>
-                  No stoppages in the exported events.
-                </td>
+                <th style={th}>Line</th>
+                <th style={th}>Type</th>
+                <th style={th}>Events</th>
+                <th style={th}>Started</th>
+                <th style={th}>Status</th>
+                <th style={th}>Duration</th>
               </tr>
-            ) : (
-              stoppagesSummary.map((s) => (
-                <tr key={s.id}>
-                  <td style={td}>{s.lineName}</td>
-                  <td style={td}>{TYPE_LABELS[s.majorityType]}</td>
-                  <td style={td}>{s.eventCount}</td>
-                  <td style={td}>{new Date(s.startedAt).toLocaleString()}</td>
-                  <td style={td}>{STATUS_LABELS[s.status]}</td>
-                  <td style={td}>{formatDuration(s.durationMinutes * 60_000)}</td>
+            </thead>
+            <tbody>
+              {stoppagesSummary.length === 0 ? (
+                <tr>
+                  <td style={td} colSpan={6}>
+                    No stoppages in the exported events.
+                  </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : (
+                block.map((s) => (
+                  <tr key={s.id}>
+                    <td style={td}>{s.lineName}</td>
+                    <td style={td}>{TYPE_LABELS[s.majorityType]}</td>
+                    <td style={td}>{s.eventCount}</td>
+                    <td style={td}>{new Date(s.startedAt).toLocaleString()}</td>
+                    <td style={td}>{STATUS_LABELS[s.status]}</td>
+                    <td style={td}>{formatDuration(s.durationMinutes * 60_000)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ))}
 
       <div
         data-pdf-section="metrics-table"
@@ -879,18 +1099,10 @@ export async function exportMaintenanceReportToPdf({
       throw new Error("Nothing to export — no report sections found.");
     }
 
-    const captured: HTMLImageElement[] = [];
-    for (let i = 0; i < sectionEls.length; i++) {
-      onProgress?.(`Capturing section ${i + 1} of ${sectionEls.length}…`);
-      const dataUrl = await toJpeg(sectionEls[i], {
-        quality: JPEG_QUALITY,
-        pixelRatio: CAPTURE_PIXEL_RATIO,
-        backgroundColor: "#ffffff",
-      });
-      captured.push(await loadImage(dataUrl));
-    }
-
-    onProgress?.("Building PDF…");
+    // The PDF is built while capturing: each section is captured, placed and
+    // dropped before the next one, so a long report never holds dozens of
+    // full-size images at once (that memory spike is what killed the tab on
+    // phones).
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -925,22 +1137,73 @@ export async function exportMaintenanceReportToPdf({
     }
     cursorY += Math.max(logo?.heightPt ?? 0, reliabilityStartDate ? 64 : 50) + 16;
 
-    for (const img of captured) {
-      const pxPerPt = img.width / contentWidth;
-      const sectionHeightPt = img.height / pxPerPt;
-
+    const place = async (dataUrl: string, width: number, height: number) => {
+      const pxPerPt = width / contentWidth;
+      const sectionHeightPt = height / pxPerPt;
       if (sectionHeightPt <= maxContentHeight) {
         if (cursorY + sectionHeightPt > pageHeight - PAGE_MARGIN - FOOTER_HEIGHT) {
           doc.addPage();
           cursorY = PAGE_MARGIN;
         }
-        doc.addImage(img.src, "JPEG", PAGE_MARGIN, cursorY, contentWidth, sectionHeightPt, undefined, "FAST");
+        doc.addImage(
+          dataUrl,
+          "JPEG",
+          PAGE_MARGIN,
+          cursorY,
+          contentWidth,
+          sectionHeightPt,
+          undefined,
+          "FAST",
+        );
         cursorY += sectionHeightPt + SECTION_GAP;
       } else {
         if (cursorY > PAGE_MARGIN) doc.addPage();
-        drawOversizedSection(doc, img, contentWidth, maxContentHeight, pxPerPt);
+        drawOversizedSection(
+          doc,
+          await loadImage(dataUrl),
+          contentWidth,
+          maxContentHeight,
+          pxPerPt,
+        );
         cursorY = pageHeight;
       }
+    };
+    // Let the progress label paint and keep the page responsive between steps.
+    const yieldToBrowser = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    for (let i = 0; i < sectionEls.length; i++) {
+      const el = sectionEls[i];
+      if (el.dataset.pdfNative === "events") {
+        onProgress?.(`Drawing events table (${events.length} events)…`);
+        await yieldToBrowser();
+        const table = layoutEventsTable(events, CAPTURE_PIXEL_RATIO);
+        for (let b = 0; b < table.blockCount; b++) {
+          if (b % 5 === 0) {
+            onProgress?.(`Adding events table, page ${b + 1} of ${table.blockCount}…`);
+            await yieldToBrowser();
+          }
+          const c = table.drawBlock(b);
+          await place(c.toDataURL("image/jpeg", TABLE_JPEG_QUALITY), c.width, c.height);
+          c.width = 0; // release the bitmap now rather than at GC
+        }
+        continue;
+      }
+      onProgress?.(`Capturing section ${i + 1} of ${sectionEls.length}…`);
+      await yieldToBrowser();
+      const dataUrl = await toJpeg(el, {
+        quality: JPEG_QUALITY,
+        pixelRatio: CAPTURE_PIXEL_RATIO,
+        backgroundColor: "#ffffff",
+        // The report is plain Arial with inline styles; embedding the app's
+        // web fonts re-read every stylesheet on every capture for nothing.
+        skipFonts: true,
+        // Sections carry "margin: 0 20px"; the clone kept it and was drawn
+        // 20px to the right inside a box of the element's own width, cutting
+        // off every section's right edge.
+        style: { margin: "0" },
+      });
+      const img = await loadImage(dataUrl);
+      await place(dataUrl, img.width, img.height);
     }
 
     onProgress?.("Adding page numbers…");
