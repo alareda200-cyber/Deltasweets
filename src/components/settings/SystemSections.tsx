@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Check, Download, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { ProductionTargets } from "@/lib/queries";
 import { TargetsPreview } from "./TargetsPreview";
@@ -574,6 +576,96 @@ export function TargetsSection({ targets, qc }: { targets: ProductionTargets; qc
               Changes show on the Dashboard and Daily entry right away, for every period.
             </p>
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Replay approval — app_settings.replay_needs_approval
+// (20260928120000_replay_approval.sql). ON: anyone but an admin asks before
+// watching a day on Replay; admins get a push and approve or deny.
+// ---------------------------------------------------------------------------
+
+export function ReplayApprovalSection({ on, qc }: { on: boolean; qc: QC }) {
+  const { profile } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const switchId = "replay-approval-switch";
+
+  async function toggle(next: boolean) {
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        // Newer than the generated Supabase types.
+        .update({
+          replay_needs_approval: next,
+          updated_by: profile?.id ?? null,
+          updated_at: new Date().toISOString(),
+        } as never)
+        .eq("id", true);
+      if (error) throw error;
+      toast.success(next ? "Replay now needs an admin's approval" : "Replay is open again");
+      void logAudit("settings.update", "app_settings", "true", { replay_needs_approval: next });
+      // Prefix match: refreshes ["app-settings", "replay-approval"] everywhere.
+      qc.invalidateQueries({ queryKey: ["app-settings"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4 md:space-y-5">
+      <SectionHeader id="replay" />
+      <Card>
+        <CardContent className="space-y-4 p-4 md:p-6">
+          <div className="flex min-h-11 items-center justify-between gap-4">
+            <div className="min-w-0">
+              <Label htmlFor={switchId} className="text-base font-semibold">
+                Needs an admin&rsquo;s approval
+              </Label>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {on
+                  ? "On: anyone who is not an admin asks first; admins get a notification to approve or deny."
+                  : "Off: Replay opens for everyone who can see the Dashboard."}
+              </p>
+            </div>
+            <Switch
+              id={switchId}
+              checked={on}
+              disabled={saving}
+              onCheckedChange={(v) => void toggle(v)}
+              className="h-7 w-12 [&>span]:h-6 [&>span]:w-6 [&>span]:data-[state=checked]:translate-x-5"
+            />
+          </div>
+          <div
+            className={cn(
+              "grid gap-3 border-t border-border pt-4 text-sm sm:grid-cols-3",
+              !on && "opacity-50",
+            )}
+          >
+            <div>
+              <p className="font-semibold">Who asks</p>
+              <p className="text-muted-foreground">everyone except admins</p>
+            </div>
+            <div>
+              <p className="font-semibold">Who approves</p>
+              <p className="text-muted-foreground">any admin, first answer wins</p>
+            </div>
+            <div>
+              <p className="font-semibold">How long</p>
+              <p className="text-muted-foreground">one viewing; unanswered after 30 min expires</p>
+            </div>
+          </div>
+          <Link
+            to="/replay-requests"
+            className="inline-flex min-h-11 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
+          >
+            Open replay requests ›
+          </Link>
         </CardContent>
       </Card>
     </div>

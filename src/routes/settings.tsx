@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { replayApprovalSettingQuery } from "@/lib/replay-approval";
 import { requireSession } from "@/lib/require-session";
 import {
   linesQuery,
@@ -45,6 +46,7 @@ import { FaultTitlesSection, type FaultTitleStat } from "@/components/settings/F
 import {
   BackupSection,
   ReliabilitySection,
+  ReplayApprovalSection,
   TargetsSection,
 } from "@/components/settings/SystemSections";
 
@@ -146,6 +148,7 @@ function SettingsPage() {
   const reliabilityStartDate = appSettings?.reliability_start_date ?? null;
   const rootCauseTrackingStartDate = appSettings?.root_cause_tracking_start_date ?? null;
   const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
+  const { data: replayApprovalOn = false } = useQuery(replayApprovalSettingQuery());
   const qc = useQueryClient();
   const [find, setFind] = useState("");
 
@@ -201,6 +204,10 @@ function SettingsPage() {
       sub: reliabilityStartDate
         ? `MTBF/MTTR count from ${shortDate(reliabilityStartDate)}`
         : "MTBF/MTTR count every event",
+    },
+    replay: {
+      count: replayApprovalOn ? "On" : "Off",
+      sub: replayApprovalOn ? "Non-admins ask an admin first" : "Replay opens for everyone",
     },
     backup: { sub: "A restore overwrites rows with the same id" },
   };
@@ -309,6 +316,8 @@ function SettingsPage() {
             qc={qc}
           />
         );
+      case "replay":
+        return <ReplayApprovalSection on={replayApprovalOn} qc={qc} />;
       case "backup":
         return <BackupSection qc={qc} />;
     }

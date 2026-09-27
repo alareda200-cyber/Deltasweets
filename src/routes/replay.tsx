@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReplayScene, type SceneState } from "@/components/replay/ReplayScene";
+import { ReplayGateCard } from "@/components/replay/ReplayGateCard";
+import { replayApprovalSettingQuery, useReplayGate } from "@/lib/replay-approval";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/lib/auth-context";
@@ -116,7 +118,7 @@ const kgFmt = (n: number) => Math.round(n).toLocaleString("en-US");
 function ReplayPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: "/replay" });
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const reduced = usePrefersReducedMotion();
   const isMobile = useIsMobile();
   const { data: allLines } = useSuspenseQuery(linesQuery);
@@ -131,13 +133,30 @@ function ReplayPage() {
   const date = search.date ?? shiftDate(iso(new Date()), -1);
   const canFaults = can(role, "dashboard.viewMaintenanceCard");
 
+  // Settings › Replay approval: when on, anyone but an admin asks first and
+  // the day's data isn't even loaded until an admin says yes.
+  const approvalQ = useQuery(replayApprovalSettingQuery());
+  const gate = useReplayGate(
+    line?.id ?? null,
+    date,
+    user?.id ?? null,
+    approvalQ.data === true && role !== "admin",
+  );
+  const allowed = !approvalQ.isPending && gate.state === "open";
+
   const eventsQ = useQuery({
     ...maintenanceEventsQuery(line?.id ?? null, null, null, date, date),
-    enabled: !!line && canFaults,
+    enabled: !!line && canFaults && allowed,
   });
-  const entriesQ = useQuery(entriesQuery(line?.id ?? null, date, date));
+  const entriesQ = useQuery({
+    ...entriesQuery(line?.id ?? null, date, date),
+    enabled: !!line && allowed,
+  });
   const entryIds = (entriesQ.data ?? []).map((e) => e.id);
-  const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entryIds));
+  const downtimesQ = useQuery({
+    ...entryDowntimesForEntriesQuery(entryIds),
+    enabled: entryIds.length > 0 && allowed,
+  });
 
   // Everything the replay shows is a function of t (minutes into the day).
   const model = useMemo(() => {
@@ -448,340 +467,353 @@ function ReplayPage() {
           </div>
         </div>
 
-        <div
-          className="ds-rise flex flex-wrap items-center gap-2"
-          style={{ animationDelay: "60ms" }}
-        >
-          <Button
-            onClick={s.playing ? pause : play}
-            disabled={!ready}
-            className="h-11 min-w-28 md:h-9"
-          >
-            {s.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-            {s.playing ? "Pause" : done ? "Replay" : "Play"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              seek(0);
-              play();
-            }}
-            disabled={!ready}
-            className="h-11 md:h-9"
-          >
-            <RotateCcw aria-hidden="true" />
-            Restart
-          </Button>
-          <div role="group" aria-label="Speed" className="flex rounded-lg bg-muted p-0.5">
-            {SPEEDS.map((sp, i) => (
-              <button
-                key={sp.label}
-                type="button"
-                aria-pressed={speedIdx === i}
-                onClick={() => {
-                  setSpeedIdx(i);
-                  sim.current.speed = sp.v;
-                }}
-                className={cn(
-                  "ds-squish h-11 min-w-12 rounded-md px-3 text-sm font-semibold md:h-8",
-                  speedIdx === i ? "bg-card shadow-sm" : "text-muted-foreground",
-                )}
-              >
-                {sp.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <dl
-          className="ds-rise grid grid-cols-2 gap-2 md:grid-cols-5 md:gap-3"
-          style={{ animationDelay: "120ms" }}
-        >
-          {[
-            {
-              k: "Clock",
-              v: clock(t),
-              sub: w
-                ? w.planned
-                  ? "preventive maintenance"
-                  : "line stopped"
-                : s.playing
-                  ? "running"
-                  : "paused",
-              tone: w ? (w.planned ? "text-chart-1" : "text-destructive-strong") : "",
-            },
-            {
-              k: "Made so far",
-              v: model.hasEntry ? `${kgFmt(kg)} kg` : "—",
-              sub: model.hasEntry ? `of ${kgFmt(model.actual)} kg that day` : "no entry that day",
-              tone: "",
-            },
-            {
-              k: "Of plan",
-              v: pctOfPlan == null ? "—" : `${pctOfPlan.toFixed(1)}%`,
-              sub: model.plan > 0 ? `plan ${kgFmt(model.plan)} kg` : "no plan",
-              tone: "",
-            },
-            {
-              k: "Faults",
-              v: canFaults ? String(passed.length) : "—",
-              sub: canFaults ? `of ${model.faults.length} that day` : "not in your role",
-              tone: passed.length ? "text-destructive-strong" : "",
-            },
-            {
-              k: "Stopped",
-              v: canFaults ? `${Math.round(stoppedSoFar)} min` : "—",
-              sub:
-                canFaults && model.plannedMin > 0
-                  ? `${Math.round(faultStopSoFar)} faults · ${Math.round(plannedSoFar)} preventive`
-                  : "by machine faults",
-              tone: "",
-            },
-          ].map((x) => (
+        {!allowed ? (
+          <ReplayGateCard
+            state={approvalQ.isPending ? "checking" : gate.state}
+            askedAt={gate.askedAt}
+            onAsk={() => void gate.ask()}
+            onCancel={() => void gate.cancel()}
+          />
+        ) : (
+          <>
             <div
-              key={x.k}
-              className="rounded-xl border border-border bg-card px-3 py-2.5 last:col-span-2 md:px-4 md:last:col-span-1"
+              className="ds-rise flex flex-wrap items-center gap-2"
+              style={{ animationDelay: "60ms" }}
             >
-              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {x.k}
-              </dt>
-              <dd
-                className={cn(
-                  "mt-1 whitespace-nowrap text-xl font-extrabold tabular-nums leading-none sm:text-2xl md:text-3xl",
-                  x.tone,
-                )}
+              <Button
+                onClick={s.playing ? pause : play}
+                disabled={!ready}
+                className="h-11 min-w-28 md:h-9"
               >
-                {x.v}
-              </dd>
-              <dd className="mt-1 text-xs text-muted-foreground">{x.sub}</dd>
+                {s.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                {s.playing ? "Pause" : done ? "Replay" : "Play"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  seek(0);
+                  play();
+                }}
+                disabled={!ready}
+                className="h-11 md:h-9"
+              >
+                <RotateCcw aria-hidden="true" />
+                Restart
+              </Button>
+              <div role="group" aria-label="Speed" className="flex rounded-lg bg-muted p-0.5">
+                {SPEEDS.map((sp, i) => (
+                  <button
+                    key={sp.label}
+                    type="button"
+                    aria-pressed={speedIdx === i}
+                    onClick={() => {
+                      setSpeedIdx(i);
+                      sim.current.speed = sp.v;
+                    }}
+                    className={cn(
+                      "ds-squish h-11 min-w-12 rounded-md px-3 text-sm font-semibold md:h-8",
+                      speedIdx === i ? "bg-card shadow-sm" : "text-muted-foreground",
+                    )}
+                  >
+                    {sp.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          ))}
-        </dl>
 
-        <section
-          aria-label="The line"
-          className="ds-rise overflow-hidden rounded-2xl border border-border bg-card"
-          style={{ animationDelay: "180ms" }}
-        >
-          <p className="sr-only" aria-live="polite">
-            {w
-              ? w.planned
-                ? `${clock(t)}: line stopped for preventive maintenance, ${scene.faultTitle}`
-                : `${clock(t)}: line stopped by ${scene.faultTitle}`
-              : ""}
-          </p>
-          <ReplayScene s={scene} lineName={line?.name ?? ""} compact={isMobile} />
-        </section>
+            <dl
+              className="ds-rise grid grid-cols-2 gap-2 md:grid-cols-5 md:gap-3"
+              style={{ animationDelay: "120ms" }}
+            >
+              {[
+                {
+                  k: "Clock",
+                  v: clock(t),
+                  sub: w
+                    ? w.planned
+                      ? "preventive maintenance"
+                      : "line stopped"
+                    : s.playing
+                      ? "running"
+                      : "paused",
+                  tone: w ? (w.planned ? "text-chart-1" : "text-destructive-strong") : "",
+                },
+                {
+                  k: "Made so far",
+                  v: model.hasEntry ? `${kgFmt(kg)} kg` : "—",
+                  sub: model.hasEntry
+                    ? `of ${kgFmt(model.actual)} kg that day`
+                    : "no entry that day",
+                  tone: "",
+                },
+                {
+                  k: "Of plan",
+                  v: pctOfPlan == null ? "—" : `${pctOfPlan.toFixed(1)}%`,
+                  sub: model.plan > 0 ? `plan ${kgFmt(model.plan)} kg` : "no plan",
+                  tone: "",
+                },
+                {
+                  k: "Faults",
+                  v: canFaults ? String(passed.length) : "—",
+                  sub: canFaults ? `of ${model.faults.length} that day` : "not in your role",
+                  tone: passed.length ? "text-destructive-strong" : "",
+                },
+                {
+                  k: "Stopped",
+                  v: canFaults ? `${Math.round(stoppedSoFar)} min` : "—",
+                  sub:
+                    canFaults && model.plannedMin > 0
+                      ? `${Math.round(faultStopSoFar)} faults · ${Math.round(plannedSoFar)} preventive`
+                      : "by machine faults",
+                  tone: "",
+                },
+              ].map((x) => (
+                <div
+                  key={x.k}
+                  className="rounded-xl border border-border bg-card px-3 py-2.5 last:col-span-2 md:px-4 md:last:col-span-1"
+                >
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {x.k}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "mt-1 whitespace-nowrap text-xl font-extrabold tabular-nums leading-none sm:text-2xl md:text-3xl",
+                      x.tone,
+                    )}
+                  >
+                    {x.v}
+                  </dd>
+                  <dd className="mt-1 text-xs text-muted-foreground">{x.sub}</dd>
+                </div>
+              ))}
+            </dl>
 
-        <section
-          aria-labelledby="replay-timeline"
-          className="ds-rise rounded-2xl border border-border bg-card py-3"
-          style={{ animationDelay: "240ms" }}
-        >
-          <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 md:px-5">
-            <h2 id="replay-timeline" className="text-sm font-semibold md:text-base">
-              Kilograms through the day
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              red = faults that stopped the line · amber = faults with the line running · blue =
-              preventive maintenance · the curve is modelled from the day total
-            </span>
-          </div>
-          <svg
-            viewBox={`0 0 ${VBW} ${isMobile ? 200 : 170}`}
-            className="block h-auto w-full cursor-pointer"
-            aria-hidden="true"
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              const vx = ((e.clientX - r.left) / r.width) * VBW;
-              seek(((vx - X0) / (X1 - X0)) * DAY);
-            }}
-          >
-            {model.plan > 0 && (
-              <>
+            <section
+              aria-label="The line"
+              className="ds-rise overflow-hidden rounded-2xl border border-border bg-card"
+              style={{ animationDelay: "180ms" }}
+            >
+              <p className="sr-only" aria-live="polite">
+                {w
+                  ? w.planned
+                    ? `${clock(t)}: line stopped for preventive maintenance, ${scene.faultTitle}`
+                    : `${clock(t)}: line stopped by ${scene.faultTitle}`
+                  : ""}
+              </p>
+              <ReplayScene s={scene} lineName={line?.name ?? ""} compact={isMobile} />
+            </section>
+
+            <section
+              aria-labelledby="replay-timeline"
+              className="ds-rise rounded-2xl border border-border bg-card py-3"
+              style={{ animationDelay: "240ms" }}
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 md:px-5">
+                <h2 id="replay-timeline" className="text-sm font-semibold md:text-base">
+                  Kilograms through the day
+                </h2>
+                <span className="text-xs text-muted-foreground">
+                  red = faults that stopped the line · amber = faults with the line running · blue =
+                  preventive maintenance · the curve is modelled from the day total
+                </span>
+              </div>
+              <svg
+                viewBox={`0 0 ${VBW} ${isMobile ? 200 : 170}`}
+                className="block h-auto w-full cursor-pointer"
+                aria-hidden="true"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const vx = ((e.clientX - r.left) / r.width) * VBW;
+                  seek(((vx - X0) / (X1 - X0)) * DAY);
+                }}
+              >
+                {model.plan > 0 && (
+                  <>
+                    <line
+                      x1={X0}
+                      y1={yOf(model.plan)}
+                      x2={X1}
+                      y2={yOf(model.plan)}
+                      strokeDasharray="6 4"
+                      opacity="0.5"
+                      style={{ stroke: "var(--foreground)" }}
+                    />
+                    <text
+                      x={X1}
+                      y={yOf(model.plan) - 6}
+                      textAnchor="end"
+                      fontSize={FS}
+                      fontWeight="600"
+                      style={{ fill: "var(--foreground)" }}
+                    >
+                      Plan {kgFmt(model.plan)} kg
+                    </text>
+                  </>
+                )}
+                <line x1={X0} y1="120" x2={X1} y2="120" style={{ stroke: "var(--border)" }} />
+                {model.hasEntry && (
+                  <>
+                    <path d={area} opacity="0.14" style={{ fill: "var(--primary)" }} />
+                    <path
+                      d={line_}
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinejoin="round"
+                      style={{ stroke: "var(--primary)" }}
+                    />
+                  </>
+                )}
+                {model.preventive.map((f, i) => (
+                  <rect
+                    key={`pm-${i}`}
+                    x={xOf(f.s)}
+                    y="128"
+                    width={Math.max(2.5, xOf(f.e) - xOf(f.s))}
+                    height="14"
+                    rx="1.5"
+                    opacity={(f.s <= t ? 1 : 0.3) * (f.stops ? 1 : 0.5)}
+                    style={{ fill: "var(--chart-1)" }}
+                  />
+                ))}
+                {model.faults.map((f, i) => (
+                  <rect
+                    key={i}
+                    x={xOf(f.s)}
+                    y="128"
+                    width={Math.max(2.5, xOf(f.e) - xOf(f.s))}
+                    height="14"
+                    rx="1.5"
+                    opacity={f.s <= t ? 1 : 0.3}
+                    style={{ fill: f.stops ? "var(--destructive)" : "var(--warning)" }}
+                  />
+                ))}
+                {(isMobile ? [0, 6, 12, 18, 24] : [0, 3, 6, 9, 12, 15, 18, 21, 24]).map((h) => (
+                  <text
+                    key={h}
+                    x={xOf(h * 60)}
+                    y={isMobile ? 190 : 162}
+                    textAnchor={h === 0 ? "start" : h === 24 ? "end" : "middle"}
+                    fontSize={FS}
+                    style={{ fill: "var(--muted-foreground)" }}
+                  >
+                    {pad(h)}:00
+                  </text>
+                ))}
                 <line
-                  x1={X0}
-                  y1={yOf(model.plan)}
-                  x2={X1}
-                  y2={yOf(model.plan)}
-                  strokeDasharray="6 4"
-                  opacity="0.5"
+                  x1={xOf(t)}
+                  y1="10"
+                  x2={xOf(t)}
+                  y2="146"
+                  strokeWidth="2"
                   style={{ stroke: "var(--foreground)" }}
                 />
-                <text
-                  x={X1}
-                  y={yOf(model.plan) - 6}
-                  textAnchor="end"
-                  fontSize={FS}
-                  fontWeight="600"
-                  style={{ fill: "var(--foreground)" }}
-                >
-                  Plan {kgFmt(model.plan)} kg
-                </text>
-              </>
-            )}
-            <line x1={X0} y1="120" x2={X1} y2="120" style={{ stroke: "var(--border)" }} />
-            {model.hasEntry && (
-              <>
-                <path d={area} opacity="0.14" style={{ fill: "var(--primary)" }} />
-                <path
-                  d={line_}
-                  fill="none"
-                  strokeWidth="2.5"
-                  strokeLinejoin="round"
-                  style={{ stroke: "var(--primary)" }}
+                <circle
+                  cx={xOf(t)}
+                  cy={yOf(kg)}
+                  r="6"
+                  strokeWidth="2"
+                  style={{ fill: "var(--primary)", stroke: "var(--card)" }}
                 />
-              </>
-            )}
-            {model.preventive.map((f, i) => (
-              <rect
-                key={`pm-${i}`}
-                x={xOf(f.s)}
-                y="128"
-                width={Math.max(2.5, xOf(f.e) - xOf(f.s))}
-                height="14"
-                rx="1.5"
-                opacity={(f.s <= t ? 1 : 0.3) * (f.stops ? 1 : 0.5)}
-                style={{ fill: "var(--chart-1)" }}
-              />
-            ))}
-            {model.faults.map((f, i) => (
-              <rect
-                key={i}
-                x={xOf(f.s)}
-                y="128"
-                width={Math.max(2.5, xOf(f.e) - xOf(f.s))}
-                height="14"
-                rx="1.5"
-                opacity={f.s <= t ? 1 : 0.3}
-                style={{ fill: f.stops ? "var(--destructive)" : "var(--warning)" }}
-              />
-            ))}
-            {(isMobile ? [0, 6, 12, 18, 24] : [0, 3, 6, 9, 12, 15, 18, 21, 24]).map((h) => (
-              <text
-                key={h}
-                x={xOf(h * 60)}
-                y={isMobile ? 190 : 162}
-                textAnchor={h === 0 ? "start" : h === 24 ? "end" : "middle"}
-                fontSize={FS}
-                style={{ fill: "var(--muted-foreground)" }}
-              >
-                {pad(h)}:00
-              </text>
-            ))}
-            <line
-              x1={xOf(t)}
-              y1="10"
-              x2={xOf(t)}
-              y2="146"
-              strokeWidth="2"
-              style={{ stroke: "var(--foreground)" }}
-            />
-            <circle
-              cx={xOf(t)}
-              cy={yOf(kg)}
-              r="6"
-              strokeWidth="2"
-              style={{ fill: "var(--primary)", stroke: "var(--card)" }}
-            />
-          </svg>
-          <div className="px-4 md:px-5">
-            <input
-              type="range"
-              min={0}
-              max={DAY}
-              step={1}
-              value={Math.round(t)}
-              onChange={(e) => seek(Number(e.target.value))}
-              aria-label="Time of day"
-              aria-valuetext={clock(t)}
-              className="h-11 w-full cursor-pointer accent-primary md:h-6"
-            />
-          </div>
-          {entryDowntimes.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 px-4 pt-1 text-xs md:px-5 md:text-sm">
-              <span className="font-semibold">Also recorded that day, no clock time:</span>
-              {entryDowntimes.map((d) => (
-                <span key={d.id} className="rounded-full bg-muted px-2.5 py-1">
-                  {d.reason_name} · {d.minutes} min
-                </span>
-              ))}
-            </div>
-          )}
-        </section>
+              </svg>
+              <div className="px-4 md:px-5">
+                <input
+                  type="range"
+                  min={0}
+                  max={DAY}
+                  step={1}
+                  value={Math.round(t)}
+                  onChange={(e) => seek(Number(e.target.value))}
+                  aria-label="Time of day"
+                  aria-valuetext={clock(t)}
+                  className="h-11 w-full cursor-pointer accent-primary md:h-6"
+                />
+              </div>
+              {entryDowntimes.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 px-4 pt-1 text-xs md:px-5 md:text-sm">
+                  <span className="font-semibold">Also recorded that day, no clock time:</span>
+                  {entryDowntimes.map((d) => (
+                    <span key={d.id} className="rounded-full bg-muted px-2.5 py-1">
+                      {d.reason_name} · {d.minutes} min
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
 
-        {ready && !model.hasEntry && model.faults.length === 0 && (
-          <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Nothing recorded for {line?.name} on this day — no entry and no machine faults.
-          </p>
-        )}
-
-        {done && (model.hasEntry || model.faults.length > 0) && (
-          <section
-            aria-labelledby="replay-summary"
-            className="ds-slide-in rounded-2xl border border-border bg-card p-4 shadow-elevated md:p-6"
-          >
-            <h2 id="replay-summary" className="text-lg font-bold md:text-xl">
-              That was the day
-            </h2>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 md:gap-3">
-              <div className="rounded-xl bg-muted p-3">
-                <div className="text-2xl font-extrabold tabular-nums">
-                  {model.hasEntry ? kgFmt(model.actual) : "—"}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  kg made
-                  {model.plan > 0
-                    ? ` · ${((model.actual / model.plan) * 100).toFixed(1)}% of plan`
-                    : ""}
-                </div>
-              </div>
-              <div className="rounded-xl bg-destructive/10 p-3">
-                <div className="text-2xl font-extrabold tabular-nums text-destructive-strong">
-                  {model.faults.length}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  faults · {Math.round(model.stopMin - model.plannedMin)} min stopped
-                  {model.plannedMin > 0
-                    ? ` · + ${Math.round(model.plannedMin)} min preventive`
-                    : ""}
-                </div>
-              </div>
-              <div className="rounded-xl bg-muted p-3">
-                <div className="text-2xl font-extrabold tabular-nums">
-                  {model.topTitle ? `${model.topTitle[1]}×` : "—"}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {model.topTitle ? model.topTitle[0] : "no faults"} · most frequent
-                </div>
-              </div>
-            </div>
-            {model.longest && (
-              <p className="mt-3 text-sm">
-                Longest stop: <b>{model.longest.titles[0]}</b>,{" "}
-                {Math.round(model.longest.e - model.longest.s)} min at {clock(model.longest.s)}.
+            {ready && !model.hasEntry && model.faults.length === 0 && (
+              <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                Nothing recorded for {line?.name} on this day — no entry and no machine faults.
               </p>
             )}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {model.hasEntry && (
-                <Link
-                  to="/entry"
-                  search={{ line: line?.id, date, shift: entriesQ.data?.[0]?.shift }}
-                  className="inline-flex min-h-11 items-center rounded-md border border-border px-4 text-sm font-semibold hover:bg-muted md:min-h-9"
-                >
-                  Open the entry
-                </Link>
-              )}
-              {canFaults && (
-                <Link
-                  to="/maintenance"
-                  className="inline-flex min-h-11 items-center rounded-md border border-border px-4 text-sm font-semibold hover:bg-muted md:min-h-9"
-                >
-                  Maintenance
-                </Link>
-              )}
-            </div>
-          </section>
+
+            {done && (model.hasEntry || model.faults.length > 0) && (
+              <section
+                aria-labelledby="replay-summary"
+                className="ds-slide-in rounded-2xl border border-border bg-card p-4 shadow-elevated md:p-6"
+              >
+                <h2 id="replay-summary" className="text-lg font-bold md:text-xl">
+                  That was the day
+                </h2>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 md:gap-3">
+                  <div className="rounded-xl bg-muted p-3">
+                    <div className="text-2xl font-extrabold tabular-nums">
+                      {model.hasEntry ? kgFmt(model.actual) : "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      kg made
+                      {model.plan > 0
+                        ? ` · ${((model.actual / model.plan) * 100).toFixed(1)}% of plan`
+                        : ""}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-destructive/10 p-3">
+                    <div className="text-2xl font-extrabold tabular-nums text-destructive-strong">
+                      {model.faults.length}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      faults · {Math.round(model.stopMin - model.plannedMin)} min stopped
+                      {model.plannedMin > 0
+                        ? ` · + ${Math.round(model.plannedMin)} min preventive`
+                        : ""}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-muted p-3">
+                    <div className="text-2xl font-extrabold tabular-nums">
+                      {model.topTitle ? `${model.topTitle[1]}×` : "—"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {model.topTitle ? model.topTitle[0] : "no faults"} · most frequent
+                    </div>
+                  </div>
+                </div>
+                {model.longest && (
+                  <p className="mt-3 text-sm">
+                    Longest stop: <b>{model.longest.titles[0]}</b>,{" "}
+                    {Math.round(model.longest.e - model.longest.s)} min at {clock(model.longest.s)}.
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {model.hasEntry && (
+                    <Link
+                      to="/entry"
+                      search={{ line: line?.id, date, shift: entriesQ.data?.[0]?.shift }}
+                      className="inline-flex min-h-11 items-center rounded-md border border-border px-4 text-sm font-semibold hover:bg-muted md:min-h-9"
+                    >
+                      Open the entry
+                    </Link>
+                  )}
+                  {canFaults && (
+                    <Link
+                      to="/maintenance"
+                      className="inline-flex min-h-11 items-center rounded-md border border-border px-4 text-sm font-semibold hover:bg-muted md:min-h-9"
+                    >
+                      Maintenance
+                    </Link>
+                  )}
+                </div>
+              </section>
+            )}
+          </>
         )}
       </div>
     </AppShell>

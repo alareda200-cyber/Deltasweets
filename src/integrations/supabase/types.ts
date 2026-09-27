@@ -842,6 +842,42 @@ export type Database = {
         }
         Relationships: []
       }
+      replay_requests: {
+        Row: {
+          created_at: string
+          day: string
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          line_id: string
+          requester_id: string
+          status: string
+          used_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          day: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          line_id: string
+          requester_id: string
+          status?: string
+          used_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          day?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          line_id?: string
+          requester_id?: string
+          status?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_color: string
@@ -1031,7 +1067,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cancel_replay_request: { Args: { p_id: string }; Returns: undefined }
+      decide_replay_request: { Args: { p_id: string; p_approve: boolean }; Returns: string }
       is_admin: { Args: { check_user_id: string }; Returns: boolean }
+      request_replay: {
+        Args: { p_line: string; p_day: string }
+        Returns: { id: string | null; status: string }[]
+      }
+      start_replay: { Args: { p_id: string }; Returns: boolean }
       touch_last_login: { Args: never; Returns: undefined }
       touch_last_seen: { Args: never; Returns: undefined }
     }

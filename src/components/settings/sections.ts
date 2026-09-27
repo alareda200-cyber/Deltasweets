@@ -17,6 +17,7 @@ export const SECTION_IDS = [
   "faultTitles",
   "areaOwners",
   "reliability",
+  "replay",
   "backup",
 ] as const;
 
@@ -134,6 +135,13 @@ export const SECTION_META: Record<SectionId, SectionMeta> = {
     keywords: "mtbf mttr window start date root cause tracking",
     careful: true,
   },
+  replay: {
+    group: "System",
+    title: "Replay approval",
+    description:
+      "Whether watching a day on Replay needs an admin's OK. Admins get a notification and approve or deny; an approval is for one viewing.",
+    keywords: "replay approval permission request notification admin watch",
+  },
   backup: {
     group: "System",
     title: "Backup and restore",
@@ -160,7 +168,7 @@ export const DESKTOP_GROUPS: { title: string; items: (SectionId | "users")[] }[]
     ],
   },
   { title: "People", items: ["areaOwners", "users"] },
-  { title: "System", items: ["reliability", "backup"] },
+  { title: "System", items: ["reliability", "replay", "backup"] },
 ];
 
 // Mobile list grouping (the SettingsMobile board): the three sections that
@@ -173,6 +181,7 @@ export const MOBILE_GROUPS: { title: string; items: (SectionId | "users")[]; car
       items: ["technicians", "departments", "categories", "types", "severity", "rootCauses"],
     },
     { title: "People", items: ["areaOwners", "users"] },
+    { title: "System", items: ["replay"] },
     {
       title: "Careful — changes history",
       items: ["faultTitles", "backup", "reliability"],

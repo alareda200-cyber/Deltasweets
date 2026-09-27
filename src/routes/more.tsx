@@ -52,7 +52,8 @@ type SettingsSection =
   | "areaOwners"
   | "faultTitles"
   | "backup"
-  | "reliability";
+  | "reliability"
+  | "replay";
 
 type Item =
   | {
@@ -60,7 +61,7 @@ type Item =
       key: string;
       name: string;
       sub?: string;
-      to: "/users" | "/audit-log" | "/recap" | "/replay";
+      to: "/users" | "/audit-log" | "/recap" | "/replay" | "/replay-requests";
     }
   | { kind: "settings"; key: string; name: string; sub?: string; section: SettingsSection };
 
@@ -149,6 +150,13 @@ function MorePage() {
             name: "Audit log",
             sub: "Who changed what, and when",
             to: "/audit-log",
+          },
+          {
+            kind: "route",
+            key: "replay-requests",
+            name: "Replay requests",
+            sub: "Approve or deny who watches a day",
+            to: "/replay-requests",
           },
         ],
       });
@@ -249,6 +257,18 @@ function MorePage() {
               name: "Area owners",
               sub: activeLabel(areaOwners),
               section: "areaOwners",
+            },
+          ],
+        },
+        {
+          title: "System",
+          items: [
+            {
+              kind: "settings",
+              key: "replay",
+              name: "Replay approval",
+              sub: "Whether Replay needs an admin's OK",
+              section: "replay",
             },
           ],
         },

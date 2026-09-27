@@ -16,7 +16,8 @@ export type Permission =
   | "dashboard.exportPdf"
   | "maintenance.view"
   | "maintenance.edit"
-  | "maintenance.delete";
+  | "maintenance.delete"
+  | "replay.approve"; // answer Replay requests (Settings › Replay approval)
 
 const MATRIX: Record<Role, Permission[]> = {
   admin: [
@@ -25,6 +26,7 @@ const MATRIX: Record<Role, Permission[]> = {
     "entry.editProduction", "entry.editDowntime", "entry.editAreaOwners", "entry.editNotes",
     "dashboard.view", "dashboard.viewMaintenanceCard", "dashboard.exportPdf",
     "maintenance.view", "maintenance.edit", "maintenance.delete",
+    "replay.approve",
   ],
   production: [
     "entry.view", "entry.create", "entry.delete", "entry.history",

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as ReplayRequestsRouteImport } from './routes/replay-requests'
 import { Route as ReplayRouteImport } from './routes/replay'
 import { Route as RecapRouteImport } from './routes/recap'
 import { Route as MoreRouteImport } from './routes/more'
@@ -34,6 +35,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReplayRequestsRoute = ReplayRequestsRouteImport.update({
+  id: '/replay-requests',
+  path: '/replay-requests',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReplayRoute = ReplayRouteImport.update({
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/more': typeof MoreRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
+  '/replay-requests': typeof ReplayRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/more': typeof MoreRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
+  '/replay-requests': typeof ReplayRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/more': typeof MoreRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
+  '/replay-requests': typeof ReplayRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
     | '/more'
     | '/recap'
     | '/replay'
+    | '/replay-requests'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -141,6 +151,7 @@ export interface FileRouteTypes {
     | '/more'
     | '/recap'
     | '/replay'
+    | '/replay-requests'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -154,6 +165,7 @@ export interface FileRouteTypes {
     | '/more'
     | '/recap'
     | '/replay'
+    | '/replay-requests'
     | '/reset-password'
     | '/settings'
     | '/users'
@@ -168,6 +180,7 @@ export interface RootRouteChildren {
   MoreRoute: typeof MoreRoute
   RecapRoute: typeof RecapRoute
   ReplayRoute: typeof ReplayRoute
+  ReplayRequestsRoute: typeof ReplayRequestsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/replay-requests': {
+      id: '/replay-requests'
+      path: '/replay-requests'
+      fullPath: '/replay-requests'
+      preLoaderRoute: typeof ReplayRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/replay': {
@@ -264,6 +284,7 @@ const rootRouteChildren: RootRouteChildren = {
   MoreRoute: MoreRoute,
   RecapRoute: RecapRoute,
   ReplayRoute: ReplayRoute,
+  ReplayRequestsRoute: ReplayRequestsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
