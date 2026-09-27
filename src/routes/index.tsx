@@ -27,7 +27,9 @@ import {
   openMaintenanceEventsQuery,
   productionAreasQuery,
   severityLevelsQuery,
-  unplannedFaultCountQuery,
+  maintenanceEventsQuery,
+  maintenanceStoppagesQuery,
+  nonProductionDaysQuery,
   productionTargetsQuery,
   DEFAULT_TARGETS,
   type ProductionTargets,
@@ -35,13 +37,23 @@ import {
   type EntryDowntime,
   type ProductionLine,
 } from "@/lib/queries";
-import { monthRange } from "@/lib/date-utils";
+import { iso, monthRange } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
 import { can, type Role } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { formatSavedAt, shiftLabel } from "@/lib/entry-form";
+import { nonProductionDayLookup } from "@/lib/maintenance-format";
+import {
+  addSplits,
+  isFault,
+  machineReasonRows,
+  machineSplit,
+  machineStops,
+  mergeReasonRows,
+  type MachineStop,
+} from "@/lib/machine-downtime";
 import {
   addDays,
   adherenceTone,
@@ -79,7 +91,7 @@ import {
   AreaScoresCard,
   Card,
   LastDayCard,
-  MachineFaultsCard,
+  MaintenanceCard,
   ReworkCard,
   TimeLostCard,
   type LastDay,
@@ -458,7 +470,12 @@ function PeriodBody({
   const entryIds = useMemo(() => (entries ?? []).map((e) => e.id), [entries]);
   const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entryIds));
   const ownersQ = useQuery(entryAreaOwnersForEntriesQuery(entryIds));
-  const faultsQ = useQuery(unplannedFaultCountQuery(line.id, from, to));
+  // Faults and preventive work from the Maintenance page, same line and
+  // period. They are downtime too: they go into time lost and "Where the time
+  // went" next to the daily entries' reasons, and feed the Maintenance card.
+  const mEventsQ = useQuery(maintenanceEventsQuery(line.id, null, null, from, to));
+  const stoppagesQ = useQuery(maintenanceStoppagesQuery(line.id));
+  const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
   // Settings › Targets. Falls back to the old fixed values while loading or
   // if the row can't be read, so cards never flash red on a slow network.
   const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
@@ -471,7 +488,14 @@ function PeriodBody({
   const canMaintenance = can(role, "maintenance.view");
 
   const hasIds = entryIds.length > 0;
-  const loading = entriesQ.isPending || (hasIds && downtimesQ.isPending);
+  const loading =
+    entriesQ.isPending ||
+    (hasIds && downtimesQ.isPending) ||
+    mEventsQ.isPending ||
+    stoppagesQ.isPending;
+  // A maintenance read failure doesn't blank the dashboard: the cards say
+  // those minutes are missing instead.
+  const machineError = mEventsQ.isError || stoppagesQ.isError;
   // Numbers already on screen while newer ones load in the background.
   const refreshing = !loading && (entriesQ.isFetching || downtimesQ.isFetching);
   const failed = entriesQ.isError || (hasIds && downtimesQ.isError);
@@ -483,6 +507,17 @@ function PeriodBody({
     [downtimesQ.data],
   );
   const kindOf = useMemo(() => downtimeKindResolver(downtimeTypes), [downtimeTypes]);
+  const stops = useMemo(
+    () =>
+      machineError
+        ? []
+        : machineStops(
+            mEventsQ.data ?? [],
+            stoppagesQ.data ?? [],
+            nonProductionDayLookup(nonProductionDays),
+          ),
+    [machineError, mEventsQ.data, stoppagesQ.data, nonProductionDays],
+  );
 
   // The period as far as it has happened, stretched to the last entry if one
   // was saved for a later day.
@@ -554,9 +589,39 @@ function PeriodBody({
 
   const totals = sumEntries(list);
   const days = new Set(list.map((e) => e.entry_date)).size;
-  const split = splitDowntime(downtimes, kindOf);
-  const reasons = reasonRows(downtimes, kindOf, severityLevels, productionAreas);
-  const lastDay = buildLastDay(list, downtimes, kindOf, line.id);
+  // Machine stops count toward time lost only on days that have a daily
+  // entry: available minutes come from the entries, so a fault on a day with
+  // no entry has nothing to be a share of. The Maintenance card still shows
+  // every fault in the period.
+  const entryDays = new Set(list.map((e) => e.entry_date));
+  const dayStops = stops.filter((st) => entryDays.has(st.day));
+  const entrySplit = splitDowntime(downtimes, kindOf);
+  const mSplit = machineSplit(dayStops);
+  const split = addSplits(entrySplit, mSplit);
+  const reasons = mergeReasonRows(
+    reasonRows(downtimes, kindOf, severityLevels, productionAreas),
+    machineReasonRows(dayStops),
+  );
+  const lastDay = buildLastDay(list, downtimes, kindOf, line.id, dayStops);
+  const lastDayTime = lastDay
+    ? {
+        dayName: lastDay.dayName,
+        split: lastDay.time,
+        reasons: mergeReasonRows(
+          reasonRows(
+            downtimes.filter((d) => lastDay.entryIds.has(d.entry_id)),
+            kindOf,
+            severityLevels,
+            productionAreas,
+          ),
+          machineReasonRows(dayStops.filter((st) => st.day === lastDate)),
+        ),
+      }
+    : null;
+  const rawFaults = (mEventsQ.data ?? []).filter((e) => isFault(e.type));
+  const lastDayFaultCount = rawFaults.filter(
+    (e) => lastDate != null && iso(new Date(e.started_at)) === lastDate,
+  ).length;
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
   const stageName = stage === "making" ? "Making" : "Packing";
@@ -659,7 +724,12 @@ function PeriodBody({
         className="grid gap-3.5 md:grid-cols-2 md:items-start md:gap-4"
       >
         <div className="min-w-0">
-          <TimeLostCard split={split} reasons={reasons} />
+          <TimeLostCard
+            split={split}
+            reasons={reasons}
+            sources={{ entryMin: entrySplit.total, machineMin: mSplit.total, machineError }}
+            lastDay={lastDayTime}
+          />
         </div>
         <div className="flex min-w-0 flex-col gap-3.5 md:gap-4">
           <div>
@@ -667,12 +737,22 @@ function PeriodBody({
           </div>
           {can(role, "dashboard.viewMaintenanceCard") && (
             <div>
-              <MachineFaultsCard
+              <MaintenanceCard
                 lineName={line.name}
                 rangeText={rangeShort}
-                count={faultsQ.data}
-                loading={faultsQ.isPending}
-                error={faultsQ.isError}
+                stops={stops}
+                faultCount={rawFaults.length}
+                lastDay={
+                  lastDay && lastDate
+                    ? {
+                        dayName: lastDay.dayName,
+                        stops: stops.filter((st) => st.day === lastDate),
+                        faultCount: lastDayFaultCount,
+                      }
+                    : null
+                }
+                loading={false}
+                error={machineError}
                 canOpenMaintenance={canMaintenance}
               />
             </div>
@@ -684,10 +764,12 @@ function PeriodBody({
       </div>
 
       <p data-pdf-section="definitions" className="text-xs text-muted-foreground">
-        Adherence = actual ÷ plan. Time lost = downtime minutes ÷ available minutes, daily entries
-        only — machine faults from the Maintenance page are not added. Rework % = rework kg ÷ making
-        actual kg. Targets come from Settings › Targets: making {targets.makingPct}%, packing{" "}
-        {targets.packingPct}%, time lost alert above {targets.lossPct}%
+        Adherence = actual ÷ plan. Time lost = downtime minutes ÷ available minutes: the daily
+        entries' downtime plus faults and preventive work from the Maintenance page on days that
+        have an entry (a stoppage counts its window once; faults still open, or where the line kept
+        running, add nothing). Rework % = rework kg ÷ making actual kg. Targets come from Settings ›
+        Targets: making {targets.makingPct}%, packing {targets.packingPct}%, time lost alert above{" "}
+        {targets.lossPct}%
         {targets.reworkPct != null ? `, rework at most ${targets.reworkPct}%` : ""}.
       </p>
     </>
@@ -857,7 +939,8 @@ function buildLastDay(
   downtimes: EntryDowntime[],
   kindOf: ReturnType<typeof downtimeKindResolver>,
   lineId: string,
-): LastDay | null {
+  stops: MachineStop[],
+): (LastDay & { entryIds: Set<string> }) | null {
   const last = entries[entries.length - 1];
   if (!last) return null;
   const rows = entries.filter((e) => e.entry_date === last.entry_date);
@@ -875,11 +958,15 @@ function buildLastDay(
     shiftText: shifts.map(shiftLabel).join(" + "),
     savedText: saved ? `saved ${formatSavedAt(saved)}` : null,
     totals: sumEntries(rows),
-    time: splitDowntime(
-      downtimes.filter((d) => ids.has(d.entry_id)),
-      kindOf,
+    time: addSplits(
+      splitDowntime(
+        downtimes.filter((d) => ids.has(d.entry_id)),
+        kindOf,
+      ),
+      machineSplit(stops.filter((st) => st.day === last.entry_date)),
     ),
     link: { line: lineId, date: last.entry_date, shift: shifts[0] },
+    entryIds: ids,
   };
 }
 

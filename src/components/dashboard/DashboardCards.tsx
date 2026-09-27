@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { ProductionTargets } from "@/lib/queries";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   KIND_LABEL,
@@ -18,6 +17,7 @@ import {
   type Totals,
 } from "@/lib/dashboard-metrics";
 import { CARD, KIND_BAR, TONE_TEXT } from "./tone";
+import { faultsByTitle, isFault, type MachineStop } from "@/lib/machine-downtime";
 
 export function Card({
   labelledBy,
@@ -219,13 +219,22 @@ function ReasonLine({
   );
 }
 
-export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: ReasonRow[] }) {
-  const [showAll, setShowAll] = useState(false);
-  const top = reasons.slice(0, TOP_REASONS);
-  const rest = reasons.slice(TOP_REASONS);
-  const restMinutes = rest.reduce((s, r) => s + r.minutes, 0);
-  const restStops = rest.reduce((s, r) => s + r.count, 0);
-  const max = reasons[0]?.minutes ?? 0;
+export interface TimeSources {
+  /** Minutes from the daily entries' downtime rows. */
+  entryMin: number;
+  /** Minutes from faults and preventive work on the Maintenance page. */
+  machineMin: number;
+  /** The Maintenance page's stops couldn't be read, so they are missing. */
+  machineError: boolean;
+}
+
+export interface LastDayTime {
+  dayName: string;
+  split: TimeSplit;
+  reasons: ReasonRow[];
+}
+
+function KindBar({ split, tall = true }: { split: TimeSplit; tall?: boolean }) {
   const share = (m: number) => (split.total > 0 ? (m / split.total) * 100 : 0);
   const segs = (
     [
@@ -234,6 +243,57 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
       ["unclassified", split.unclassified],
     ] as const
   ).filter(([, m]) => m > 0);
+  return (
+    <div
+      role="img"
+      aria-label={`Planned ${num(split.planned)} minutes, unplanned ${num(split.unplanned)}, unclassified ${num(split.unclassified)}`}
+      className={cn(
+        "ds-fill-x flex h-2.5 gap-0.5 overflow-hidden rounded-full",
+        tall ? "md:h-7 md:rounded-lg" : "md:h-4 md:rounded-md",
+      )}
+      style={{ animationDelay: "300ms" }}
+    >
+      {segs.map(([kind, m]) => (
+        <div
+          key={kind}
+          className={cn(
+            "flex h-full min-w-0 items-center overflow-hidden whitespace-nowrap text-xs font-semibold",
+            KIND_BAR[kind],
+            kind === "planned" ? "text-primary-foreground" : "text-foreground",
+          )}
+          style={{ width: `${share(m)}%` }}
+        >
+          {tall && share(m) >= 14 && (
+            <span className="hidden px-2.5 md:inline">
+              {KIND_LABEL[kind]} · {num(m)}
+              {kind === "planned" ? " min" : ""}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function TimeLostCard({
+  split,
+  reasons,
+  sources,
+  lastDay,
+}: {
+  split: TimeSplit;
+  reasons: ReasonRow[];
+  sources: TimeSources;
+  lastDay: LastDayTime | null;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const top = reasons.slice(0, TOP_REASONS);
+  const rest = reasons.slice(TOP_REASONS);
+  const restMinutes = rest.reduce((s, r) => s + r.minutes, 0);
+  const restStops = rest.reduce((s, r) => s + r.count, 0);
+  const max = reasons[0]?.minutes ?? 0;
+  const dayTop = lastDay ? lastDay.reasons.slice(0, TOP_REASONS) : [];
+  const dayMax = dayTop[0]?.minutes ?? 0;
 
   return (
     <Card labelledBy="dash-time">
@@ -242,45 +302,23 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
           Where the time went
         </h3>
         <p className="text-[13px] text-muted-foreground md:text-xs">
-          {num(split.total)} min from daily entries
-          <span className="md:hidden">
-            {" "}
-            · planned {num(split.planned)} · unplanned {num(split.unplanned)}
-          </span>
+          {num(split.total)} min · daily entries {num(sources.entryMin)} + maintenance{" "}
+          {num(sources.machineMin)}
         </p>
       </div>
+      {sources.machineError && (
+        <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning-strong">
+          Couldn't load the Maintenance page's faults — they are missing from these minutes.
+        </p>
+      )}
 
       {split.total === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-          No downtime recorded in the daily entries for this period.
+          No downtime recorded for this period, in the daily entries or on the Maintenance page.
         </p>
       ) : (
         <>
-          <div
-            role="img"
-            aria-label={`Planned ${num(split.planned)} minutes, unplanned ${num(split.unplanned)}, unclassified ${num(split.unclassified)}`}
-            className="ds-fill-x flex h-2.5 gap-0.5 overflow-hidden rounded-full md:h-7 md:rounded-lg"
-            style={{ animationDelay: "300ms" }}
-          >
-            {segs.map(([kind, m]) => (
-              <div
-                key={kind}
-                className={cn(
-                  "flex h-full min-w-0 items-center overflow-hidden whitespace-nowrap text-xs font-semibold",
-                  KIND_BAR[kind],
-                  kind === "planned" ? "text-primary-foreground" : "text-foreground",
-                )}
-                style={{ width: `${share(m)}%` }}
-              >
-                {share(m) >= 14 && (
-                  <span className="hidden px-2.5 md:inline">
-                    {KIND_LABEL[kind]} · {num(m)}
-                    {kind === "planned" ? " min" : ""}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          <KindBar split={split} />
 
           <ol className="flex flex-col gap-3 md:gap-2.5">
             {(showAll ? reasons : top).map((r, i) => (
@@ -325,6 +363,48 @@ export function TimeLostCard({ split, reasons }: { split: TimeSplit; reasons: Re
             </button>
           )}
         </>
+      )}
+
+      {lastDay && (
+        <div
+          aria-labelledby="dash-time-lastday"
+          role="group"
+          className="flex flex-col gap-2.5 border-t border-border pt-3"
+        >
+          <div className="flex flex-col gap-0.5 md:flex-row md:items-baseline md:justify-between md:gap-3">
+            <h4 id="dash-time-lastday" className="text-sm font-semibold">
+              Last recorded day · {lastDay.dayName}
+            </h4>
+            <p className="text-xs text-muted-foreground md:shrink-0">
+              {num(lastDay.split.total)} min
+              {lastDay.split.total > 0 && (
+                <>
+                  {" "}
+                  · planned {num(lastDay.split.planned)} · unplanned {num(lastDay.split.unplanned)}
+                </>
+              )}
+            </p>
+          </div>
+          {lastDay.split.total === 0 ? (
+            <p className="text-sm text-muted-foreground">No time lost on this day.</p>
+          ) : (
+            <>
+              <KindBar split={lastDay.split} tall={false} />
+              <ol className="flex flex-col gap-3 md:gap-2.5">
+                {dayTop.map((r, i) => (
+                  <ReasonLine key={r.key} r={r} max={dayMax} index={i + 2} />
+                ))}
+              </ol>
+              {lastDay.reasons.length > TOP_REASONS && (
+                <p className="text-xs text-muted-foreground">
+                  + {lastDay.reasons.length - TOP_REASONS} more{" "}
+                  {lastDay.reasons.length - TOP_REASONS === 1 ? "reason" : "reasons"} ·{" "}
+                  {num(lastDay.reasons.slice(TOP_REASONS).reduce((a, r) => a + r.minutes, 0))} min
+                </p>
+              )}
+            </>
+          )}
+        </div>
       )}
     </Card>
   );
@@ -387,103 +467,200 @@ export function ReworkCard({ totals }: { totals: Totals }) {
 }
 
 // ---------------------------------------------------------------------------
-// Machine faults
+// Maintenance
 // ---------------------------------------------------------------------------
 
-export function MachineFaultsCard({
+function fmtMin(st: MachineStop): string {
+  if (st.open) return "open";
+  if (st.minutes <= 0) return "line kept running";
+  return `${num(st.minutes)} min`;
+}
+
+export function MaintenanceCard({
   lineName,
   rangeText,
-  count,
+  stops,
+  faultCount,
+  lastDay,
   loading,
   error,
   canOpenMaintenance,
 }: {
   lineName: string;
   rangeText: string;
-  count: number | undefined;
+  /** Every stop in the period (stoppages collapsed), preventive included. */
+  stops: MachineStop[];
+  /** Fault events logged in the period, preventive left out. */
+  faultCount: number;
+  lastDay: {
+    dayName: string;
+    stops: MachineStop[];
+    faultCount: number;
+  } | null;
   loading: boolean;
   error: boolean;
   canOpenMaintenance: boolean;
 }) {
-  const noun = (kind: string) =>
-    loading
-      ? "Counting faults…"
-      : error || count == null
-        ? "Couldn't load the fault count"
-        : `${num(count)} ${kind} ${count === 1 ? "fault" : "faults"}`;
-  const countText = noun("unplanned");
-  const mobileCountText = noun("machine");
+  if (loading) {
+    return <div className={cn(CARD, "ds-shimmer h-40")} aria-hidden="true" />;
+  }
+  const faultMin = stops.filter((s) => isFault(s.type)).reduce((a, s) => a + s.minutes, 0);
+  const pmMin = stops.filter((s) => !isFault(s.type)).reduce((a, s) => a + s.minutes, 0);
+  const top = faultsByTitle(stops)
+    .filter((f) => f.minutes > 0)
+    .slice(0, 4);
+  const topMax = top[0]?.minutes ?? 0;
+  const dayFaults = lastDay
+    ? lastDay.stops
+        .filter((s) => isFault(s.type))
+        .sort((a, b) => Number(b.open) - Number(a.open) || b.minutes - a.minutes)
+    : [];
+  const dayFaultMin = dayFaults.reduce((a, s) => a + s.minutes, 0);
+  const dayPm = lastDay ? lastDay.stops.filter((s) => !isFault(s.type)) : [];
+  const dayPmMin = dayPm.reduce((a, s) => a + s.minutes, 0);
+  const SHOWN = 8;
+
   return (
-    <>
-      {/* Mobile: the whole card is the link. */}
-      <div data-pdf-variant="mobile" className="md:hidden">
-        {canOpenMaintenance ? (
+    <Card labelledBy="dash-maint">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <h3 id="dash-maint" className="text-[15px] font-semibold md:text-base">
+            Maintenance on {lineName}
+          </h3>
+          <p className="text-[13px] text-muted-foreground md:text-xs">
+            {rangeText} · from the Maintenance page
+          </p>
+        </div>
+        {canOpenMaintenance && (
           <Link
             to="/maintenance"
-            className={cn(CARD, "ds-lift flex min-h-11 items-center gap-3 p-3.5 text-foreground")}
+            data-pdf-exclude="true"
+            className="inline-flex min-h-11 shrink-0 items-center text-sm font-semibold text-primary hover:underline md:min-h-0"
           >
-            <MobileFaultsText
-              countText={mobileCountText}
-              lineName={lineName}
-              rangeText={rangeText}
-            />
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            Maintenance ›
           </Link>
-        ) : (
-          <div className={cn(CARD, "flex items-center gap-3 p-3.5")}>
-            <MobileFaultsText
-              countText={mobileCountText}
-              lineName={lineName}
-              rangeText={rangeText}
-            />
-          </div>
         )}
       </div>
-      <div data-pdf-variant="desktop" className="hidden md:block">
-        <section
-          aria-labelledby="dash-faults"
-          className={cn(CARD, "flex items-start gap-4 px-5 py-[18px]")}
-        >
-          <div className="min-w-0 flex-1">
-            <h3 id="dash-faults" className="mb-1.5 text-base font-semibold">
-              Machine faults on {lineName}
-            </h3>
-            <p className="text-sm text-foreground">
-              <span className="font-semibold tabular-nums">{countText}</span>, {rangeText}. Logged
-              on the Maintenance page and <span className="font-semibold">not added</span> to the
-              time lost above — the same stop can be in both.
-            </p>
-          </div>
-          {canOpenMaintenance && (
-            <Link
-              to="/maintenance"
-              className="shrink-0 pt-0.5 text-sm font-semibold text-primary hover:underline"
-            >
-              Faults ›
-            </Link>
-          )}
-        </section>
-      </div>
-    </>
-  );
-}
 
-function MobileFaultsText({
-  countText,
-  lineName,
-  rangeText,
-}: {
-  countText: string;
-  lineName: string;
-  rangeText: string;
-}) {
-  return (
-    <span className="min-w-0 flex-1">
-      <span className="block text-[15px] font-semibold">{countText}</span>
-      <span className="block text-[13px] text-muted-foreground">
-        {lineName}, {rangeText} · not added to time lost
-      </span>
-    </span>
+      {error ? (
+        <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning-strong">
+          Couldn't load the faults for {lineName}.
+        </p>
+      ) : (
+        <>
+          <dl className="grid grid-cols-3 gap-2">
+            <div className="min-w-0 rounded-lg bg-muted/50 px-2.5 py-2">
+              <dt className="text-xs text-muted-foreground">Fault downtime</dt>
+              <dd className="text-lg font-bold tabular-nums">
+                {num(faultMin)}
+                <span className="ml-0.5 text-xs font-medium text-muted-foreground">min</span>
+              </dd>
+            </div>
+            <div className="min-w-0 rounded-lg bg-muted/50 px-2.5 py-2">
+              <dt className="text-xs text-muted-foreground">Faults</dt>
+              <dd className="text-lg font-bold tabular-nums">{num(faultCount)}</dd>
+            </div>
+            <div className="min-w-0 rounded-lg bg-muted/50 px-2.5 py-2">
+              <dt className="text-xs text-muted-foreground">Preventive</dt>
+              <dd className="text-lg font-bold tabular-nums">
+                {num(pmMin)}
+                <span className="ml-0.5 text-xs font-medium text-muted-foreground">min</span>
+              </dd>
+            </div>
+          </dl>
+          <p className="-mt-1 text-xs text-muted-foreground">
+            Preventive is planned work, not a fault — it is not in the fault count. A stoppage
+            counts its window once.
+          </p>
+
+          {top.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs font-semibold text-muted-foreground">
+                Faults that cost the most time
+              </p>
+              <ol className="flex flex-col gap-2">
+                {top.map((f, i) => (
+                  <li
+                    key={f.title}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1"
+                  >
+                    <span className="truncate text-sm font-medium" title={f.title}>
+                      {f.title}
+                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                        {f.count}×
+                      </span>
+                    </span>
+                    <span className="text-right text-sm font-semibold tabular-nums">
+                      {num(f.minutes)} min
+                    </span>
+                    <div className="col-span-2 h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn("ds-fill-x h-full rounded-full", KIND_BAR.unplanned)}
+                        style={{
+                          width: `${topMax > 0 ? (f.minutes / topMax) * 100 : 0}%`,
+                          animationDelay: `${400 + i * 110}ms`,
+                        }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {lastDay && (
+            <div
+              role="group"
+              aria-labelledby="dash-maint-lastday"
+              className="flex flex-col gap-2 border-t border-border pt-3"
+            >
+              <div className="flex flex-col gap-0.5 md:flex-row md:items-baseline md:justify-between md:gap-3">
+                <h4 id="dash-maint-lastday" className="text-sm font-semibold">
+                  Last recorded day · {lastDay.dayName}
+                </h4>
+                <p className="text-xs text-muted-foreground md:shrink-0">
+                  {num(lastDay.faultCount)} {lastDay.faultCount === 1 ? "fault" : "faults"} ·{" "}
+                  {num(dayFaultMin)} min
+                  {dayPmMin > 0 && <> · preventive {num(dayPmMin)} min</>}
+                </p>
+              </div>
+              {dayFaults.length === 0 && dayPm.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No faults logged on this day.</p>
+              ) : (
+                <ul className="flex flex-wrap gap-1.5">
+                  {[...dayFaults.slice(0, SHOWN), ...dayPm].map((st) => (
+                    <li
+                      key={st.id}
+                      className={cn(
+                        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
+                        !isFault(st.type)
+                          ? "border-primary/30 bg-primary/5"
+                          : st.open
+                            ? "border-destructive/40 bg-destructive/10"
+                            : "border-border bg-card",
+                      )}
+                    >
+                      <span className="min-w-0 truncate font-medium">{st.title}</span>
+                      {st.members > 1 && (
+                        <span className="shrink-0 text-muted-foreground">
+                          · {st.members} together
+                        </span>
+                      )}
+                      <span className="shrink-0 font-semibold tabular-nums">{fmtMin(st)}</span>
+                    </li>
+                  ))}
+                  {dayFaults.length > SHOWN && (
+                    <li className="inline-flex items-center px-1 text-xs text-muted-foreground">
+                      + {dayFaults.length - SHOWN} more
+                    </li>
+                  )}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
