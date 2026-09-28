@@ -68,6 +68,7 @@ import {
   lostAbilities,
   matchesUserSearch,
   roleChangeBlock,
+  statusChangeBlock,
   roleChips,
   roleLabel,
 } from "@/lib/users-format";
@@ -212,10 +213,10 @@ function UsersPage() {
             <Info className="mt-0.5 h-[18px] w-[18px] shrink-0 text-primary" aria-hidden="true" />
             <p>
               <span className="font-semibold">
-                Adding people, resetting passwords and switching accounts off happen in the Supabase
-                dashboard for now.
+                Adding people and resetting passwords happen in the Supabase dashboard for now.
               </span>{" "}
-              The site has no server to do them safely.
+              A new account starts switched off: open it here, set its role, and set Status to
+              Active.
             </p>
           </div>
         )}
@@ -788,7 +789,10 @@ function EditUserDialog({
 
   const roleChanged = !!row && role !== row.role;
   const isSelf = !!row && row.id === currentUserId;
-  const block = row ? roleChangeBlock(row, role, users) : null;
+  const block = row
+    ? (roleChangeBlock(row, role, users) ?? statusChangeBlock(row, status, isSelf, users))
+    : null;
+  const statusChanged = !!row && status !== row.status;
 
   async function save() {
     if (!row || block) return;
@@ -813,11 +817,20 @@ function EditUserDialog({
           phone: phone.trim() || null,
           department_id: departmentId || null,
           role,
+          // No server here: the status goes straight on the profile. The
+          // database only serves data to active accounts, so switching one
+          // off takes effect on its next request (and the app signs it out).
+          ...(!SERVER_ACTIONS_AVAILABLE && statusChanged ? { status } : {}),
         })
         .eq("id", row.id);
       if (error) throw error;
       toast.success("User updated");
       void logAudit("user.edit", "user", row.id, { email: row.email });
+      if (!SERVER_ACTIONS_AVAILABLE && statusChanged) {
+        void logAudit(status === "inactive" ? "user.deactivate" : "user.activate", "user", row.id, {
+          email: row.email,
+        });
+      }
       if (role !== row.role) {
         void logAudit("user.change_role", "user", row.id, {
           email: row.email,
@@ -937,20 +950,18 @@ function EditUserDialog({
               {block}
             </p>
           )}
-          {SERVER_ACTIONS_AVAILABLE && (
-            <div className="space-y-1.5">
-              <Label htmlFor={`${uid}-status`}>Status</Label>
-              <Select value={status} onValueChange={(v) => setStatus(v as "active" | "inactive")}>
-                <SelectTrigger id={`${uid}-status`} className="h-11 md:h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label htmlFor={`${uid}-status`}>Status</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as "active" | "inactive")}>
+              <SelectTrigger id={`${uid}-status`} className="h-11 md:h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active — can sign in</SelectItem>
+                <SelectItem value="inactive">Switched off</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {row && (
             <div className="rounded-lg border border-border bg-muted/40 p-3">
               <AccountFacts row={row} />

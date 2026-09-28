@@ -201,3 +201,31 @@ export function useReplayGate(
   const current: GateState = stateKey === key ? state : required ? "checking" : "open";
   return { state: current, askedAt, ask, cancel };
 }
+
+/**
+ * A notification's Approve / Deny opens /replay-requests?id=…&do=…&t=<token>;
+ * the service worker (public/sw.js) put the token in Cache Storage just
+ * before. Only a token found there, for the same request and answer, less
+ * than 10 minutes old, lets the page answer by itself; it is used once.
+ * Anything else (a link someone sent) just opens the page.
+ */
+export async function consumeReplayAction(
+  token: string | undefined,
+  id: string,
+  action: "approve" | "deny",
+): Promise<boolean> {
+  if (!token || typeof caches === "undefined") return false;
+  try {
+    const cache = await caches.open("replay-actions");
+    const key = `/__replay-action/${token}`;
+    const res = await cache.match(key);
+    if (!res) return false;
+    await cache.delete(key);
+    const v = (await res.json()) as { id?: string; do?: string; at?: number };
+    return (
+      v.id === id && v.do === action && typeof v.at === "number" && Date.now() - v.at < 600_000
+    );
+  } catch {
+    return false;
+  }
+}

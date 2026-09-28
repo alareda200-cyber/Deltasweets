@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { linesQuery } from "@/lib/queries";
 import { requireSession } from "@/lib/require-session";
 import {
+  consumeReplayAction,
   decideReplayRequest,
   isExpired,
   replayApprovalSettingQuery,
@@ -24,6 +25,8 @@ import { cn } from "@/lib/utils";
 interface RequestsSearch {
   id?: string;
   do?: "approve" | "deny";
+  /** One-time token from the service worker (see consumeReplayAction). */
+  t?: string;
 }
 
 export const Route = createFileRoute("/replay-requests")({
@@ -31,6 +34,7 @@ export const Route = createFileRoute("/replay-requests")({
   validateSearch: (search: Record<string, unknown>): RequestsSearch => ({
     id: typeof search.id === "string" && /^[0-9a-f-]{36}$/i.test(search.id) ? search.id : undefined,
     do: search.do === "approve" || search.do === "deny" ? search.do : undefined,
+    t: typeof search.t === "string" && /^[0-9a-f-]{36}$/i.test(search.t) ? search.t : undefined,
   }),
   beforeLoad: requireSession,
   loader: ({ context }) => context.queryClient.ensureQueryData(linesQuery),
@@ -131,9 +135,18 @@ function RequestsPage() {
   useEffect(() => {
     if (handled.current || !search.id || !search.do) return;
     handled.current = true;
-    void decide({ id: search.id }, search.do === "approve").finally(() =>
-      navigate({ search: {}, replace: true }),
-    );
+    const id = search.id;
+    const approve = search.do === "approve";
+    void consumeReplayAction(search.t, id, search.do).then(async (fromNotification) => {
+      if (fromNotification) {
+        await decide({ id }, approve);
+        void navigate({ search: {}, replace: true });
+      } else {
+        // Not from this device's notification: show the request, answer by hand.
+        toast.info("Check the request below, then tap Approve or Deny.");
+        void navigate({ search: { id }, replace: true });
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.id, search.do]);
 

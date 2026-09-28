@@ -43,25 +43,47 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
   let targetUrl = event.notification.data?.url || "/maintenance";
+  // Only ever open this site's own pages.
+  const own = new URL(targetUrl, self.location.origin);
+  targetUrl = own.origin === self.location.origin ? own.pathname + own.search : "/maintenance";
   // An action button: the requests page makes the decision with the admin's
-  // own session (the service worker has none), then cleans the URL.
+  // own session (the service worker has none), then cleans the URL. The
+  // page only acts on it with a one-time token this worker leaves in Cache
+  // Storage, so a link someone sends an admin (?do=approve) can't approve
+  // anything by being opened.
+  let ready = Promise.resolve();
   if (event.action === "approve" || event.action === "deny") {
     const u = new URL(targetUrl, self.location.origin);
+    const token = self.crypto.randomUUID();
     u.searchParams.set("do", event.action);
+    u.searchParams.set("t", token);
     targetUrl = u.pathname + u.search;
+    ready = caches
+      .open("replay-actions")
+      .then((c) =>
+        c.put(
+          `/__replay-action/${token}`,
+          new Response(
+            JSON.stringify({ id: u.searchParams.get("id"), do: event.action, at: Date.now() }),
+          ),
+        ),
+      )
+      .catch(() => undefined);
   }
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        const clientUrl = new URL(client.url);
-        if (clientUrl.pathname === targetUrl && "focus" in client) {
-          return client.focus();
+    ready
+      .then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .then((clientList) => {
+        for (const client of clientList) {
+          const clientUrl = new URL(client.url);
+          if (clientUrl.pathname === targetUrl && "focus" in client) {
+            return client.focus();
+          }
         }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-    }),
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(targetUrl);
+        }
+      }),
   );
 });

@@ -142,6 +142,24 @@ export function roleChangeBlock(
   return "This is the only admin. Make someone else an admin first, or nobody will be able to manage users and settings.";
 }
 
+/**
+ * Why a status change can't be saved: nobody switches themselves off, and the
+ * last active admin stays on (the database refuses both anyway).
+ */
+export function statusChangeBlock(
+  target: Pick<UserLike, "role" | "status">,
+  nextStatus: string,
+  isSelf: boolean,
+  users: Pick<UserLike, "role" | "status">[],
+): string | null {
+  if (nextStatus !== "inactive" || target.status === "inactive") return null;
+  if (isSelf) return "You can't switch your own account off. Ask another admin.";
+  if (target.role === "admin" && activeAdminCount(users) <= 1) {
+    return "This is the only active admin. Make someone else an admin first.";
+  }
+  return null;
+}
+
 /** Rows of the "What each role can do" matrix — marks come from can(). */
 export const ROLE_MATRIX_ROWS: { label: string; permission: Permission }[] = [
   { label: "See the dashboard", permission: "dashboard.view" },
