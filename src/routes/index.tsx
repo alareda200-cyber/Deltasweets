@@ -102,10 +102,12 @@ import {
   type LastDay,
 } from "@/components/dashboard/DashboardCards";
 import { CARD, KIND_BAR } from "@/components/dashboard/tone";
+import { faultsPerDay } from "@/lib/faults-per-day";
 
 // Recharts is the bulk of the chart's weight; loading it lazily keeps it out of
 // the route bundle so the controls, Right now strip and KPI cards paint first.
 const DailyOutputChart = lazy(() => import("@/components/dashboard/DailyOutputChart"));
+const FaultsPerDayCard = lazy(() => import("@/components/dashboard/FaultsPerDayCard"));
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -629,6 +631,15 @@ function PeriodBody({
   const lastDayFaultCount = rawFaults.filter(
     (e) => lastDate != null && iso(new Date(e.started_at)) === lastDate,
   ).length;
+  const faultDays = faultsPerDay({
+    lineId: line.id,
+    from,
+    to: shownTo,
+    events: mEventsQ.data ?? [],
+    stops,
+    entryDays,
+    closed: nonProductionDayLookup(nonProductionDays),
+  });
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
   const stageName = stage === "packing" ? "Packing" : "Making";
@@ -799,6 +810,18 @@ function PeriodBody({
               />
             </div>
           )}
+          <div className="flex min-w-0 md:col-span-2 [&>section]:flex-1">
+            <Suspense
+              fallback={<div className={cn(CARD, "ds-shimmer h-[360px] flex-1 md:h-[380px]")} />}
+            >
+              <FaultsPerDayCard
+                lineName={line.name}
+                rangeText={rangeShort}
+                summary={faultDays}
+                error={machineError}
+              />
+            </Suspense>
+          </div>
         </div>
       )}
 
