@@ -70,6 +70,7 @@ import {
   unitTitle,
   reworkTone,
   num,
+  packingVariance,
   pct1,
   ratio,
   reasonRows,
@@ -1008,10 +1009,57 @@ function kpiTiles(
 
   return [
     { ...adhTile("Making", t.makingActual, t.makingPlan, targets.makingPct), count },
-    adhTile("Packing", t.packingActual, t.packingPlan, targets.packingPct),
+    {
+      ...adhTile("Packing", t.packingActual, t.packingPlan, targets.packingPct),
+      variance: t.packingPlan > 0 ? varianceStrip(t) : undefined,
+    },
     timeTile,
     reworkTile,
   ];
+}
+
+// Packing tile: the shortfall against plan less the entries' rework — the
+// part the rework doesn't explain. Only drawn when there is a packing plan.
+function varianceStrip(t: Totals): NonNullable<KpiTileProps["variance"]> {
+  const v = packingVariance(t);
+  const label = "Net variance";
+  if (v.state === "none") {
+    return {
+      label,
+      valueText: "0 kg",
+      quiet: true,
+      detail: "Packed at or above plan — nothing short",
+      mobileDetail: "At or above plan",
+      segments: [],
+      barLabel: "Packed at or above plan",
+    };
+  }
+  const netShare = (v.net / v.short) * 100;
+  const segments = [
+    { pct: netShare, className: "bg-destructive" },
+    { pct: 100 - netShare, className: "bg-warning" },
+  ];
+  const math = `${kg(v.short)} short of plan − ${kg(v.rework)} rework`;
+  if (v.state === "covered") {
+    return {
+      label,
+      valueText: "0 kg",
+      quiet: false,
+      detail: `${math} · rework covers it`,
+      mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework`,
+      segments,
+      barLabel: `Short of plan ${kg(v.short)} kilograms, all covered by ${kg(v.rework)} kilograms of rework`,
+    };
+  }
+  return {
+    label,
+    valueText: `${kg(v.net)} kg`,
+    quiet: false,
+    detail: `${math} · ${pct1(v.netOfPlan ?? 0)} of plan`,
+    mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework`,
+    segments,
+    barLabel: `Short of plan ${kg(v.short)} kilograms: rework ${kg(v.rework)}, not explained ${kg(v.net)}`,
+  };
 }
 
 function buildLastDay(

@@ -33,6 +33,23 @@ export interface KpiTileProps {
   tone: Tone;
   /** Making tile only, for a line that also counts in a unit (pallets…). */
   count?: KpiCount;
+  /** Packing tile only: shortfall against plan less the entries' rework. */
+  variance?: KpiVariance;
+}
+
+export interface KpiVariance {
+  /** "Variance after rework" */
+  label: string;
+  /** "64,147 kg", "0 kg"… */
+  valueText: string;
+  /** Nothing short of plan (or no plan): value drawn muted, no bar. */
+  quiet: boolean;
+  /** "74,451 short of plan − 10,304 rework · 16.4% of plan" */
+  detail: string;
+  mobileDetail?: string;
+  /** The shortfall split: not explained (net) and rework, as % of the shortfall. */
+  segments: KpiSegment[];
+  barLabel: string;
 }
 
 export interface KpiCount {
@@ -63,6 +80,7 @@ export function KpiTile({
   tone,
   targetPct,
   count,
+  variance,
   index = 0,
   memory,
 }: KpiTileProps & { index?: number; memory?: KpiMemory }) {
@@ -202,6 +220,54 @@ export function KpiTile({
                   style={{ left: `${count.targetPct}%` }}
                 />
               )}
+            </div>
+          )}
+        </div>
+      )}
+      {variance && (
+        // Same strip as the Making tile's count, so the two tiles read alike.
+        <div
+          data-kpi-variance=""
+          className="flex flex-col gap-1 rounded-lg bg-primary/5 px-2.5 py-2"
+        >
+          {/* Phones: the tile is half the width, so the value goes under
+              its label instead of beside it. */}
+          <div className="flex flex-col md:flex-row md:items-baseline md:justify-between md:gap-2">
+            <span className="text-xs font-semibold text-primary md:text-[13px]">
+              {variance.label}
+            </span>
+            <span
+              className={cn(
+                "text-base font-bold tabular-nums md:shrink-0 md:text-lg",
+                variance.quiet ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {variance.valueText}
+            </span>
+          </div>
+          <p className="text-xs tabular-nums text-muted-foreground md:text-foreground">
+            {variance.mobileDetail ? (
+              <>
+                <span className="md:hidden">{variance.mobileDetail}</span>
+                <span className="hidden md:inline">{variance.detail}</span>
+              </>
+            ) : (
+              variance.detail
+            )}
+          </p>
+          {variance.segments.length > 0 && (
+            <div
+              role="img"
+              aria-label={variance.barLabel}
+              className="flex h-1 overflow-hidden rounded-full bg-muted md:h-1.5"
+            >
+              {variance.segments.map((sg, i) => (
+                <div
+                  key={i}
+                  className={cn("h-full", sg.className)}
+                  style={{ width: `${Math.max(0, Math.min(100, sg.pct))}%` }}
+                />
+              ))}
             </div>
           )}
         </div>

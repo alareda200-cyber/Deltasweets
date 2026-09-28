@@ -201,6 +201,40 @@ export function makingCountView(
   };
 }
 
+/**
+ * Packing variance (Ala, 29 Sep 2026): how far packing fell short of its
+ * plan, less the rework recorded in the daily entries (cooking + making +
+ * packing). What is left is the shortfall the rework doesn't explain.
+ *
+ * - "none": no plan, or packed at or above plan — nothing short.
+ * - "covered": the rework is at least the shortfall — net 0.
+ * - "net": a shortfall is left after the rework.
+ */
+export interface PackingVariance {
+  state: "none" | "covered" | "net";
+  /** Plan − actual, kg (0 when at or above plan). */
+  short: number;
+  /** Rework recorded in the entries, kg. */
+  rework: number;
+  /** max(0, short − rework), kg. */
+  net: number;
+  /** net ÷ packing plan; null without a plan. */
+  netOfPlan: number | null;
+}
+
+export function packingVariance(t: Totals): PackingVariance {
+  const rework = t.reworkCooking + t.reworkMaking + t.reworkPacking;
+  const short = t.packingPlan > 0 ? Math.max(0, t.packingPlan - t.packingActual) : 0;
+  const net = Math.max(0, short - rework);
+  return {
+    state: short <= 0 ? "none" : net <= 0 ? "covered" : "net",
+    short,
+    rework,
+    net,
+    netOfPlan: t.packingPlan > 0 ? net / t.packingPlan : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Entries
 // ---------------------------------------------------------------------------

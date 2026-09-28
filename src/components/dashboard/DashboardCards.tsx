@@ -9,6 +9,7 @@ import {
   lossTone,
   makingCountView,
   num,
+  packingVariance,
   pct1,
   ratio,
   type ReasonRow,
@@ -116,6 +117,7 @@ export function LastDayCard({
   const making = ratio(t.makingActual, t.makingPlan);
   const packing = ratio(t.packingActual, t.packingPlan);
   const lost = ratio(day.time.total, t.availableMin);
+  const variance = t.packingPlan > 0 ? packingVariance(t) : null;
   const reworkParts = [
     t.reworkCooking > 0 ? `cooking ${kg(t.reworkCooking)}` : null,
     `making ${kg(t.reworkMaking)}`,
@@ -155,6 +157,18 @@ export function LastDayCard({
           value={t.packingPlan > 0 ? pct1(packing) : "—"}
           tone={t.packingPlan > 0 ? adherenceTone(packing, targets.packingPct) : "plain"}
         />
+        {variance && (
+          <LastDayRow
+            label="Packing · variance"
+            sub={
+              variance.state === "none"
+                ? "At or above plan"
+                : `${kg(variance.short)} short − ${kg(variance.rework)} rework${variance.state === "covered" ? " · rework covers it" : ""}`
+            }
+            value={`${kg(variance.net)} kg`}
+            tone="plain"
+          />
+        )}
         <LastDayRow
           label="Time lost"
           sub={`${num(day.time.total)} of ${num(t.availableMin)} min · ${num(day.time.unplanned)} unplanned`}
