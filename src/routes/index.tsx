@@ -104,11 +104,13 @@ import {
 } from "@/components/dashboard/DashboardCards";
 import { CARD, KIND_BAR } from "@/components/dashboard/tone";
 import { faultsPerDay } from "@/lib/faults-per-day";
+import { reworkPerDay } from "@/lib/rework-per-day";
 
 // Recharts is the bulk of the chart's weight; loading it lazily keeps it out of
 // the route bundle so the controls, Right now strip and KPI cards paint first.
 const DailyOutputChart = lazy(() => import("@/components/dashboard/DailyOutputChart"));
 const FaultsPerDayCard = lazy(() => import("@/components/dashboard/FaultsPerDayCard"));
+const ReworkPerDayCard = lazy(() => import("@/components/dashboard/ReworkPerDayCard"));
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -641,6 +643,12 @@ function PeriodBody({
     entryDays,
     closed: nonProductionDayLookup(nonProductionDays),
   });
+  const reworkDays = reworkPerDay({
+    entries: list,
+    from,
+    to: shownTo,
+    limitPct: targets.reworkPct,
+  });
   const scores = areaOwnerScores(ownersQ.data ?? [], productionAreas, areaOwners);
   const points = dailySeries(list, from, shownTo, stage);
   const stageName = stage === "packing" ? "Packing" : "Making";
@@ -836,6 +844,13 @@ function PeriodBody({
         </div>
         <div className="flex min-w-0 [&>section]:flex-1">
           <AreaScoresCard rows={scores} loading={ownersQ.isPending} lineName={line.name} />
+        </div>
+        <div className="flex min-w-0 md:col-span-2 [&>section]:flex-1">
+          <Suspense
+            fallback={<div className={cn(CARD, "ds-shimmer h-[380px] flex-1 md:h-[400px]")} />}
+          >
+            <ReworkPerDayCard lineName={line.name} rangeText={rangeShort} summary={reworkDays} />
+          </Suspense>
         </div>
       </div>
 
