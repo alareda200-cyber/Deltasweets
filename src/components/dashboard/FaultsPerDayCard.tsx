@@ -17,6 +17,7 @@ import { daysLabel, type FaultDay, type FaultDaysSummary } from "@/lib/faults-pe
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { Card } from "./DashboardCards";
+import { compactTick, lineTag } from "./chart-line-tag";
 
 // Dashboard › Maintenance › Faults per day. One bar per day; the day with the
 // most faults is red, the fewest green, today pale (still running), a day
@@ -292,6 +293,7 @@ export function FaultsPerDayCard({
                   allowDecimals={false}
                   domain={[0, axis.top]}
                   ticks={axis.ticks}
+                  tickFormatter={compactTick}
                 />
                 <Tooltip
                   cursor={{ fill: "var(--color-muted)" }}
@@ -315,27 +317,21 @@ export function FaultsPerDayCard({
                     );
                   }}
                 />
+                <Bar dataKey="bar" isAnimationActive={false} shape={barShape} activeBar={barShape}>
+                  {data.map((d) => (
+                    <Cell key={d.day} fill={FILL[d.mark]} fillOpacity={OPACITY[d.mark]} />
+                  ))}
+                </Bar>
+                {/* After the bars, so the line and its name sit on top of them. */}
                 {average != null && (
                   <ReferenceLine
                     y={average}
                     stroke="var(--color-muted-foreground)"
                     strokeWidth={1.5}
                     strokeDasharray="6 4"
-                    label={{
-                      value: `avg ${avgText(average)}`,
-                      position: "insideTopLeft",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fill: "var(--color-muted-foreground)",
-                      dy: -21,
-                    }}
+                    label={lineTag(`avg ${avgText(average)}`, "var(--color-muted-foreground)")}
                   />
                 )}
-                <Bar dataKey="bar" isAnimationActive={false} shape={barShape} activeBar={barShape}>
-                  {data.map((d) => (
-                    <Cell key={d.day} fill={FILL[d.mark]} fillOpacity={OPACITY[d.mark]} />
-                  ))}
-                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>

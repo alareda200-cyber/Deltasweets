@@ -18,6 +18,7 @@ import type { Extreme, ReworkDay, ReworkDaysSummary } from "@/lib/rework-per-day
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
 import { Card } from "./DashboardCards";
+import { compactTick, lineTag } from "./chart-line-tag";
 
 // Dashboard › Rework and area owners › Rework per day. Same reading as the
 // Faults per day chart: the most is red, the least green, a day with no entry
@@ -55,7 +56,7 @@ const pctText = (n: number) => `${n.toFixed(1)}%`;
 function niceAxis(max: number): { top: number; ticks: number[] } {
   const raw = Math.max(0.5, (max * 1.1) / 4);
   const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw) ?? 10 * mag;
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((x) => x >= raw) ?? 10 * mag;
   const n = Math.max(2, Math.ceil((max * 1.1) / step));
   return {
     top: +(n * step).toFixed(6),
@@ -87,11 +88,14 @@ function Chip({
   label,
   value,
   sub,
+  mobileSub,
 }: {
   tone: "most" | "least" | "avg";
   label: string;
   value: string;
   sub: string;
+  /** Shorter wording for the narrow phone chip. */
+  mobileSub?: string;
 }) {
   return (
     <div
@@ -114,7 +118,16 @@ function Chip({
       </dt>
       <dd className="flex flex-col md:flex-row md:items-baseline md:gap-1.5">
         <span className="text-lg font-bold tabular-nums md:text-xl">{value}</span>
-        <span className="truncate text-xs text-muted-foreground md:text-[13px]">{sub}</span>
+        <span className="text-xs text-muted-foreground md:whitespace-nowrap md:text-[13px]">
+          {mobileSub ? (
+            <>
+              <span className="md:hidden">{mobileSub}</span>
+              <span className="hidden md:inline">{sub}</span>
+            </>
+          ) : (
+            sub
+          )}
+        </span>
       </dd>
     </div>
   );
@@ -157,6 +170,8 @@ export function ReworkPerDayCard({
       ? `limit ${limitPct}%`
       : `period ${pctText(summary.pct.period ?? 0)}`
     : `avg ${kg(summary.kg.average ?? 0)} kg`;
+  const lineColor =
+    pct && limitPct != null ? "var(--color-warning-strong)" : "var(--color-muted-foreground)";
   const fmt = (v: number) => (pct ? pctText(v) : `${kg(v)} kg`);
 
   // The day the caption talks about: the one tapped, else the worst day,
@@ -301,6 +316,11 @@ export function ReworkPerDayCard({
                     ? `${summary.pct.over} of ${summary.pct.counted} days over ${limitPct}%`
                     : "of making"
                 }
+                mobileSub={
+                  limitPct != null
+                    ? `${summary.pct.over}/${summary.pct.counted} days over ${limitPct}%`
+                    : undefined
+                }
               />
             ) : (
               <Chip
@@ -324,7 +344,7 @@ export function ReworkPerDayCard({
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={data}
-                margin={{ top: 20, right: 4, left: isMobile ? -12 : 0, bottom: 0 }}
+                margin={{ top: 20, right: 4, left: isMobile ? -2 : 0, bottom: 0 }}
                 barCategoryGap={data.length > 40 ? "10%" : "20%"}
                 onMouseMove={(st) => {
                   const i = st?.isTooltipActive ? Number(st.activeTooltipIndex) : NaN;
@@ -371,7 +391,7 @@ export function ReworkPerDayCard({
                   width={44}
                   domain={[0, axis.top]}
                   ticks={axis.ticks}
-                  tickFormatter={(v: number) => (pct ? `${v}%` : kg(v))}
+                  tickFormatter={(v: number) => (pct ? `${v}%` : compactTick(v))}
                 />
                 <Tooltip
                   cursor={{ fill: "var(--color-muted)" }}
@@ -403,34 +423,21 @@ export function ReworkPerDayCard({
                     );
                   }}
                 />
-                {line != null && (
-                  <ReferenceLine
-                    y={line}
-                    stroke={
-                      pct && limitPct != null
-                        ? "var(--color-warning-strong)"
-                        : "var(--color-muted-foreground)"
-                    }
-                    strokeWidth={1.5}
-                    strokeDasharray="6 4"
-                    label={{
-                      value: lineLabel,
-                      position: "insideTopLeft",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fill:
-                        pct && limitPct != null
-                          ? "var(--color-warning-strong)"
-                          : "var(--color-muted-foreground)",
-                      dy: -21,
-                    }}
-                  />
-                )}
                 <Bar dataKey="bar" isAnimationActive={false} shape={barShape} activeBar={barShape}>
                   {data.map((d) => (
                     <Cell key={d.day} fill={FILL[d.mark]} fillOpacity={OPACITY[d.mark]} />
                   ))}
                 </Bar>
+                {/* After the bars, so the line and its name sit on top of them. */}
+                {line != null && (
+                  <ReferenceLine
+                    y={line}
+                    stroke={lineColor}
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                    label={lineTag(lineLabel, lineColor)}
+                  />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </div>
