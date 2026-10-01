@@ -5,6 +5,17 @@ import jsPDF from "jspdf";
 import type { MaintenanceEvent, MaintenanceMetric, MaintenanceType, MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, formatDuration, formatHours, sortByWorstMtbf, eventDowntimeMinutes, eventElapsedMinutes } from "@/lib/maintenance-format";
 import type { ClosedDays } from "@/lib/maintenance-format";
+import {
+  TREND_RULES,
+  rowMeasure,
+  rowRatio,
+  sortTrend,
+  trendNum,
+  trendRangeLabel,
+  trendSummary,
+  trendTimes,
+  type FaultTrendResult,
+} from "@/lib/fault-trend";
 
 const LOGO_MAX_HEIGHT = 36; // pt
 const PAGE_MARGIN = 24; // pt
@@ -153,6 +164,10 @@ export interface MaintenanceReportOptions {
   // it is mounted outside the app tree by the PDF renderer and has no query
   // client of its own.
   closedDays: ClosedDays;
+  // "Getting worse" — the same list the page shows at the top of Maintenance:
+  // its own window (last 7 days vs the 28 before, ending yesterday), line
+  // filter only. Optional so an export never fails for want of it.
+  trend?: FaultTrendResult | null;
   onProgress?: (message: string) => void;
 }
 
@@ -581,6 +596,81 @@ export function layoutEventsTable(
   return { blockCount: blocks.length, drawBlock };
 }
 
+// "Getting worse" on page 1, right after Downtime by Type: the faults whose
+// last 7 days run well above their usual week. Ranked by time lost, as the
+// page opens.
+function TrendSection({ trend }: { trend: FaultTrendResult }) {
+  const w = trend.window;
+  const rows = sortTrend(trend.rising, "time").slice(0, 10);
+  const sum = trendSummary(trend);
+  const cell: CSSProperties = { padding: "6px 8px", borderBottom: "1px solid #e2e8f0", fontSize: 11, verticalAlign: "top" };
+  const head: CSSProperties = { ...cell, fontWeight: 700, color: "#64748b", textAlign: "left", background: "#f8fafc" };
+  return (
+    <div
+      data-pdf-section="getting-worse"
+      style={{ margin: "0 20px 16px", padding: 20, border: "1px solid #e2e8f0", borderRadius: 12, background: "#ffffff" }}
+    >
+      <p style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 800 }}>Getting worse</p>
+      <p style={{ margin: "0 0 10px", fontSize: 11, color: "#64748b" }}>
+        {trendRangeLabel(w.recentFrom, w.to)} vs {trendRangeLabel(w.from, w.baseTo)} · own window, not the
+        report dates · preventive left out
+      </p>
+      <p style={{ margin: "0 0 12px", fontSize: 12, padding: "8px 10px", borderRadius: 8, background: "#f1f5f9" }}>
+        All faults: <b>{sum.total}</b>, {sum.verdict}. <b>{sum.rising}</b>
+      </p>
+      {rows.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={head}>#</th>
+              <th style={head}>Fault</th>
+              <th style={head}>Line</th>
+              <th style={{ ...head, textAlign: "right" }}>Last 7 days</th>
+              <th style={{ ...head, textAlign: "right" }}>Usual week</th>
+              <th style={{ ...head, textAlign: "right" }}>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const m = rowMeasure(r, "time");
+              const ratio = rowRatio(r, m);
+              return (
+                <tr key={r.key}>
+                  <td style={{ ...cell, color: "#64748b" }}>{i + 1}</td>
+                  <td style={{ ...cell, fontWeight: 700 }}>
+                    {r.title}
+                    {r.lookalikes.length > 0 && (
+                      <div style={{ fontWeight: 400, fontSize: 10, color: "#b45309" }}>
+                        Also logged as {r.lookalikes.map((o) => `“${o.title}”`).join(", ")} (not counted)
+                      </div>
+                    )}
+                  </td>
+                  <td style={cell}>{r.lineName}</td>
+                  <td style={{ ...cell, textAlign: "right" }}>
+                    {r.stops7} stops · {trendNum(r.minutes7)} min
+                  </td>
+                  <td style={{ ...cell, textAlign: "right" }}>
+                    {r.isNew ? "Not seen" : `${trendNum(r.usualStops)} stops · ${trendNum(r.usualMinutes)} min`}
+                  </td>
+                  <td style={{ ...cell, textAlign: "right", fontWeight: 700, color: r.isNew ? "#b45309" : "#b91c1c", whiteSpace: "nowrap" }}>
+                    {r.isNew || ratio === null ? "New" : `${trendTimes(ratio)} ${m === "time" ? "time lost" : "more often"}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {trend.better.length > 0 && (
+        <p style={{ margin: "10px 0 0", fontSize: 11, color: "#15803d" }}>
+          Getting better: {trend.better.map((b) => `${b.title} (${b.lineName})`).join(", ")}.
+        </p>
+      )}
+      <p style={{ margin: "10px 0 0", fontSize: 10, color: "#64748b" }}>{TREND_RULES}</p>
+    </div>
+  );
+}
+
 function ReportLayout({
   events,
   collapsedEvents,
@@ -609,8 +699,10 @@ function ReportLayout({
   chronicVsSporadic,
   reliabilityByLine,
   stoppagesSummary,
+  trend,
 }: Pick<
   MaintenanceReportOptions,
+  | "trend"
   | "events"
   | "collapsedEvents"
   | "metrics"
@@ -751,6 +843,8 @@ function ReportLayout({
           </>
         )}
       </div>
+
+      {trend && <TrendSection trend={trend} />}
 
       {/* The events table is drawn straight onto canvases at export time
           (see layoutEventsTable) — this placeholder only marks where it
@@ -1042,6 +1136,7 @@ export async function exportMaintenanceReportToPdf({
   chronicVsSporadic,
   reliabilityByLine,
   stoppagesSummary,
+  trend,
   onProgress,
 }: MaintenanceReportOptions): Promise<void> {
   onProgress?.("Preparing report…");
@@ -1087,6 +1182,7 @@ export async function exportMaintenanceReportToPdf({
           chronicVsSporadic={chronicVsSporadic}
           reliabilityByLine={reliabilityByLine}
           stoppagesSummary={stoppagesSummary}
+          trend={trend}
         />,
       );
       // Two frames: one for React's commit to paint, one to let layout

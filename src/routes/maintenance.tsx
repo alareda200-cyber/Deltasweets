@@ -58,6 +58,9 @@ import { KpiCard } from "@/components/KpiCard";
 import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSection";
 import { RankedLosses } from "@/components/maintenance/RankedLosses";
 import { GroupedEventLog } from "@/components/maintenance/GroupedEventLog";
+import { GettingWorseCard } from "@/components/maintenance/GettingWorseCard";
+import { faultTrend, faultTrendWindow } from "@/lib/fault-trend";
+import { iso } from "@/lib/date-utils";
 import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
@@ -1189,6 +1192,27 @@ function MaintenancePage() {
   const { data: nonProductionDays = [] } = useQuery(nonProductionDaysQuery());
   const closedDays = useMemo(() => nonProductionDayLookup(nonProductionDays), [nonProductionDays]);
 
+  // "Getting worse": its own fixed window (35 days ending yesterday), so the
+  // date/type/status filters never change it — only the line filter does.
+  const today = iso(new Date());
+  const trendWindow = useMemo(() => faultTrendWindow(today), [today]);
+  const { data: trendEvents, isLoading: trendLoading } = useQuery(
+    maintenanceEventsQuery(lineId || null, null, null, trendWindow.from, trendWindow.to),
+  );
+  const trend = useMemo(() => {
+    if (!trendEvents) return null;
+    return faultTrend({
+      events: collapseStoppageEvents(trendEvents, stoppages),
+      closed: closedDays,
+      lineNames: new Map(lines.map((l) => [l.id, l.name])),
+      window: trendWindow,
+    });
+  }, [trendEvents, stoppages, closedDays, lines, trendWindow]);
+  // A stoppage is listed under its longest member, carrying the stoppage's
+  // window; tapping it opens that member as it was logged.
+  const openTrendEvent = (e: MaintenanceEvent) =>
+    setSelectedEvent(trendEvents?.find((x) => x.id === e.id) ?? e);
+
   async function handleAddNonProductionDay(
     day: string,
     npLineId: string | null,
@@ -1516,6 +1540,7 @@ function MaintenancePage() {
         chronicVsSporadic,
         reliabilityByLine,
         stoppagesSummary,
+        trend,
         onProgress: (msg) => setReportProgress(msg),
       });
       toast.success("Maintenance report exported");
@@ -1648,6 +1673,13 @@ function MaintenancePage() {
           time from the sidebar. Both render the same extracted components
           with the same props. */}
       <div className="space-y-3 md:hidden">
+        <GettingWorseCard
+          layout="phone"
+          result={trend}
+          isLoading={trendLoading}
+          lineLabel={lineName}
+          onSelectEvent={openTrendEvent}
+        />
         <MobileCollapsibleSection title="Losses & reliability">
           <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
           <ReliabilityAnalyticsSection
@@ -1748,6 +1780,13 @@ function MaintenancePage() {
         <div className="min-w-0">
           {activeSection === "overview" && (
             <div className="space-y-8">
+              <GettingWorseCard
+                layout="desktop"
+                result={trend}
+                isLoading={trendLoading}
+                lineLabel={lineName}
+                onSelectEvent={openTrendEvent}
+              />
               <section aria-labelledby="losses-heading">
                 <SectionHeading
                   id="losses-heading"
