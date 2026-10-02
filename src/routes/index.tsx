@@ -19,6 +19,7 @@ import {
 import {
   areaOwnersQuery,
   downtimeTypesQuery,
+  allLinesEntriesQuery,
   entriesQuery,
   entryAreaOwnersForEntriesQuery,
   entryDaysByLineQuery,
@@ -105,6 +106,13 @@ import {
 import { CARD, KIND_BAR } from "@/components/dashboard/tone";
 import { faultsPerDay } from "@/lib/faults-per-day";
 import { reworkPerDay } from "@/lib/rework-per-day";
+import { faultTrendWindow } from "@/lib/fault-trend";
+import {
+  OutputTrendCard,
+  ReworkTrendCard,
+  StopsTrendCard,
+  type TrendData,
+} from "@/components/dashboard/TrendCards";
 
 // Recharts is the bulk of the chart's weight; loading it lazily keeps it out of
 // the route bundle so the controls, Right now strip and KPI cards paint first.
@@ -495,6 +503,24 @@ function PeriodBody({
   const { data: severityLevels } = useSuspenseQuery(severityLevelsQuery);
   const { data: productionAreas } = useSuspenseQuery(productionAreasQuery);
   const { data: areaOwners } = useSuspenseQuery(areaOwnersQuery);
+  const { data: allLines } = useSuspenseQuery(linesQuery);
+
+  // "vs usual" cards: every line, last 7 full days vs the 28 before, on their
+  // own window — the period picked above does not change them.
+  const today = iso(new Date());
+  const trendWindow = useMemo(() => faultTrendWindow(today), [today]);
+  const trendEntriesQ = useQuery(allLinesEntriesQuery(trendWindow.from, trendWindow.to));
+  const trendIds = useMemo(() => (trendEntriesQ.data ?? []).map((e) => e.id), [trendEntriesQ.data]);
+  const trendDowntimesQ = useQuery(entryDowntimesForEntriesQuery(trendIds));
+  const trend: TrendData = {
+    entries: trendEntriesQ.data,
+    downtimes: trendEntriesQ.data && trendIds.length === 0 ? [] : trendDowntimesQ.data,
+    loading: trendEntriesQ.isPending,
+    error: trendEntriesQ.isError || trendDowntimesQ.isError,
+    window: trendWindow,
+    lines: allLines,
+    viewingLineId: line.id,
+  };
 
   const canEntry = can(role, "entry.view");
   const canMaintenance = can(role, "maintenance.view");
@@ -578,24 +604,32 @@ function PeriodBody({
   }
 
   const list = entries ?? [];
+  const emptyBox = (
+    <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center md:p-12">
+      <Inbox className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
+      <p className="mt-3 text-base font-semibold">
+        No entries for {line.name}, {rangeText}
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Plan, actual, time lost and rework appear here once a daily entry is saved for this line.
+      </p>
+      {canEntry && (
+        <Button asChild className="mt-5 h-11 md:h-9">
+          <Link to="/entry">
+            <Plus className="h-4 w-4" /> New entry
+          </Link>
+        </Button>
+      )}
+    </div>
+  );
   if (list.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center md:p-12">
-        <Inbox className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
-        <p className="mt-3 text-base font-semibold">
-          No entries for {line.name}, {rangeText}
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Plan, actual, time lost and rework appear here once a daily entry is saved for this line.
-        </p>
-        {canEntry && (
-          <Button asChild className="mt-5 h-11 md:h-9">
-            <Link to="/entry">
-              <Plus className="h-4 w-4" /> New entry
-            </Link>
-          </Button>
-        )}
-      </div>
+      <>
+        {emptyBox}
+        <OutputTrendCard data={trend} targets={targets} />
+        <StopsTrendCard data={trend} />
+        <ReworkTrendCard data={trend} limitPct={targets.reworkPct ?? null} />
+      </>
     );
   }
 
@@ -769,6 +803,8 @@ function PeriodBody({
         </div>
       )}
 
+      <OutputTrendCard data={trend} targets={targets} />
+
       <div
         data-pdf-section="time"
         className="grid gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4"
@@ -787,6 +823,8 @@ function PeriodBody({
           </div>
         )}
       </div>
+
+      <StopsTrendCard data={trend} />
 
       {can(role, "dashboard.viewMaintenanceCard") && (
         <div
@@ -853,6 +891,8 @@ function PeriodBody({
           </Suspense>
         </div>
       </div>
+
+      <ReworkTrendCard data={trend} limitPct={targets.reworkPct ?? null} />
 
       <p data-pdf-section="definitions" className="text-xs text-muted-foreground">
         Adherence = actual ÷ plan. Time lost = downtime minutes ÷ available minutes: the daily

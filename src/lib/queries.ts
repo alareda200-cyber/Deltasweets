@@ -430,6 +430,25 @@ export const entriesQuery = (lineId: string | null, from: string, to: string) =>
     },
   });
 
+// Every line's entries over a date range — the Dashboard's "vs usual" cards
+// compare each line with its own usual, whichever line is being viewed.
+export const allLinesEntriesQuery = (from: string, to: string) =>
+  queryOptions({
+    queryKey: ["entries-all-lines", from, to],
+    queryFn: async (): Promise<DailyEntry[]> => {
+      const data = await selectAllRows(() =>
+        supabase
+          .from("daily_entries")
+          .select("*")
+          .gte("entry_date", from)
+          .lte("entry_date", to)
+          .order("entry_date")
+          .order("id"),
+      );
+      return data as DailyEntry[];
+    },
+  });
+
 // Takes entry IDs already fetched by entriesQuery instead of re-querying
 // daily_entries for the same line_id/date range — avoids a duplicate round trip.
 export const entryDowntimesForEntriesQuery = (entryIds: string[]) =>
