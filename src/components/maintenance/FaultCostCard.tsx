@@ -42,6 +42,14 @@ function piecesOf(line: LineCost, rows: FaultCostRow[]): Piece[] {
 }
 
 /** Plays once, the first time the element is at least a third on screen. */
+/** Smallest 1 / 2 / 2.5 / 5 × 10^k at or above `raw`. */
+function niceStep(raw: number): number {
+  if (!(raw > 0)) return 1;
+  const p10 = 10 ** Math.floor(Math.log10(raw));
+  const m = raw / p10;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p10;
+}
+
 function useOnScreen(ref: React.RefObject<Element | null>, key: string) {
   const [seen, setSeen] = useState<string | null>(null);
   useEffect(() => {
@@ -111,8 +119,9 @@ function PlanHero({
   const maxKg = Math.max(1, ...pieces.map((p) => p.kg));
   const barMax = desk ? valX - barX - 150 : RW - 4;
   const H = rowY0 + pieces.length * rowH + (desk ? 6 : 4);
-  const step =
-    line.plan > 300000 ? 100000 : line.plan > 60000 ? 25000 : line.plan > 12000 ? 5000 : 1000;
+  // A nice step (1, 2, 2.5 or 5 × 10^k) so the ruler keeps about 4 labels on
+  // a phone and 8 on a desktop, whatever the period's plan is.
+  const step = niceStep(line.plan / (desk ? 8 : 4));
   const ticks: number[] = [];
   for (let v = 0; v <= line.plan + 1; v += step) ticks.push(v);
   const geo = useMemo(() => {
@@ -414,6 +423,7 @@ function PlanHero({
       </defs>
       {ticks.map((v) => {
         const x = X0 + v * sc;
+        // Room for the "Plan …" label on the right.
         const show = v === 0 || x < X0 + RW - (desk ? 110 : 105);
         return (
           <g key={v} className="fc-tick">
@@ -427,7 +437,7 @@ function PlanHero({
                 fill="var(--muted-foreground)"
                 className="font-mono"
               >
-                {v === 0 ? "0" : v >= 1000 ? `${Math.round(v / 1000)} t` : `${v} kg`}
+                {v === 0 ? "0" : v >= 1000 ? `${+(v / 1000).toFixed(1)} t` : `${v} kg`}
               </text>
             )}
           </g>
