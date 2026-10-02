@@ -107,6 +107,7 @@ import { CARD, KIND_BAR } from "@/components/dashboard/tone";
 import { faultsPerDay } from "@/lib/faults-per-day";
 import { reworkPerDay } from "@/lib/rework-per-day";
 import { faultTrendWindow } from "@/lib/fault-trend";
+import { faultCost } from "@/lib/fault-cost";
 import {
   OutputTrendCard,
   ReworkTrendCard,
@@ -841,6 +842,19 @@ function PeriodBody({
               loading={false}
               error={machineError}
               canOpenMaintenance={canMaintenance}
+              faultCost={
+                faultCost({
+                  stops: dayStops.map((st) => ({
+                    lineId: line.id,
+                    day: st.day,
+                    minutes: st.minutes,
+                    title: st.title,
+                    isFault: isFault(st.type),
+                  })),
+                  entries: list,
+                  lines: [line],
+                }).lines[0] ?? null
+              }
             />
           </div>
           {lastDay && lastDate && (

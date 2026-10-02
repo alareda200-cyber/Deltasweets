@@ -20,6 +20,8 @@ import {
 } from "@/lib/dashboard-metrics";
 import { CARD, KIND_BAR, TONE_TEXT } from "./tone";
 import { faultsByTitle, isFault, type MachineStop } from "@/lib/machine-downtime";
+import { Odometer } from "@/components/motion";
+import type { LineCost } from "@/lib/fault-cost";
 
 export function Card({
   labelledBy,
@@ -522,9 +524,12 @@ export function MaintenanceCard({
   loading,
   error,
   canOpenMaintenance,
+  faultCost,
 }: {
   lineName: string;
   rangeText: string;
+  /** Fault minutes priced at the line's plan pace (Maintenance › What faults cost). */
+  faultCost?: LineCost | null;
   /** Every stop in the period (stoppages collapsed), preventive included. */
   stops: MachineStop[];
   /** Fault events logged in the period, preventive left out. */
@@ -595,6 +600,36 @@ export function MaintenanceCard({
             Preventive is planned work, not a fault — it is not in the fault count. A stoppage
             counts its window once.
           </p>
+          {faultCost && faultCost.lostKg > 0 && (
+            <p
+              data-pdf-exclude="true"
+              data-testid="dash-fault-cost"
+              className="rounded-lg border border-dashed border-destructive/40 bg-gradient-to-br from-destructive/10 to-card px-3 py-2 text-[13px]"
+            >
+              ≈{" "}
+              <b className="inline-block text-destructive-strong">
+                {faultCost.lostKg >= 1000 ? (
+                  <>
+                    <Odometer value={faultCost.lostKg / 1000} decimals={1} delay={500} />
+                    {"\u00a0t"}
+                  </>
+                ) : (
+                  <>
+                    <Odometer value={faultCost.lostKg} decimals={0} delay={500} />
+                    {"\u00a0kg"}
+                  </>
+                )}
+              </b>{" "}
+              of the plan lost to faults ·{" "}
+              <b className="tabular-nums">
+                {((faultCost.lostKg / faultCost.plan) * 100).toFixed(1)}%
+              </b>
+              <span className="block text-[11px] text-muted-foreground tabular-nums">
+                {num(faultCost.lostMinutes)} min stopped × {faultCost.pace.toFixed(1)} kg a minute
+                (plan pace), on days with an entry
+              </span>
+            </p>
+          )}
 
           {top.length > 0 && (
             <div className="flex flex-col gap-2">

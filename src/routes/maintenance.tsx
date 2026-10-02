@@ -59,6 +59,8 @@ import { RightNowSection, ScopeChip } from "@/components/maintenance/RightNowSec
 import { RankedLosses } from "@/components/maintenance/RankedLosses";
 import { GroupedEventLog } from "@/components/maintenance/GroupedEventLog";
 import { GettingWorseCard } from "@/components/maintenance/GettingWorseCard";
+import { FaultCostCard } from "@/components/maintenance/FaultCostCard";
+import { faultCost } from "@/lib/fault-cost";
 import { faultTrend, faultTrendWindow } from "@/lib/fault-trend";
 import { iso } from "@/lib/date-utils";
 import { Switch } from "@/components/ui/switch";
@@ -127,6 +129,7 @@ import {
   syncStoppageAggregate,
   majorityMaintenanceType,
   stoppageDurationMinutes,
+  allLinesEntriesQuery,
   collapseStoppageEvents,
   techniciansQuery,
   appSettingsQuery,
@@ -1210,6 +1213,50 @@ function MaintenancePage() {
   }, [trendEvents, stoppages, closedDays, lines, trendWindow]);
   // A stoppage is listed under its longest member, carrying the stoppage's
   // window; tapping it opens that member as it was logged.
+  // "What faults cost": the filtered faults priced at each line's plan pace.
+  // Entries cover the filter's dates, or the span of the faults in view when
+  // no dates are set.
+  const costStops = useMemo(
+    () =>
+      collapsedEvents.map((e) => ({
+        lineId: e.line_id,
+        day: iso(new Date(e.started_at)),
+        minutes: eventDowntimeMinutes(e, closedDays),
+        title: e.title,
+        isFault: e.type !== "preventive",
+      })),
+    [collapsedEvents, closedDays],
+  );
+  const costRange = useMemo(() => {
+    const ds = costStops.map((s) => s.day).sort();
+    const f = from || ds[0];
+    const t = to || ds[ds.length - 1];
+    return f && t ? { from: f, to: t } : null;
+  }, [costStops, from, to]);
+  const costEntriesQ = useQuery({
+    ...allLinesEntriesQuery(costRange?.from ?? "", costRange?.to ?? ""),
+    enabled: !!costRange,
+  });
+  const cost = useMemo(() => {
+    if (!costRange) return { lines: [], rows: [], unpricedMinutes: 0 };
+    if (!costEntriesQ.data) return null;
+    const entries = lineId
+      ? costEntriesQ.data.filter((e) => e.line_id === lineId)
+      : costEntriesQ.data;
+    return faultCost({ stops: costStops, entries, lines });
+  }, [costRange, costEntriesQ.data, costStops, lines, lineId]);
+  const costDays = useMemo(() => {
+    if (!costRange) return [];
+    const out: string[] = [];
+    const d = new Date(`${costRange.from}T12:00:00`);
+    const end = new Date(`${costRange.to}T12:00:00`);
+    while (d <= end && out.length < 400) {
+      out.push(iso(d));
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }, [costRange]);
+
   const openTrendEvent = (e: MaintenanceEvent) =>
     setSelectedEvent(trendEvents?.find((x) => x.id === e.id) ?? e);
 
@@ -1680,6 +1727,14 @@ function MaintenancePage() {
           lineLabel={lineName}
           onSelectEvent={openTrendEvent}
         />
+        <FaultCostCard
+          layout="phone"
+          data={cost}
+          days={costDays}
+          loading={costEntriesQ.isPending && !!costRange}
+          error={costEntriesQ.isError}
+          preferLineId={lineId || null}
+        />
         <MobileCollapsibleSection title="Losses & reliability">
           <p className="mb-3 text-xs text-muted-foreground">{FOLLOWS_FILTERS}</p>
           <ReliabilityAnalyticsSection
@@ -1786,6 +1841,14 @@ function MaintenancePage() {
                 isLoading={trendLoading}
                 lineLabel={lineName}
                 onSelectEvent={openTrendEvent}
+              />
+              <FaultCostCard
+                layout="desktop"
+                data={cost}
+                days={costDays}
+                loading={costEntriesQ.isPending && !!costRange}
+                error={costEntriesQ.isError}
+                preferLineId={lineId || null}
               />
               <section aria-labelledby="losses-heading">
                 <SectionHeading
