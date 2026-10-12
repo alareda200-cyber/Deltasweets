@@ -95,6 +95,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
+import { useCompany } from "@/lib/companies";
 import { can } from "@/lib/permissions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
@@ -1536,7 +1537,10 @@ function MaintenancePage() {
     if (id) setCreateOpen(false);
   }
 
+  const { current: company } = useCompany();
   const lineName = lineId ? (lines.find((l) => l.id === lineId)?.name ?? "All Lines") : "All Lines";
+  // The exported reports name the company too: "Jammy · All Lines".
+  const reportLineName = company ? `${company.name} · ${lineName}` : lineName;
 
   async function handleExportReport() {
     setExportingReport(true);
@@ -1545,7 +1549,7 @@ function MaintenancePage() {
       const { exportMaintenanceReportToPdf } = await import("@/lib/maintenance-report");
       await exportMaintenanceReportToPdf({
         closedDays,
-        lineName,
+        lineName: reportLineName,
         from: from || null,
         to: to || null,
         generatedBy: profile?.display_name || profile?.email || user?.email || "—",
@@ -1592,7 +1596,7 @@ function MaintenancePage() {
       });
       toast.success("Maintenance report exported");
       void logAudit("maintenance.export_report", "maintenance_event", undefined, {
-        lineName,
+        lineName: reportLineName,
         from,
         to,
         eventCount: events.length,

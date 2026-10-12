@@ -42,6 +42,7 @@ import { iso, monthRange } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
 import { useAuth } from "@/lib/auth-context";
+import { useCompany } from "@/lib/companies";
 import { can, type Role } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { formatSavedAt, shiftLabel } from "@/lib/entry-form";
@@ -164,6 +165,7 @@ function presetRange(p: Exclude<Preset, "custom">): { from: string; to: string }
 function Dashboard() {
   const navigate = useNavigate();
   const { role } = useAuth();
+  const { current: company } = useCompany();
   const { data: lines } = useSuspenseQuery(linesQuery);
   const initial = monthRange();
   const [preset, setPreset] = useState<Preset>("month");
@@ -226,7 +228,7 @@ function Dashboard() {
       await exportDashboardToPdf({
         container: exportRef.current,
         dashboardName: "Production Scorecard Dashboard",
-        lineName: activeLine.name,
+        lineName: company ? `${company.name} · ${activeLine.name}` : activeLine.name,
         from,
         to,
         onProgress: (msg) => setExportProgress(msg),

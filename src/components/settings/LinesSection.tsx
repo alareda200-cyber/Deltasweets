@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { useCompany } from "@/lib/companies";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
@@ -36,6 +37,7 @@ export function LinesSection({
   fieldCounts: Record<string, number>;
   qc: QC;
 }) {
+  const { current: company, canSwitch } = useCompany();
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [color, setColor] = useState(DEFAULT_LINE_COLOR);
@@ -136,6 +138,12 @@ export function LinesSection({
   return (
     <div className="space-y-4 md:space-y-5">
       <SectionHeader id="lines" count={lines.length} />
+      {company && (
+        <p data-testid="lines-company" className="text-sm text-muted-foreground">
+          {company.name}&rsquo;s lines. A new line is added to {company.name}.
+          {canSwitch && " Switch the company in the header to see the others."}
+        </p>
+      )}
       <Card>
         <CardContent className="space-y-4 p-4 md:p-6">
           <div className="grid gap-3 sm:grid-cols-[1fr_7rem_9rem_4.5rem_auto] sm:items-end">

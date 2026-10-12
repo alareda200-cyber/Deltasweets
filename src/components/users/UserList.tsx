@@ -14,6 +14,8 @@ import { RoleBadge } from "./RoleBadge";
 
 export interface UserListRow extends UserLike {
   avatar_color?: string | null;
+  /** "All companies", "Jammy", "Delta"… (null while the companies load). */
+  companyName?: string | null;
 }
 
 function UserAvatar({ user, size }: { user: UserListRow; size: "sm" | "lg" }) {
@@ -88,6 +90,7 @@ export function UserList({
                       dep ? "text-muted-foreground" : "text-warning-strong",
                     )}
                   >
+                    {u.companyName ? `${u.companyName} · ` : ""}
                     {dep ?? "No department"} ·{" "}
                     {seen
                       ? `seen ${seen === "Today" || seen === "Yesterday" ? seen.toLowerCase() : seen}`
@@ -114,6 +117,9 @@ export function UserList({
                 Role
               </th>
               <th scope="col" className="px-4 py-3 text-[13px] font-semibold text-muted-foreground">
+                Company
+              </th>
+              <th scope="col" className="px-4 py-3 text-[13px] font-semibold text-muted-foreground">
                 Department
               </th>
               <th scope="col" className="px-4 py-3 text-[13px] font-semibold text-muted-foreground">
@@ -138,6 +144,12 @@ export function UserList({
                   </td>
                   <td className="px-4 py-2">
                     <RoleBadge role={u.role} />
+                  </td>
+                  <td
+                    className="whitespace-nowrap px-4 py-2"
+                    data-user-company={u.companyName ?? ""}
+                  >
+                    {u.companyName ?? "—"}
                   </td>
                   <td className={cn("px-4 py-2", !dep && "text-warning-strong")}>
                     {dep ?? "No department"}

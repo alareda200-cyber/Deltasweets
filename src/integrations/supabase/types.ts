@@ -154,6 +154,30 @@ export type Database = {
         }
         Relationships: []
       }
+      companies: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
       daily_entries: {
         Row: {
           available_min: number
@@ -736,6 +760,7 @@ export type Database = {
       }
       non_production_days: {
         Row: {
+          company_id: string | null
           closed_from: string | null
           closed_to: string | null
           created_at: string
@@ -746,6 +771,7 @@ export type Database = {
           reason: string | null
         }
         Insert: {
+          company_id?: string | null
           closed_from?: string | null
           closed_to?: string | null
           created_at?: string
@@ -756,6 +782,7 @@ export type Database = {
           reason?: string | null
         }
         Update: {
+          company_id?: string | null
           closed_from?: string | null
           closed_to?: string | null
           created_at?: string
@@ -811,6 +838,7 @@ export type Database = {
       }
       production_lines: {
         Row: {
+          company_id: string
           code: string | null
           color: string
           created_at: string
@@ -821,6 +849,7 @@ export type Database = {
           sort_order: number
         }
         Insert: {
+          company_id?: string
           code?: string | null
           color?: string
           created_at?: string
@@ -831,6 +860,7 @@ export type Database = {
           sort_order?: number
         }
         Update: {
+          company_id?: string
           code?: string | null
           color?: string
           created_at?: string
@@ -880,6 +910,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_company_id: string | null
+          company_id: string | null
           avatar_color: string
           created_at: string
           department_id: string | null
@@ -898,6 +930,8 @@ export type Database = {
           username: string | null
         }
         Insert: {
+          active_company_id?: string | null
+          company_id?: string | null
           avatar_color?: string
           created_at?: string
           department_id?: string | null
@@ -916,6 +950,8 @@ export type Database = {
           username?: string | null
         }
         Update: {
+          active_company_id?: string | null
+          company_id?: string | null
           avatar_color?: string
           created_at?: string
           department_id?: string | null

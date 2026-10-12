@@ -32,6 +32,7 @@ import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useNotifications } from "@/lib/notifications";
 import { PushNotificationToggle } from "@/components/PushNotificationToggle";
 import { Input } from "@/components/ui/input";
+import { CompanyMenu, CompanyPill } from "@/components/CompanySwitcher";
 
 // Desktop top nav (md and up). Text-only links, per the approved header
 // mockup. Permission-filtered below so a role never sees a link that
@@ -161,6 +162,9 @@ export function useProfileIdentity() {
 export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const { role, profile, signOut } = useAuth();
+  // From the profile (loaded before any page renders), not the companies
+  // query: the key must not change when the companies arrive, only on a switch.
+  const companyKey = profile?.company_id ?? profile?.active_company_id ?? "none";
   useEffect(() => {
     touchLastSeen();
   }, [pathname]);
@@ -185,20 +189,40 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 border-b border-border bg-card/90 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 pl-4 pr-3 md:h-16 md:gap-7 md:px-8 lg:px-10">
-          <Link to="/" className="flex min-h-11 min-w-0 shrink items-center gap-2.5 rounded-lg">
-            <span
-              aria-hidden="true"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-primary text-[13px] font-bold text-primary-foreground md:h-9 md:w-9 md:rounded-[10px] md:text-sm"
+          <div className="flex min-w-0 shrink items-center gap-2.5">
+            <Link
+              to="/"
+              aria-label="Delta Sweets, Dashboard"
+              className="flex min-h-11 shrink-0 items-center rounded-lg"
             >
-              DS
-            </span>
-            <span className="min-w-0 leading-tight">
-              <span className="block truncate text-[15px] font-bold">Delta Sweets</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                Production scorecard
+              <span
+                aria-hidden="true"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-primary text-[13px] font-bold text-primary-foreground md:h-9 md:w-9 md:rounded-[10px] md:text-sm"
+              >
+                DS
               </span>
+            </Link>
+            <span className="flex min-w-0 flex-col items-start leading-tight">
+              <Link to="/" tabIndex={-1} className="block min-w-0 max-w-full rounded-lg">
+                <span className="block truncate text-[15px] font-bold">Delta Sweets</span>
+              </Link>
+              {/* The company in view sits where "Production scorecard" was. */}
+              <CompanyPill
+                fallback={
+                  <span className="block truncate text-xs text-muted-foreground md:hidden">
+                    Production scorecard
+                  </span>
+                }
+              />
+              <CompanyMenu
+                fallback={
+                  <span className="hidden truncate text-xs text-muted-foreground md:block">
+                    Production scorecard
+                  </span>
+                }
+              />
             </span>
-          </Link>
+          </div>
           {/* min-w-0 + overflow-x-auto: between md and ~1100px the six links
               scroll inside the nav instead of widening the header. */}
           <nav
@@ -327,7 +351,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* pb-24 (mobile only) keeps trailing page content clear of the fixed
           68px bottom nav; md:py-8 restores symmetric padding where that nav
           doesn't render. */}
-      <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 md:px-8 md:py-8">{children}</main>
+      {/* Keyed by the company in view: switching starts the page fresh, so no
+          line picked under the other company lingers in a page's own state. */}
+      <main key={companyKey} className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 md:px-8 md:py-8">
+        {children}
+      </main>
 
       <nav
         aria-label="Main"

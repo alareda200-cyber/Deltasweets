@@ -33,6 +33,8 @@ export interface ProductionLine {
   is_active: boolean;
   /** The unit making is also counted in (e.g. "pallets"); null = kg only. */
   making_count_unit: string | null;
+  /** Jammy, Delta… The database only returns the lines of the company in view. */
+  company_id: string;
 }
 
 export interface LineFieldDef {

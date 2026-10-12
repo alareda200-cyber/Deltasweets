@@ -63,6 +63,7 @@ const ACTION_LABELS: Record<string, string> = {
   "user.create": "Created user",
   "user.edit": "Edited user",
   "user.change_role": "Changed user role",
+  "user.change_company": "Changed which company a user sees",
   "user.reset_password": "Reset a password",
   "user.activate": "Switched account on",
   "user.deactivate": "Switched account off",
@@ -181,6 +182,8 @@ export function detailLine(row: Pick<AuditRow, "action" | "details" | "created_a
   const to = str(d.to);
   if (row.action === "user.change_role") {
     if (from || to) parts.push(`${from ? roleLabel(from) : "?"} → ${to ? roleLabel(to) : "?"}`);
+  } else if (row.action === "user.change_company") {
+    if (from || to) parts.push(`${from ?? "?"} → ${to ?? "?"}`);
   } else if (from && to && DATE_ONLY.test(from) && DATE_ONLY.test(to)) {
     parts.push(shortRange(from, to));
   } else if (from && DATE_ONLY.test(from)) {

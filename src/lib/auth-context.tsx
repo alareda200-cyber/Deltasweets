@@ -29,6 +29,10 @@ interface Profile {
   last_login: string | null;
   avatar_color: string;
   created_at: string;
+  /** The one company this person may see; null = every company. Admin only. */
+  company_id: string | null;
+  /** The company they are looking at now (the header switcher). */
+  active_company_id: string | null;
 }
 
 interface AuthContextValue {
@@ -84,6 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         last_login: data.last_login,
         avatar_color: data.avatar_color,
         created_at: data.created_at,
+        company_id: data.company_id ?? null,
+        active_company_id: data.active_company_id ?? null,
       });
     } else {
       setProfile(null);

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
@@ -59,6 +59,7 @@ import {
   deleteUserFn,
 } from "@/lib/users-actions.server";
 import { logAudit } from "@/lib/audit";
+import { companiesQuery, type Company } from "@/lib/companies";
 import { cn } from "@/lib/utils";
 import {
   activeAdminCount,
@@ -114,6 +115,9 @@ interface UserRow {
   avatar_color: string | null;
   created_at: string;
   departments: { name: string } | null;
+  /** NULL = every company. */
+  company_id: string | null;
+  companyName?: string | null;
 }
 
 function roleRank(role: string) {
@@ -148,6 +152,10 @@ function UsersPage() {
     },
   });
 
+  const { data: companies = [] } = useQuery(companiesQuery);
+  const companyNameOf = (id: string | null) =>
+    id ? (companies.find((c) => c.id === id)?.name ?? "—") : "All companies";
+
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("");
 
@@ -178,8 +186,10 @@ function UsersPage() {
         .filter((u) => (!roleFilter || u.role === roleFilter) && matchesUserSearch(u, search))
         .sort(
           (a, b) => roleRank(a.role) - roleRank(b.role) || fullName(a).localeCompare(fullName(b)),
-        ),
-    [users, search, roleFilter],
+        )
+        .map((u) => ({ ...u, companyName: companies.length ? companyNameOf(u.company_id) : null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- companyNameOf only reads companies
+    [users, search, roleFilter, companies],
   );
 
   const canSignIn = users.filter((u) => u.status !== "inactive").length;
@@ -345,6 +355,7 @@ function UsersPage() {
         users={users}
         currentUserId={currentUser?.id ?? null}
         departments={departments}
+        companies={companies}
         onOpenChange={(o) => !o && setEditRow(null)}
         onSaved={refetchAll}
       />
@@ -754,6 +765,7 @@ function EditUserDialog({
   users,
   currentUserId,
   departments,
+  companies,
   onOpenChange,
   onSaved,
 }: {
@@ -761,10 +773,14 @@ function EditUserDialog({
   users: UserRow[];
   currentUserId: string | null;
   departments: { id: string; name: string }[];
+  companies: Company[];
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }) {
   const { refreshProfile } = useAuth();
+  const queryClient = useQueryClient();
+  const router = useRouter();
+  const [companyId, setCompanyId] = useState("");
   const uid = useId();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -781,6 +797,7 @@ function EditUserDialog({
       setLastName(row.last_name ?? "");
       setPhone(row.phone ?? "");
       setDepartmentId(row.department_id ?? "");
+      setCompanyId(row.company_id ?? "");
       setRole(row.role as Role);
       setStatus(row.status as "active" | "inactive");
       setConfirmOpen(false);
@@ -816,6 +833,7 @@ function EditUserDialog({
           display_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
           phone: phone.trim() || null,
           department_id: departmentId || null,
+          company_id: companyId || null,
           role,
           // No server here: the status goes straight on the profile. The
           // database only serves data to active accounts, so switching one
@@ -838,7 +856,24 @@ function EditUserDialog({
           to: role,
         });
       }
-      if (isSelf) void refreshProfile();
+      const companyChanged = (companyId || null) !== row.company_id;
+      if (companyChanged) {
+        const name = (id: string | null) =>
+          id ? (companies.find((c) => c.id === id)?.name ?? id) : "All companies";
+        void logAudit("user.change_company", "user", row.id, {
+          email: row.email,
+          from: name(row.company_id),
+          to: name(companyId || null),
+        });
+      }
+      if (isSelf) {
+        await refreshProfile();
+        // Tying yourself to a company changes what the database returns.
+        if (companyChanged) {
+          await queryClient.resetQueries();
+          await router.invalidate();
+        }
+      }
       setConfirmOpen(false);
       onOpenChange(false);
       onSaved();
@@ -950,6 +985,34 @@ function EditUserDialog({
               {block}
             </p>
           )}
+          <div className="space-y-1.5">
+            <Label htmlFor={`${uid}-company`}>Company</Label>
+            <Select
+              value={companyId || "__all__"}
+              onValueChange={(v) => setCompanyId(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger
+                id={`${uid}-company`}
+                className="h-11 md:h-9"
+                aria-describedby={`${uid}-company-hint`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All companies</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p id={`${uid}-company-hint`} className="text-xs text-muted-foreground">
+              {companyId
+                ? `Sees ${companies.find((c) => c.id === companyId)?.name ?? "this company"} only. The role keeps its permissions.`
+                : "Switches between companies from the header. The role keeps its permissions."}
+            </p>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor={`${uid}-status`}>Status</Label>
             <Select value={status} onValueChange={(v) => setStatus(v as "active" | "inactive")}>
