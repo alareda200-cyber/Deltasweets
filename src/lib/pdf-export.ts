@@ -1,7 +1,7 @@
 import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 
-const LOGO_MAX_HEIGHT = 40; // pt — keep aspect ratio, never exceed this, never stretch
+const LOGO_MAX_HEIGHT = 48; // pt — keep aspect ratio, never exceed this, never stretch (= the 3-line text block beside it)
 const PAGE_MARGIN = 24; // pt
 const SECTION_GAP = 12; // pt — vertical space between sections stacked on the same page
 const JPEG_QUALITY = 0.8;
@@ -215,7 +215,7 @@ export async function exportDashboardToPdf({
     doc.text(dashboardName, textX, cursorY + 14);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`${lineName} · ${from} → ${to}`, textX, cursorY + 30);
+    doc.text(`${lineName} · ${from} -> ${to}`, textX, cursorY + 30); // helvetica has no "→" glyph
     doc.text(`Generated ${generatedAt.toLocaleString()}`, textX, cursorY + 44);
     cursorY += Math.max(logo?.heightPt ?? 0, 48) + 16;
 

@@ -17,7 +17,7 @@ import {
   type FaultTrendResult,
 } from "@/lib/fault-trend";
 
-const LOGO_MAX_HEIGHT = 36; // pt
+const LOGO_MAX_HEIGHT = 50; // pt — = the 3-line text block beside it
 const PAGE_MARGIN = 24; // pt
 const FOOTER_HEIGHT = 24; // pt — reserved at the bottom of every page
 const SECTION_GAP = 12; // pt
