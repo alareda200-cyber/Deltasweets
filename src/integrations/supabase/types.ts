@@ -531,6 +531,39 @@ export type Database = {
           },
         ]
       }
+      line_capacities: {
+        Row: {
+          basis: string
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          id: string
+          line_id: string
+          making_count: number | null
+          making_kg: number
+        }
+        Insert: {
+          basis: string
+          created_at?: string
+          created_by?: string | null
+          effective_from: string
+          id?: string
+          line_id: string
+          making_count?: number | null
+          making_kg: number
+        }
+        Update: {
+          basis?: string
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          line_id?: string
+          making_count?: number | null
+          making_kg?: number
+        }
+        Relationships: []
+      }
       line_field_definitions: {
         Row: {
           created_at: string

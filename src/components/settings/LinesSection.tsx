@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { useCompany } from "@/lib/companies";
+import { CapacitySection } from "./CapacitySection";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
@@ -235,6 +236,8 @@ export function LinesSection({
           </p>
         </CardContent>
       </Card>
+
+      <CapacitySection lines={lines} />
 
       <ConfirmDialog
         open={!!pendingDelete}

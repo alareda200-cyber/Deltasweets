@@ -49,6 +49,7 @@ import {
   Pencil,
   FilePlus2,
   Loader2,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,6 +67,14 @@ import {
 import { iso } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
+import {
+  capacityFor,
+  capacityLabel,
+  capacityWhy,
+  lineCapacitiesQuery,
+  planFromCapacity,
+  type LineCapacity,
+} from "@/lib/capacity";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
@@ -363,6 +372,14 @@ function EntryPage() {
   // simply left out.
   const { data: downtimeTypes = [] } = useQuery(downtimeTypesQuery);
   const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
+  // Making capacity (Settings › Lines): when one applies, the plan is not
+  // typed — the database sets it from the capacity and the page shows the same
+  // number, locked. If the capacities can't load, the plan is typed as before.
+  const { data: capacities = [] } = useQuery(lineCapacitiesQuery);
+  const capacity = capacityFor(capacities, lineId, date);
+  const capPlan = capacity ? planFromCapacity(capacity, shift) : null;
+  const makingPlanV = capPlan ? String(capPlan.kg) : makingPlan;
+  const makingPlanCountV = capPlan?.count != null ? String(capPlan.count) : makingPlanCount;
 
   const values: EntryFormValues = useMemo(
     () => ({
@@ -553,7 +570,7 @@ function EntryPage() {
   // entered yet", so the tiles below can show "—" instead of a misleading
   // 0%/100%.
   const liveSummary = useMemo(() => {
-    const mPlan = Number(makingPlan) || 0;
+    const mPlan = Number(makingPlanV) || 0;
     const mActual = Number(makingActual) || 0;
     const pPlan = Number(packingPlan) || 0;
     const pActual = Number(packingActual) || 0;
@@ -564,11 +581,11 @@ function EntryPage() {
       pPlan,
       pActual,
       avail,
-      makingPct: makingPlan !== "" && mPlan > 0 ? (mActual / mPlan) * 100 : null,
+      makingPct: makingPlanV !== "" && mPlan > 0 ? (mActual / mPlan) * 100 : null,
       packingPct: packingPlan !== "" && pPlan > 0 ? (pActual / pPlan) * 100 : null,
       lossPct: availableMin !== "" && avail > 0 ? (totalDowntime / avail) * 100 : null,
     };
-  }, [makingPlan, makingActual, packingPlan, packingActual, availableMin, totalDowntime]);
+  }, [makingPlanV, makingActual, packingPlan, packingActual, availableMin, totalDowntime]);
 
   const isConflict = slot.status === "existing" && !editingSaved;
   const isNew = slot.status === "empty";
@@ -606,11 +623,14 @@ function EntryPage() {
     if (isNew && !canCreate) {
       return toast.error("Your role does not have permission to create a new entry.");
     }
-    const check = validateValues(values, {
-      production: canEditProduction,
-      downtime: canEditDowntime,
-      areaOwners: canEditAreaOwners,
-    });
+    const check = validateValues(
+      { ...values, makingPlan: makingPlanV, makingPlanCount: makingPlanCountV },
+      {
+        production: canEditProduction,
+        downtime: canEditDowntime,
+        areaOwners: canEditAreaOwners,
+      },
+    );
     if (check.count > 0) {
       setErrors(check);
       setErrorPulse((n) => n + 1);
@@ -639,10 +659,10 @@ function EntryPage() {
         supervisor: supervisor || null,
         operator: operator || null,
         comments: pick(canEditNotes, comments, orig.comments) || null,
-        making_plan: Number(pick(canEditProduction, makingPlan, orig.makingPlan)) || 0,
+        making_plan: Number(pick(canEditProduction, makingPlanV, orig.makingPlan)) || 0,
         making_actual: Number(pick(canEditProduction, makingActual, orig.makingActual)) || 0,
         making_plan_count: countOrNull(
-          pick(canEditProduction, makingPlanCount, orig.makingPlanCount),
+          pick(canEditProduction, makingPlanCountV, orig.makingPlanCount),
         ),
         making_actual_count: countOrNull(
           pick(canEditProduction, makingActualCount, orig.makingActualCount),
@@ -997,10 +1017,10 @@ function EntryPage() {
   // Lines that also count making in a unit (Settings › Production lines) get a
   // third row. Its % is plan vs actual in that unit, with its own target.
   const countUnit = lines.find((l) => l.id === lineId)?.making_count_unit?.trim() || null;
-  const countPlanN = Number(makingPlanCount);
+  const countPlanN = Number(makingPlanCountV);
   const countActualN = Number(makingActualCount);
   const countPct =
-    makingPlanCount.trim() !== "" &&
+    makingPlanCountV.trim() !== "" &&
     makingActualCount.trim() !== "" &&
     countPlanN > 0 &&
     Number.isFinite(countActualN)
@@ -1012,8 +1032,9 @@ function EntryPage() {
       unit: "kg",
       isCount: false,
       target: targets.makingPct as number | null,
-      plan: makingPlan,
+      plan: makingPlanV,
       setPlan: setMakingPlan,
+      locked: !!capPlan,
       actual: makingActual,
       setActual: setMakingActual,
       pct: liveSummary.makingPct,
@@ -1027,8 +1048,9 @@ function EntryPage() {
             unit: countUnit,
             isCount: true,
             target: targets.makingCountPct,
-            plan: makingPlanCount,
+            plan: makingPlanCountV,
             setPlan: setMakingPlanCount,
+            locked: capPlan?.count != null,
             actual: makingActualCount,
             setActual: setMakingActualCount,
             pct: countPct,
@@ -1044,6 +1066,7 @@ function EntryPage() {
       target: targets.packingPct as number | null,
       plan: packingPlan,
       setPlan: setPackingPlan,
+      locked: false,
       actual: packingActual,
       setActual: setPackingActual,
       pct: liveSummary.packingPct,
@@ -1512,15 +1535,19 @@ function EntryPage() {
                         error={fieldErr(o.planKey)}
                         shakeKey={shakeOf(fieldErr(o.planKey))}
                       >
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          aria-label={`${o.stage} plan, ${o.unit}`}
-                          className="h-11"
-                          value={o.plan}
-                          onChange={(e) => o.setPlan(e.target.value)}
-                          disabled={!canEditProduction}
-                        />
+                        {o.locked ? (
+                          <LockedPlan value={o.plan} label={`${o.stage} plan, ${o.unit}`} />
+                        ) : (
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            aria-label={`${o.stage} plan, ${o.unit}`}
+                            className="h-11"
+                            value={o.plan}
+                            onChange={(e) => o.setPlan(e.target.value)}
+                            disabled={!canEditProduction}
+                          />
+                        )}
                       </Field>
                       <Field
                         label="Actual"
@@ -1557,14 +1584,18 @@ function EntryPage() {
                         </span>
                       )}
                     </span>
-                    <GridInput
-                      label={`${o.stage} plan, ${o.unit}`}
-                      value={o.plan}
-                      onChange={o.setPlan}
-                      disabled={!canEditProduction}
-                      error={fieldErr(o.planKey)}
-                      shakeKey={shakeOf(fieldErr(o.planKey))}
-                    />
+                    {o.locked ? (
+                      <LockedPlan value={o.plan} label={`${o.stage} plan, ${o.unit}`} />
+                    ) : (
+                      <GridInput
+                        label={`${o.stage} plan, ${o.unit}`}
+                        value={o.plan}
+                        onChange={o.setPlan}
+                        disabled={!canEditProduction}
+                        error={fieldErr(o.planKey)}
+                        shakeKey={shakeOf(fieldErr(o.planKey))}
+                      />
+                    )}
                     <GridInput
                       label={`${o.stage} actual, ${o.unit}`}
                       value={o.actual}
@@ -1584,6 +1615,12 @@ function EntryPage() {
                   </Fragment>
                 ))}
               </div>
+
+              <CapacityNote
+                lineName={lines.find((l) => l.id === lineId)?.name ?? "This line"}
+                capacity={capacity}
+                shift={shift}
+              />
 
               {customFields.length > 0 && (
                 <div className="border-t border-border pt-3">
@@ -2302,5 +2339,49 @@ function SaveButton({
         )}
       </Button>
     </div>
+  );
+}
+
+// Making plan set by the line's capacity: shown, not typed.
+function LockedPlan({ value, label }: { value: string; label: string }) {
+  const n = Number(value);
+  return (
+    <div
+      role="status"
+      aria-label={`${label}: ${value}, set by the line's capacity`}
+      data-testid="locked-plan"
+      className="flex h-11 items-center gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 px-3 text-base font-semibold tabular-nums"
+    >
+      <Lock className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+      {Number.isFinite(n) ? n.toLocaleString("en-US") : value}
+    </div>
+  );
+}
+
+function CapacityNote({
+  lineName,
+  capacity,
+  shift,
+}: {
+  lineName: string;
+  capacity: LineCapacity | null;
+  shift: string;
+}) {
+  if (!capacity) {
+    return (
+      <p
+        data-testid="capacity-note"
+        className="rounded-lg bg-warning/10 px-3 py-2 text-xs font-medium text-warning-strong"
+      >
+        No making capacity for {lineName} yet, so the Making plan is typed. An admin sets it in
+        Settings › Production lines.
+      </p>
+    );
+  }
+  return (
+    <p data-testid="capacity-note" className="text-xs text-muted-foreground">
+      Making plan from {lineName}&rsquo;s capacity: {capacityLabel(capacity)}
+      {capacityWhy(capacity, shift)}. Only an admin changes it.
+    </p>
   );
 }
