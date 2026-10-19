@@ -3,6 +3,8 @@
 //     Availability × Performance × Quality and a row per machine;
 //   - the month's packed-kg forecast against packing actual.
 // The rules are in src/lib/oee.ts.
+// Each OEE card shows the period's OEE and, under it, the same OEE for the
+// last recorded day of the period (Ala, 19 Oct 2026).
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/dashboard/DashboardCards";
@@ -26,6 +28,51 @@ import { computeLineOee, oeeTone, type LineOee } from "@/lib/oee";
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
 const kg = (n: number) => Math.round(n).toLocaleString("en-US");
 const mins = (n: number) => Math.round(n).toLocaleString("en-US");
+
+const dayLabel = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+
+/** Under the period's OEE: the same OEE for the last day that has a record. */
+function LastDayOee({
+  day,
+  oee,
+  A,
+  P,
+  Q,
+  testId,
+}: {
+  day: string;
+  oee: number | null;
+  A: number | null;
+  P: number | null;
+  Q: number | null;
+  testId: string;
+}) {
+  const t = oeeTone(oee);
+  return (
+    <div
+      data-testid={testId}
+      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg bg-muted/60 px-3 py-2 text-[13px]"
+    >
+      <span className="min-w-0">
+        <span className="font-semibold">Last recorded day</span>
+        <span className="text-muted-foreground"> · {dayLabel(day)}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-2 tabular-nums">
+        <span className="text-xs text-muted-foreground">
+          A {pct(A)} · P {pct(P)} · Q {pct(Q)}
+        </span>
+        <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", TONE_CHIP[t])}>
+          {pct(oee)}
+        </span>
+      </span>
+    </div>
+  );
+}
 
 const TONE_TEXT = {
   good: "text-success-strong",
@@ -177,6 +224,24 @@ function LineOeeCard({
   const basis: OeeBasis = line.oee_basis === "count" && unit ? "count" : "kg";
   const r = lineOee({ entries, capacities, lineId: line.id, basis, lostByDay });
   const u = basis === "count" ? (unit ?? "") : "kg";
+  // The last day of the period this line has a making figure for.
+  const lastDay = entries
+    .filter(
+      (e) =>
+        e.line_id === line.id &&
+        (basis === "count" ? Number(e.making_actual_count) > 0 : Number(e.making_actual) > 0),
+    )
+    .reduce<string | null>((d, e) => (d === null || e.entry_date > d ? e.entry_date : d), null);
+  const last =
+    lastDay === null
+      ? null
+      : lineOee({
+          entries: entries.filter((e) => e.entry_date === lastDay),
+          capacities,
+          lineId: line.id,
+          basis,
+          lostByDay,
+        });
   return (
     <Card labelledBy="dash-line-oee">
       <div className="flex items-baseline justify-between gap-3">
@@ -198,6 +263,16 @@ function LineOeeCard({
             <OeeRing value={r.oee} testId="line-oee" />
             <ApqBars A={r.A} P={r.P} Q={r.Q} />
           </div>
+          {lastDay && last && last.oee !== null && (
+            <LastDayOee
+              day={lastDay}
+              oee={last.oee}
+              A={last.A}
+              P={last.P}
+              Q={last.Q}
+              testId="line-oee-last"
+            />
+          )}
           <p data-testid="line-oee-detail" className="text-xs text-muted-foreground">
             {kg(r.made)} {u} made against {kg(r.possible)} possible in {mins(r.runMin)} running
             minutes. {mins(r.lostMin)} min lost, {kg(r.reworkKg)} kg rework.
@@ -262,6 +337,43 @@ function PackingOeeCard({
       to,
     });
   }, [rowsQ.data, mEventsQ.data, events, machines, stoppages, lineId, entries, entryIds, from, to]);
+
+  // The last day of the period with machine shifts entered for this line.
+  const lastDay = useMemo(() => {
+    if (!rowsQ.data) return null;
+    const ids = new Set(machineIds);
+    let d: string | null = null;
+    for (const r of rowsQ.data)
+      if (
+        entryIds.has(r.entry_id) &&
+        ids.has(r.machine_id) &&
+        r.shifts > 0 &&
+        (d === null || r.entry_date > d)
+      )
+        d = r.entry_date;
+    return d;
+  }, [rowsQ.data, entryIds, machineIds]);
+  const lastOee: LineOee | null = useMemo(() => {
+    if (!rowsQ.data || !lastDay) return null;
+    const byId = new Map<string, MaintenanceEvent>();
+    for (const e of [...events, ...(mEventsQ.data ?? [])]) byId.set(e.id, e);
+    return computeLineOee({
+      machines,
+      machineDays: rowsQ.data.filter((r) => entryIds.has(r.entry_id) && r.entry_date === lastDay),
+      events: [...byId.values()],
+      stoppages,
+      lineId,
+      quality: entries
+        .filter((e) => e.entry_date === lastDay)
+        .map((e) => ({
+          entry_date: e.entry_date,
+          packing_actual: Number(e.packing_actual) || 0,
+          rework_packing: Number(e.rework_packing) || 0,
+        })),
+      from: lastDay,
+      to: lastDay,
+    });
+  }, [rowsQ.data, mEventsQ.data, events, machines, stoppages, lineId, entries, entryIds, lastDay]);
 
   const tone = oeeTone(oee?.oee ?? null);
   const ran = oee ? oee.machines.some((m) => m.plannedMin > 0) : false;
@@ -331,6 +443,16 @@ function PackingOeeCard({
               ))}
             </div>
           </div>
+          {lastDay && lastOee && lastOee.oee !== null && (
+            <LastDayOee
+              day={lastDay}
+              oee={lastOee.oee}
+              A={lastOee.A}
+              P={lastOee.P}
+              Q={lastOee.Q}
+              testId="oee-last"
+            />
+          )}
           <p className="text-xs text-muted-foreground">
             Lost {mins(oee.lostToStopsMin)} min to faults and line stops and{" "}
             {mins(oee.lostToSpeedMin)} min to running below ideal speed, out of{" "}
