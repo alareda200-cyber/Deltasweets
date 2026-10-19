@@ -3,13 +3,16 @@
 // total. Both are pasted here from Excel:
 //   - packed SKUs: a day's packing sheet, every line at once (production and
 //     admins). A line's Full-day entry takes its packing actual from them.
-//     A saved day opens in PackedSkusEditor: change, remove or add SKUs one
-//     by one or all at once.
+//     A saved day opens from the Packed days calendar in PackedSkusEditor.
+// Layout (approved mockup "Plan Adherence Redesign", 19 Oct 2026): pace hero
+// with the cumulative chart, line cards (filter), sortable SKU board with
+// status tabs and pages, packed-days calendar. Paste panels sit behind one
+// "Update data" menu.
 //   - forecast: code · name · quantity for the month (admins).
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ChevronDown, ClipboardPaste, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardPaste } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -22,11 +25,16 @@ import { can } from "@/lib/permissions";
 import { iso } from "@/lib/date-utils";
 import { logAudit } from "@/lib/audit";
 import { requireSession } from "@/lib/require-session";
-import { cn } from "@/lib/utils";
 import { linesQuery, nonProductionDaysQuery } from "@/lib/queries";
 import { packedSkusQuery, skuForecastsQuery, skusQuery, type Sku } from "@/lib/packing";
 import { parseForecastSheet, parsePackedSheet, type PackedRow } from "@/lib/sku-paste";
-import { PackedSkusEditor } from "@/components/entry/PackedSkusEditor";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { LineCards, PackedCalendar, PaceHero, SkuBoard } from "@/components/plan/PlanParts";
 import { ConfirmDialog } from "@/components/settings/shared";
 import { planAdherence } from "@/lib/plan-adherence";
 
@@ -52,8 +60,6 @@ export const Route = createFileRoute("/plan-adherence")({
 });
 
 const kg = (n: number) => Math.round(n).toLocaleString("en-US");
-const num = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
 const monthLabel = (m: string) =>
   new Date(`${m}-01T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 const dayLabel = (d: string) =>
@@ -62,14 +68,6 @@ const dayLabel = (d: string) =>
     day: "numeric",
     month: "short",
   });
-
-function tone(achieved: number | null, should: number): string {
-  if (achieved === null) return "bg-muted text-muted-foreground";
-  if (achieved >= 1) return "bg-success/15 text-success-strong";
-  return achieved >= should
-    ? "bg-success/15 text-success-strong"
-    : "bg-warning/15 text-warning-strong";
-}
 
 function PlanAdherencePage() {
   const search = Route.useSearch();
@@ -83,6 +81,7 @@ function PlanAdherencePage() {
   const monthStart = `${month}-01`;
   const [y, m] = month.split("-").map(Number);
   const monthEnd = iso(new Date(y, m, 0));
+  const shiftMonth = (by: number) => iso(new Date(y, m - 1 + by, 1)).slice(0, 7);
 
   const { data: lines } = useSuspenseQuery(linesQuery);
   const { data: skus = [] } = useQuery(skusQuery);
@@ -90,9 +89,7 @@ function PlanAdherencePage() {
   const packedQ = useQuery(packedSkusQuery(monthStart, monthEnd));
   const { data: closed = [] } = useQuery(nonProductionDaysQuery());
   const [lineFilter, setLineFilter] = useState("");
-  const [find, setFind] = useState("");
   const [panel, setPanel] = useState<"packed" | "forecast" | null>(null);
-  const [openDay, setOpenDay] = useState<string | null>(null);
   const [dropDay, setDropDay] = useState<{ day: string; lineId: string } | null>(null);
 
   const lineName = (id: string | null) =>
@@ -109,25 +106,13 @@ function PlanAdherencePage() {
       }),
     [month, forecastsQ.data, packedQ.data, skus, closed, today],
   );
-  const share = ad.workingDays > 0 ? ad.daysOver / ad.workingDays : 1;
-  const shownSkus = ad.skus.filter(
-    (r) =>
-      (!lineFilter || r.lineId === lineFilter) &&
-      (!find.trim() || r.code.includes(find.trim()) || r.name.includes(find.trim())),
+  const monthHasClosedDays = closed.some(
+    (d) => d.line_id === null && d.day >= monthStart && d.day <= monthEnd,
   );
-  const packedDays = useMemo(() => {
-    const by = new Map<string, { day: string; lineId: string; n: number; kg: number }>();
-    for (const p of packedQ.data ?? []) {
-      const k = `${p.day}|${p.line_id}`;
-      const cur = by.get(k) ?? { day: p.day, lineId: p.line_id, n: 0, kg: 0 };
-      cur.n++;
-      cur.kg += p.kg ?? 0;
-      by.set(k, cur);
-    }
-    return [...by.values()].sort(
-      (a, b) => b.day.localeCompare(a.day) || a.lineId.localeCompare(b.lineId),
-    );
-  }, [packedQ.data]);
+  const lastOver = [...ad.daily].reverse().find((d) => d.cumKg !== null)?.day;
+  const periodLabel = lastOver
+    ? `1–${Number(lastOver.slice(8, 10))} ${new Date(`${monthStart}T00:00:00`).toLocaleDateString("en-GB", { month: "short" })}`
+    : monthLabel(month);
 
   async function removeDay(day: string, lineId: string) {
     const { error } = await supabase
@@ -141,56 +126,97 @@ function PlanAdherencePage() {
     }
     void logAudit("plan.remove_packed_day", "packed_skus", `${lineId}|${day}`, { day });
     toast.success(`Removed ${lineName(lineId)} · ${dayLabel(day)}`);
-    if (openDay === `${day}|${lineId}`) setOpenDay(null);
     qc.invalidateQueries({ queryKey: ["packed-skus"] });
   }
 
   const loading = forecastsQ.isPending || packedQ.isPending;
   const failed = forecastsQ.isError || packedQ.isError;
+  const canUpdate = canPastePacked || canForecast;
 
   return (
     <AppShell>
       <div
-        className="mx-auto flex w-full max-w-6xl flex-col gap-4 md:gap-5"
+        className="mx-auto flex w-full max-w-6xl flex-col gap-3 md:gap-4"
         data-testid="plan-page"
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-sm text-muted-foreground">Forecast against packed, per SKU</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Forecast vs packed
+            </p>
             <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Plan adherence</h1>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-col gap-1 text-xs font-semibold">
-              Month
-              <Input
-                type="month"
-                aria-label="Month"
-                value={month}
-                onChange={(e) =>
-                  e.target.value && navigate({ search: { month: e.target.value }, replace: true })
-                }
-                className="h-11 w-44 md:h-9"
-              />
-            </label>
-            {canPastePacked && (
-              <Button
-                variant={panel === "packed" ? "default" : "outline"}
-                className="h-11 md:h-9"
-                onClick={() => setPanel(panel === "packed" ? null : "packed")}
+          <div className="flex items-center gap-2">
+            <div className="inline-flex h-11 items-center rounded-lg border border-border bg-card md:h-9">
+              <button
+                type="button"
+                aria-label="Previous month"
+                className="flex h-full w-10 items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => navigate({ search: { month: shiftMonth(-1) }, replace: true })}
               >
-                <ClipboardPaste className="mr-2 h-4 w-4" />
-                Paste packed SKUs
-              </Button>
-            )}
-            {canForecast && (
-              <Button
-                variant={panel === "forecast" ? "default" : "outline"}
-                className="h-11 md:h-9"
-                onClick={() => setPanel(panel === "forecast" ? null : "forecast")}
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <label className="relative">
+                <span className="block min-w-[5.5rem] text-center text-sm font-semibold">
+                  {new Date(`${monthStart}T00:00:00`).toLocaleDateString("en-GB", {
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </span>
+                <input
+                  type="month"
+                  aria-label="Month"
+                  value={month}
+                  onChange={(e) =>
+                    e.target.value && navigate({ search: { month: e.target.value }, replace: true })
+                  }
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
+              </label>
+              <button
+                type="button"
+                aria-label="Next month"
+                className="flex h-full w-10 items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => navigate({ search: { month: shiftMonth(1) }, replace: true })}
               >
-                <ClipboardPaste className="mr-2 h-4 w-4" />
-                Paste forecast
-              </Button>
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+            {canUpdate && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="h-11 md:h-9">
+                    <ClipboardPaste className="mr-1.5 h-4 w-4" />
+                    <span className="hidden sm:inline">Update data</span>
+                    <span className="sm:hidden">Update</span>
+                    <ChevronDown className="ml-1 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  {canPastePacked && (
+                    <DropdownMenuItem
+                      onSelect={() => setPanel("packed")}
+                      className="flex-col items-start"
+                    >
+                      <span className="font-medium">Paste packed SKUs</span>
+                      <span className="text-xs text-muted-foreground">
+                        A day&rsquo;s sheet, every line at once
+                      </span>
+                    </DropdownMenuItem>
+                  )}
+                  {canForecast && (
+                    <DropdownMenuItem
+                      onSelect={() => setPanel("forecast")}
+                      className="flex-col items-start"
+                    >
+                      <span className="font-medium">Paste forecast</span>
+                      <span className="text-xs text-muted-foreground">
+                        Code · name · line · qty for {monthLabel(month)}
+                      </span>
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         </div>
@@ -218,41 +244,14 @@ function PlanAdherencePage() {
           </p>
         ) : loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : ad.forecastKg === 0 && ad.packedKg === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+            No forecast and nothing packed in {monthLabel(month)} yet.
+            {canUpdate ? " Use Update data to paste them." : ""}
+          </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="plan-kpis">
-              <Kpi label="Forecast" value={`${kg(ad.forecastKg)} kg`} sub={monthLabel(month)} />
-              <Kpi
-                label="Packed"
-                value={`${kg(ad.packedKg)} kg`}
-                sub={ad.achieved === null ? "No forecast yet" : `${pct(ad.achieved)} of forecast`}
-              />
-              <Kpi
-                label="Where it should be by now"
-                value={`${kg(ad.shouldKg)} kg`}
-                sub={`${ad.daysOver} of ${ad.workingDays} working days`}
-              />
-              <Kpi
-                label="Needed per day"
-                value={ad.neededPerDay === null ? "—" : `${kg(ad.neededPerDay)} kg`}
-                sub={`${ad.daysLeft} ${ad.daysLeft === 1 ? "day" : "days"} left`}
-              />
-            </div>
-            {ad.forecastKg > 0 && (
-              <div
-                className="relative h-3 overflow-hidden rounded-full bg-muted"
-                aria-hidden="true"
-              >
-                <div
-                  className="absolute inset-y-0 left-0 rounded-full bg-primary"
-                  style={{ width: `${Math.min(100, (ad.packedKg / ad.forecastKg) * 100)}%` }}
-                />
-                <div
-                  className="absolute inset-y-0 w-0.5 bg-foreground/60"
-                  style={{ left: `${share * 100}%` }}
-                />
-              </div>
-            )}
+            <PaceHero ad={ad} periodLabel={periodLabel} monthHasClosedDays={monthHasClosedDays} />
             {ad.noWeight > 0 && (
               <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs font-medium text-warning-strong">
                 {ad.noWeight} forecast {ad.noWeight === 1 ? "SKU has" : "SKUs have"} no kg per unit
@@ -260,213 +259,29 @@ function PlanAdherencePage() {
                 kg totals.
               </p>
             )}
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)] md:items-start">
-              <section
-                className="rounded-xl border border-border bg-card"
-                aria-labelledby="by-line"
-              >
-                <h2 id="by-line" className="px-4 pt-3 text-base font-semibold">
-                  By line
-                </h2>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="plan-lines">
-                    <thead className="bg-muted/60 text-xs text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-semibold sm:px-4">Line</th>
-                        <th className="px-1.5 py-2 text-right font-semibold sm:px-2">Forecast</th>
-                        <th className="px-1.5 py-2 text-right font-semibold sm:px-2">Packed</th>
-                        <th className="px-3 py-2 text-right font-semibold sm:px-4">Achieved</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ad.lines.map((l) => (
-                        <tr key={l.lineId ?? "none"} className="border-t border-border">
-                          <td className="max-w-28 truncate px-3 py-2 font-semibold sm:max-w-none sm:px-4">
-                            {lineName(l.lineId)}
-                          </td>
-                          <td className="px-1.5 py-2 text-right tabular-nums sm:px-2">
-                            {kg(l.forecastKg)}
-                          </td>
-                          <td className="px-1.5 py-2 text-right tabular-nums sm:px-2">
-                            {kg(l.packedKg)}
-                          </td>
-                          <td className="px-3 py-2 text-right sm:px-4">
-                            <span
-                              className={cn(
-                                "rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
-                                tone(l.achieved, share),
-                              )}
-                            >
-                              {pct(l.achieved)}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                      {ad.lines.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-4 text-sm text-muted-foreground">
-                            No forecast and nothing packed in {monthLabel(month)} yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="px-4 py-2 text-xs text-muted-foreground">
-                  kg. Green: at or ahead of where it should be by now.
-                </p>
-              </section>
-
-              <section className="rounded-xl border border-border bg-card" aria-labelledby="by-sku">
-                <div className="flex flex-col gap-2 px-4 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h2 id="by-sku" className="text-base font-semibold">
-                    By SKU{" "}
-                    <span className="text-sm font-normal text-muted-foreground">
-                      · {shownSkus.length}
-                    </span>
-                  </h2>
-                  <div className="flex gap-2">
-                    <Input
-                      aria-label="Search SKU"
-                      placeholder="Code or name"
-                      value={find}
-                      onChange={(e) => setFind(e.target.value)}
-                      className="h-11 min-w-0 flex-1 md:h-9 md:w-44"
-                    />
-                    <select
-                      aria-label="Line"
-                      value={lineFilter}
-                      onChange={(e) => setLineFilter(e.target.value)}
-                      className="h-11 rounded-md border border-input bg-background px-2 text-sm md:h-9"
-                    >
-                      <option value="">All lines</option>
-                      {lines.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <ul className="mt-2" data-testid="plan-skus">
-                  {shownSkus.slice(0, 200).map((r) => (
-                    <li
-                      key={r.code}
-                      className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                          <span className="font-mono">{r.code}</span>
-                          <span>{lineName(r.lineId)}</span>
-                        </span>
-                        <span dir="rtl" className="block truncate text-right text-sm sm:text-left">
-                          {r.name || "—"}
-                        </span>
-                      </div>
-                      <div className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                        <span className="block text-sm font-semibold text-foreground">
-                          {num(r.packedQty)} / {num(r.forecastQty)}
-                        </span>
-                        {r.unit ?? "units"}
-                      </div>
-                      <span
-                        className={cn(
-                          "w-14 shrink-0 rounded-full py-0.5 text-center text-xs font-bold tabular-nums",
-                          tone(r.achieved, share),
-                        )}
-                      >
-                        {r.achieved === null ? "no fc" : pct(r.achieved)}
-                      </span>
-                    </li>
-                  ))}
-                  {shownSkus.length === 0 && (
-                    <li className="border-t border-border px-4 py-4 text-sm text-muted-foreground">
-                      No SKUs.
-                    </li>
-                  )}
-                </ul>
-                {shownSkus.length > 200 && (
-                  <p className="px-4 py-2 text-xs text-muted-foreground">
-                    {shownSkus.length - 200} more — search to narrow the list.
-                  </p>
-                )}
-              </section>
+            <LineCards
+              ad={ad}
+              lineName={lineName}
+              selected={lineFilter}
+              onPick={(id) => setLineFilter((cur) => (cur === id ? "" : id))}
+            />
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] md:items-start md:gap-4">
+              <SkuBoard
+                ad={ad}
+                lineName={lineName}
+                lineFilter={lineFilter}
+                onClearLine={() => setLineFilter("")}
+              />
+              <PackedCalendar
+                ad={ad}
+                packed={packedQ.data ?? []}
+                today={today}
+                lineName={lineName}
+                skus={skus}
+                canEdit={canPastePacked}
+                onRemoveDay={(day, lineId) => setDropDay({ day, lineId })}
+              />
             </div>
-
-            <section
-              className="rounded-xl border border-border bg-card"
-              aria-labelledby="packed-days"
-            >
-              <h2 id="packed-days" className="px-4 pt-3 text-base font-semibold">
-                Packed SKUs entered
-              </h2>
-              <ul data-testid="packed-days" className="mt-2">
-                {packedDays.map((d) => {
-                  const key = `${d.day}|${d.lineId}`;
-                  const open = openDay === key;
-                  return (
-                    <li key={key} className="border-t border-border">
-                      <div className="flex min-h-12 items-center gap-2 px-2 py-1 text-sm sm:px-4">
-                        <button
-                          type="button"
-                          aria-expanded={open}
-                          aria-label={`${open ? "Close" : "Open"} ${lineName(d.lineId)} ${dayLabel(d.day)}`}
-                          onClick={() => setOpenDay(open ? null : key)}
-                          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md px-2 text-left hover:bg-muted/60 md:min-h-9"
-                        >
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                              open && "rotate-180",
-                            )}
-                          />
-                          <span className="w-24 shrink-0 font-medium sm:w-28">
-                            {dayLabel(d.day)}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">{lineName(d.lineId)}</span>
-                          <span className="shrink-0 tabular-nums text-muted-foreground">
-                            {d.n} · {kg(d.kg)} kg
-                          </span>
-                        </button>
-                        {canPastePacked && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Remove ${lineName(d.lineId)} ${dayLabel(d.day)}`}
-                            className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive-strong md:h-9 md:w-9"
-                            onClick={() => setDropDay({ day: d.day, lineId: d.lineId })}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                      {open && (
-                        <PackedSkusEditor
-                          key={key}
-                          day={d.day}
-                          lineId={d.lineId}
-                          lineLabel={lineName(d.lineId)}
-                          dayLabel={dayLabel(d.day)}
-                          rows={(packedQ.data ?? []).filter(
-                            (p) => p.day === d.day && p.line_id === d.lineId,
-                          )}
-                          skus={skus}
-                          canEdit={canPastePacked}
-                          title="SKUs"
-                          className="bg-muted/30 px-3 pb-3 pt-2 sm:px-4"
-                        />
-                      )}
-                    </li>
-                  );
-                })}
-                {packedDays.length === 0 && (
-                  <li className="border-t border-border px-4 py-4 text-sm text-muted-foreground">
-                    Nothing pasted for {monthLabel(month)} yet.
-                  </li>
-                )}
-              </ul>
-            </section>
           </>
         )}
       </div>
@@ -484,16 +299,6 @@ function PlanAdherencePage() {
         onConfirm={() => (dropDay ? removeDay(dropDay.day, dropDay.lineId) : undefined)}
       />
     </AppShell>
-  );
-}
-
-function Kpi({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-3 md:p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-lg font-bold tabular-nums md:text-xl">{value}</p>
-      <p className="text-xs text-muted-foreground">{sub}</p>
-    </div>
   );
 }
 

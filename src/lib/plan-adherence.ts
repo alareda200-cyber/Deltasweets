@@ -8,10 +8,15 @@
 // A working day is a day not closed for the whole company in Settings ›
 // Non-production days. A day counts as over once it has packed SKUs, or when
 // it is before today.
+//   status per SKU, the daily cumulative series and the month-end projection
+//   feed the redesigned page (approved mockup "Plan Adherence Redesign").
 
 import type { PackedSku, Sku, SkuForecast } from "@/lib/packing";
 import type { NonProductionDay } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
+
+/** Where a SKU stands against where it should be by now. */
+export type SkuStatus = "ontrack" | "behind" | "notstarted" | "unplanned";
 
 export interface SkuAdherence {
   code: string;
@@ -24,6 +29,9 @@ export interface SkuAdherence {
   packedKg: number;
   /** packed ÷ forecast in the SKU's unit; null without a forecast. */
   achieved: number | null;
+  /** unplanned: packed but not in the forecast · notstarted: forecast, nothing
+   *  packed · ontrack: achieved ≥ the share of working days over · behind. */
+  status: SkuStatus;
 }
 
 export interface LineAdherence {
@@ -47,6 +55,22 @@ export interface Adherence {
   noWeight: number;
   skus: SkuAdherence[];
   lines: LineAdherence[];
+  /** daysOver ÷ workingDays: the part of the forecast due by now. */
+  share: number;
+  /** Packed kg in SKUs that have no forecast this month. */
+  unplannedKg: number;
+  unplannedCount: number;
+  /** Packed kg at the same daily rate for the whole month. */
+  projectionKg: number | null;
+  /** Every day of the month: packed kg that day, packed kg so far (null once
+   *  the day isn't over) and the plan's pace by that day (working days only). */
+  daily: {
+    day: string;
+    working: boolean;
+    packedKg: number;
+    cumKg: number | null;
+    paceKg: number;
+  }[];
 }
 
 export function monthDays(month: string): string[] {
@@ -79,6 +103,7 @@ export function planAdherence(args: {
         forecastKg: 0,
         packedKg: 0,
         achieved: null,
+        status: "notstarted",
       };
       rows.set(code, r);
     }
@@ -101,6 +126,7 @@ export function planAdherence(args: {
   }
   for (const r of rows.values())
     r.achieved = r.forecastQty > 0 ? r.packedQty / r.forecastQty : null;
+  // status needs the share of the month over, set below
 
   const lineMap = new Map<string | null, LineAdherence>();
   for (const r of rows.values()) {
@@ -126,11 +152,45 @@ export function planAdherence(args: {
       .filter((d) => d.line_id === null && !d.closed_from && !d.closed_to)
       .map((d) => d.day),
   );
-  const days = monthDays(args.month).filter((d) => !off.has(d));
+  const all = monthDays(args.month);
+  const days = all.filter((d) => !off.has(d));
   const packedDays = new Set(args.packed.map((p) => p.day));
-  const daysOver = days.filter((d) => d < args.today || packedDays.has(d)).length;
+  const isOver = (d: string) => d < args.today || packedDays.has(d);
+  const daysOver = days.filter(isOver).length;
   const daysLeft = days.length - daysOver;
-  const shouldKg = days.length > 0 ? (forecastKg * daysOver) / days.length : forecastKg;
+  const share = days.length > 0 ? daysOver / days.length : 1;
+  const shouldKg = forecastKg * share;
+
+  for (const r of rows.values()) {
+    r.status =
+      r.forecastQty <= 0
+        ? "unplanned"
+        : r.packedQty <= 0
+          ? "notstarted"
+          : (r.achieved ?? 0) >= share
+            ? "ontrack"
+            : "behind";
+  }
+  const unplanned = [...rows.values()].filter((r) => r.status === "unplanned");
+
+  const byDay = new Map<string, number>();
+  for (const p of args.packed) byDay.set(p.day, (byDay.get(p.day) ?? 0) + (p.kg ?? 0));
+  const lastOver = [...all].reverse().find(isOver) ?? null;
+  let cum = 0;
+  let working = 0;
+  const daily = all.map((day) => {
+    const kg = byDay.get(day) ?? 0;
+    cum += kg;
+    if (!off.has(day)) working++;
+    return {
+      day,
+      working: !off.has(day),
+      packedKg: kg,
+      cumKg: lastOver !== null && day <= lastOver ? cum : null,
+      paceKg: days.length > 0 ? (forecastKg * working) / days.length : 0,
+    };
+  });
+
   return {
     forecastKg,
     packedKg,
@@ -145,5 +205,10 @@ export function planAdherence(args: {
       (a, b) => (b.forecastKg ?? 0) - (a.forecastKg ?? 0) || b.packedKg - a.packedKg,
     ),
     lines: [...lineMap.values()].sort((a, b) => b.forecastKg - a.forecastKg),
+    share,
+    unplannedKg: unplanned.reduce((s, r) => s + r.packedKg, 0),
+    unplannedCount: unplanned.length,
+    projectionKg: daysOver > 0 ? (packedKg / daysOver) * days.length : null,
+    daily,
   };
 }
