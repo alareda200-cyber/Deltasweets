@@ -17,6 +17,7 @@ import { CollapsibleRow } from "@/components/entry/CollapsibleRow";
 import { DOWNTIME_GRID_COLS, DowntimeRowEditor } from "@/components/entry/DowntimeRowEditor";
 import { EntrySection } from "@/components/entry/EntrySection";
 import { PackingMachinesBlock } from "@/components/entry/PackingMachinesBlock";
+import { PackedSkusEditor } from "@/components/entry/PackedSkusEditor";
 import { JellyJar, Odometer, useGummyBurst, useTilt, type JarMood } from "@/components/motion";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -67,7 +68,13 @@ import {
   maintenanceStoppagesQuery,
   type EntryHistoryRow,
 } from "@/lib/queries";
-import { machinesForLine, packedFor, packedSkusQuery, packingMachinesQuery } from "@/lib/packing";
+import {
+  machinesForLine,
+  packedFor,
+  packedSkusQuery,
+  packingMachinesQuery,
+  skusQuery,
+} from "@/lib/packing";
 import { computeLineOee } from "@/lib/oee";
 import { iso } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
@@ -436,6 +443,9 @@ function EntryPage() {
   // actual from them, locked. The database keeps the saved entry in step.
   const { data: packedRows = [] } = useQuery(packedSkusQuery(date, date));
   const packed = shift === "DAY" ? packedFor(packedRows, lineId, date) : null;
+  // The day's packed SKUs can be edited right here (PackedSkusEditor).
+  const { data: skus = [] } = useQuery(skusQuery);
+  const linePacked = packedRows.filter((p) => p.line_id === lineId && p.day === date);
   const skuKg = packed ? packed.kg : null;
   const packingActualV = skuKg !== null ? String(skuKg) : packingActual;
 
@@ -1813,11 +1823,28 @@ function EntryPage() {
 
               {packed && (
                 <p data-testid="packed-note" className="text-xs text-muted-foreground">
-                  Packing actual from Plan adherence: {packed.kg.toLocaleString("en-US")} kg in{" "}
-                  {packed.count} {packed.count === 1 ? "SKU" : "SKUs"} packed on this day
+                  Packing actual from the packed SKUs: {packed.kg.toLocaleString("en-US")} kg in{" "}
+                  {packed.count} {packed.count === 1 ? "SKU" : "SKUs"}
                   {packed.missing > 0 ? ` (${packed.missing} without a weight, left out)` : ""}.
-                  Change them there.
                 </p>
+              )}
+
+              {shift === "DAY" && lineId && (skus.length > 0 || linePacked.length > 0) && (
+                <PackedSkusEditor
+                  key={`${lineId}|${date}`}
+                  day={date}
+                  lineId={lineId}
+                  lineLabel={lines.find((l) => l.id === lineId)?.name ?? "Line"}
+                  dayLabel={new Date(`${date}T00:00:00`).toLocaleDateString("en-GB", {
+                    weekday: "short",
+                    day: "numeric",
+                    month: "short",
+                  })}
+                  rows={linePacked}
+                  skus={skus}
+                  canEdit={canEditProduction}
+                  className="border-t border-border pt-3"
+                />
               )}
 
               {lineMachines.length > 0 && (

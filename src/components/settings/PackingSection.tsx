@@ -1,8 +1,9 @@
 // Settings › Packing (November 2026 monthly upgrade, approved mockup):
 //   - packing machines and their ideal speed (bags per minute), used by the
 //     packing OEE;
-//   - the SKU list with kg per unit, used when SKUs are pasted into the daily
-//     entry.
+//   - the SKU list with kg per unit, used when the forecast and the packed
+//     SKUs are pasted on the Plan adherence page. SKUs can be added, pasted,
+//     edited, deactivated and deleted here.
 // Everything here belongs to the company in view; admins edit it.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -238,6 +239,15 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
   const [editingKg, setEditingKg] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
   const [pasting, setPasting] = useState(false);
+  const [editing, setEditing] = useState<Sku | null>(null);
+  const [toDelete, setToDelete] = useState<Sku | null>(null);
+  // Several SKUs at once: pick some (or every one matching), then change the
+  // line, set kg per unit, deactivate/activate or delete them together.
+  const [sel, setSel] = useState<Set<string>>(() => new Set());
+  const [bulkLine, setBulkLine] = useState("");
+  const [bulkKg, setBulkKg] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDelete, setBulkDelete] = useState(false);
   const lineName = (id: string | null) =>
     id ? (lines.find((l) => l.id === id)?.name ?? "—") : "—";
   const missing = skus.filter((s) => s.kg_per_unit == null).length;
@@ -251,6 +261,78 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
         (!onlyMissing || s.kg_per_unit == null),
     );
   }, [skus, find, lineFilter, onlyMissing]);
+
+  const picked = skus.filter((s) => sel.has(s.id));
+  const allShownPicked = shown.length > 0 && shown.every((s) => sel.has(s.id));
+  function toggle(id: string, on: boolean) {
+    setSel((cur) => {
+      const n = new Set(cur);
+      if (on) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
+  // In chunks: a long id list doesn't fit one request URL.
+  async function bulk(
+    action: string,
+    run: (ids: string[]) => PromiseLike<{ error: { message: string } | null }>,
+    detail: Record<string, unknown>,
+    done: string,
+  ) {
+    const ids = picked.map((s) => s.id);
+    if (ids.length === 0) return false;
+    setBulkBusy(true);
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const { error } = await run(ids.slice(i, i + 100));
+        if (error) throw error;
+      }
+      void logAudit(action, "sku", ids[0], {
+        ...detail,
+        count: ids.length,
+        codes: picked.map((s) => s.code),
+      });
+      toast.success(done);
+      qc.invalidateQueries({ queryKey: ["skus"] });
+      return true;
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : String((err as { message?: string }).message),
+      );
+      return false;
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+  async function bulkSetLine() {
+    if (!bulkLine) return toast.error("Pick the line.");
+    const ok = await bulk(
+      "packing.bulk_line_skus",
+      (ids) => supabase.from("skus").update({ line_id: bulkLine }).in("id", ids),
+      { line_id: bulkLine },
+      `${picked.length} SKUs moved to ${lineName(bulkLine)}`,
+    );
+    if (ok) setBulkLine("");
+  }
+  async function bulkSetKg() {
+    const k = Number(bulkKg);
+    if (!(k > 0)) return toast.error("kg per unit must be more than 0.");
+    const ok = await bulk(
+      "packing.bulk_kg_skus",
+      (ids) => supabase.from("skus").update({ kg_per_unit: k }).in("id", ids),
+      { kg_per_unit: k },
+      `${picked.length} SKUs set to ${kgFmt(k)} kg`,
+    );
+    if (ok) setBulkKg("");
+  }
+  async function bulkActive(active: boolean) {
+    await bulk(
+      active ? "packing.bulk_activate_skus" : "packing.bulk_deactivate_skus",
+      (ids) => supabase.from("skus").update({ is_active: active }).in("id", ids),
+      { is_active: active },
+      `${picked.length} SKUs ${active ? "activated" : "deactivated"}`,
+    );
+  }
 
   async function saveKg(s: Sku) {
     const raw = (editingKg[s.id] ?? "").trim();
@@ -280,7 +362,7 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
               </span>
             </h2>
             <p className="text-sm text-muted-foreground">
-              kg per unit turns the cartons pasted in the daily entry into packed kg. It is read
+              kg per unit turns the quantities pasted on the Plan adherence page into kg. It is read
               from the name (bags × grams) and can be changed here.
             </p>
           </div>
@@ -292,6 +374,7 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
               onClick={() => {
                 setPasting((v) => !v);
                 setAdding(false);
+                setEditing(null);
               }}
             >
               Paste SKUs
@@ -302,6 +385,7 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
               onClick={() => {
                 setAdding((v) => !v);
                 setPasting(false);
+                setEditing(null);
               }}
             >
               Add SKU
@@ -309,7 +393,17 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
           </div>
         </div>
         {isError && <p className="text-sm text-destructive-strong">The SKUs didn&rsquo;t load.</p>}
-        {adding && <AddSku lines={lines} skus={skus} qc={qc} onDone={() => setAdding(false)} />}
+        {adding && <SkuForm lines={lines} skus={skus} qc={qc} onDone={() => setAdding(false)} />}
+        {editing && (
+          <SkuForm
+            key={editing.id}
+            lines={lines}
+            skus={skus}
+            qc={qc}
+            sku={editing}
+            onDone={() => setEditing(null)}
+          />
+        )}
         {pasting && (
           <PasteSkus lines={lines} skus={skus} qc={qc} onDone={() => setPasting(false)} />
         )}
@@ -346,22 +440,146 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
           </label>
         </div>
 
+        {sel.size > 0 && (
+          <div
+            className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2 sm:flex-row sm:flex-wrap sm:items-center"
+            data-testid="sku-bulk"
+          >
+            <span className="flex items-center gap-2 px-1 text-sm font-semibold">
+              {sel.size} selected
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 px-2 text-xs md:h-8"
+                onClick={() => setSel(new Set())}
+              >
+                Clear
+              </Button>
+            </span>
+            <span className="flex gap-1.5 sm:ml-auto">
+              <select
+                aria-label="Move selected to line"
+                className={cn(selectCls, "md:w-36")}
+                value={bulkLine}
+                onChange={(e) => setBulkLine(e.target.value)}
+              >
+                <option value="">Change line…</option>
+                {lines.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 md:h-9"
+                disabled={bulkBusy || !bulkLine}
+                onClick={bulkSetLine}
+              >
+                Move
+              </Button>
+            </span>
+            <span className="flex gap-1.5">
+              <Input
+                aria-label="kg per unit for selected"
+                inputMode="decimal"
+                placeholder="kg per unit"
+                value={bulkKg}
+                onChange={(e) => setBulkKg(e.target.value)}
+                className="h-11 w-full text-right tabular-nums sm:w-28 md:h-9"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 md:h-9"
+                disabled={bulkBusy || !bulkKg.trim()}
+                onClick={bulkSetKg}
+              >
+                Set kg
+              </Button>
+            </span>
+            <span className="flex gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 flex-1 md:h-9"
+                disabled={bulkBusy}
+                onClick={() => bulkActive(picked.every((s) => !s.is_active))}
+              >
+                {picked.every((s) => !s.is_active) ? "Activate" : "Deactivate"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 flex-1 border-destructive/40 text-destructive-strong md:h-9"
+                disabled={bulkBusy}
+                onClick={() => setBulkDelete(true)}
+              >
+                Delete {sel.size}
+              </Button>
+            </span>
+          </div>
+        )}
+
         <div className="space-y-1.5" data-testid="sku-list">
+          {shown.length > 0 && (
+            <label className="flex min-h-11 items-center gap-2 rounded-lg bg-muted/60 px-3 text-sm font-semibold md:min-h-9">
+              <input
+                type="checkbox"
+                aria-label="Select all matching SKUs"
+                className="h-4 w-4"
+                checked={allShownPicked}
+                onChange={(e) =>
+                  setSel((cur) => {
+                    const n = new Set(cur);
+                    for (const s of shown) {
+                      if (e.target.checked) n.add(s.id);
+                      else n.delete(s.id);
+                    }
+                    return n;
+                  })
+                }
+              />
+              Select all {shown.length === skus.length ? "" : "matching "}({shown.length})
+            </label>
+          )}
           {shown.slice(0, SHOWN).map((s) => {
             const draft = editingKg[s.id];
             return (
               <div
                 key={s.id}
-                className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2 text-sm sm:flex-row sm:items-center"
+                className={cn(
+                  "flex flex-col gap-2 rounded-lg border border-border px-3 py-2 text-sm sm:flex-row sm:items-center",
+                  sel.has(s.id) && "border-primary/40 bg-primary/5",
+                )}
               >
                 <div className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${s.code}`}
+                      className="h-4 w-4 shrink-0"
+                      checked={sel.has(s.id)}
+                      onChange={(e) => toggle(s.id, e.target.checked)}
+                    />
                     <CodeChip>{s.code}</CodeChip>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="min-w-0 truncate text-xs text-muted-foreground">
                       {lineName(s.line_id)}
                       {s.unit ? ` · ${s.unit}` : ""}
                     </span>
                     {!s.is_active && <InactiveChip />}
+                    <span className="ml-auto flex shrink-0 items-center sm:hidden">
+                      <SkuActions
+                        sku={s}
+                        onEdit={() => {
+                          setEditing(s);
+                          setAdding(false);
+                          setPasting(false);
+                        }}
+                        onDelete={() => setToDelete(s)}
+                      />
+                    </span>
                   </span>
                   <span dir="rtl" className="mt-0.5 block truncate text-right sm:text-left">
                     {s.name || <span className="text-muted-foreground">no name</span>}
@@ -389,6 +607,17 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
                   >
                     Save
                   </Button>
+                  <span className="hidden items-center sm:flex">
+                    <SkuActions
+                      sku={s}
+                      onEdit={() => {
+                        setEditing(s);
+                        setAdding(false);
+                        setPasting(false);
+                      }}
+                      onDelete={() => setToDelete(s)}
+                    />
+                  </span>
                 </div>
               </div>
             );
@@ -403,51 +632,149 @@ function SkusCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
           )}
         </div>
       </CardContent>
+      <ConfirmDialog
+        open={!!toDelete}
+        onOpenChange={(o) => !o && setToDelete(null)}
+        title={`Delete ${toDelete?.code ?? ""}?`}
+        description={
+          <p>
+            It leaves the SKU list. Packed rows already saved keep their code and kg; a forecast
+            that has it keeps the quantity but no longer counts it in kg. To stop using it and keep
+            its weight, deactivate it instead (Edit › Active).
+          </p>
+        }
+        onConfirm={async () => {
+          if (!toDelete) return;
+          const { error } = await supabase.from("skus").delete().eq("id", toDelete.id);
+          if (error) {
+            toast.error(error.message);
+            return false;
+          }
+          void logAudit("packing.delete_sku", "sku", toDelete.id, {
+            code: toDelete.code,
+            name: toDelete.name,
+          });
+          if (editing?.id === toDelete.id) setEditing(null);
+          toggle(toDelete.id, false);
+          qc.invalidateQueries({ queryKey: ["skus"] });
+        }}
+      />
+      <ConfirmDialog
+        open={bulkDelete}
+        onOpenChange={setBulkDelete}
+        title={`Delete ${sel.size} SKUs?`}
+        description={
+          <p>
+            They leave the SKU list. Packed rows already saved keep their code and kg; a forecast
+            that has them keeps the quantity but no longer counts them in kg. To stop using them and
+            keep their weight, deactivate them instead.
+          </p>
+        }
+        onConfirm={async () => {
+          const ok = await bulk(
+            "packing.bulk_delete_skus",
+            (ids) => supabase.from("skus").delete().in("id", ids),
+            {},
+            `${picked.length} SKUs deleted`,
+          );
+          if (!ok) return false;
+          if (editing && sel.has(editing.id)) setEditing(null);
+          setSel(new Set());
+        }}
+      />
     </Card>
   );
 }
 
-function AddSku({
+function SkuActions({
+  sku,
+  onEdit,
+  onDelete,
+}: {
+  sku: Sku;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <IconButton icon={Pencil} label={`Edit ${sku.code}`} onClick={onEdit} />
+      <IconButton
+        icon={Trash2}
+        label={`Delete ${sku.code}`}
+        tone="destructive"
+        onClick={onDelete}
+      />
+    </>
+  );
+}
+
+// Add a SKU, or edit one (code fixed: the forecast and packed rows refer to
+// it by code).
+function SkuForm({
   lines,
   skus,
   qc,
+  sku,
   onDone,
 }: {
   lines: ProductionLine[];
   skus: Sku[];
   qc: QC;
+  sku?: Sku;
   onDone: () => void;
 }) {
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [unit, setUnit] = useState("كرتونة");
-  const [lineId, setLineId] = useState(lines[0]?.id ?? "");
-  const [kg, setKg] = useState("");
+  const [code, setCode] = useState(sku?.code ?? "");
+  const [name, setName] = useState(sku?.name ?? "");
+  const [unit, setUnit] = useState(sku ? (sku.unit ?? "") : "كرتونة");
+  const [lineId, setLineId] = useState(sku ? (sku.line_id ?? "") : (lines[0]?.id ?? ""));
+  const [kg, setKg] = useState(sku?.kg_per_unit == null ? "" : String(sku.kg_per_unit));
+  const [active, setActive] = useState(sku?.is_active ?? true);
   const fromName = kgPerUnitFromName(name, unit);
 
   async function save() {
     const c = code.trim();
     if (!c) return toast.error("Enter the item code.");
-    if (skus.some((s) => s.code === c)) return toast.error(`${c} is already in the list.`);
+    if (!sku && skus.some((s) => s.code === c)) return toast.error(`${c} is already in the list.`);
     const k = kg.trim() === "" ? fromName : Number(kg);
     if (k !== null && !(k > 0)) return toast.error("kg per unit must be more than 0.");
-    const { error } = await supabase.from("skus").insert({
-      code: c,
-      name: name.trim(),
+    const row = {
+      name: name.trim().replace(/\s+/g, " "),
       unit: unit.trim() || null,
       line_id: lineId || null,
       kg_per_unit: k,
-    });
+    };
+    const { error } = sku
+      ? await supabase
+          .from("skus")
+          .update({ ...row, is_active: active })
+          .eq("id", sku.id)
+      : await supabase.from("skus").insert({ ...row, code: c });
     if (error) return toast.error(error.message);
-    void logAudit("packing.add_sku", "sku", c, { name, kg_per_unit: k });
-    toast.success(`${c} added`);
+    void logAudit(sku ? "packing.update_sku" : "packing.add_sku", "sku", sku?.id ?? c, {
+      code: c,
+      ...row,
+      ...(sku ? { is_active: active } : {}),
+    });
+    toast.success(sku ? `${c} saved` : `${c} added`);
     qc.invalidateQueries({ queryKey: ["skus"] });
     onDone();
   }
 
   return (
-    <div className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
-      <TextField label="Item code" value={code} onChange={setCode} placeholder="403009999" />
+    <div
+      className="grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2"
+      data-testid={sku ? "sku-edit" : "sku-add"}
+    >
+      {sku ? (
+        <div className="space-y-1.5">
+          <Label>Item code</Label>
+          <p className="flex h-11 items-center md:h-9">
+            <CodeChip>{sku.code}</CodeChip>
+          </p>
+        </div>
+      ) : (
+        <TextField label="Item code" value={code} onChange={setCode} placeholder="403009999" />
+      )}
       <TextField
         label="Name"
         value={name}
@@ -456,13 +783,14 @@ function AddSku({
       />
       <TextField label="Unit" value={unit} onChange={setUnit} />
       <div className="space-y-1.5">
-        <Label htmlFor="sku-line">Line</Label>
+        <Label htmlFor={sku ? "sku-edit-line" : "sku-line"}>Line</Label>
         <select
-          id="sku-line"
+          id={sku ? "sku-edit-line" : "sku-line"}
           className={selectCls}
           value={lineId}
           onChange={(e) => setLineId(e.target.value)}
         >
+          {!lineId && <option value="">—</option>}
           {lines.map((l) => (
             <option key={l.id} value={l.id}>
               {l.name}
@@ -479,9 +807,20 @@ function AddSku({
           fromName !== null ? `From the name: ${kgFmt(fromName)} kg` : "The name doesn't say it"
         }
       />
-      <div className="flex items-end gap-2">
+      <div className="flex flex-wrap items-end gap-2">
+        {sku && (
+          <label className="mr-2 flex h-11 items-center gap-2 text-sm md:h-9">
+            <input
+              type="checkbox"
+              checked={active}
+              onChange={(e) => setActive(e.target.checked)}
+              className="h-4 w-4"
+            />
+            Active
+          </label>
+        )}
         <Button type="button" className="h-11 md:h-9" onClick={save}>
-          Add SKU
+          {sku ? "Save" : "Add SKU"}
         </Button>
         <Button type="button" variant="outline" className="h-11 md:h-9" onClick={onDone}>
           Cancel
@@ -508,6 +847,9 @@ function PasteSkus({
   const [busy, setBusy] = useState(false);
   const known = new Set(skus.map((s) => s.code));
   const lineByName = new Map(lines.map((l) => [l.name.toLowerCase().replace(/\s+/g, ""), l.id]));
+  // The SKU sheet writes Sour Tube as "Tube".
+  const sour = lineByName.get("sourtube");
+  if (sour && !lineByName.has("tube")) lineByName.set("tube", sour);
   const rows = text
     .split(/\r?\n/)
     .map((l) => l.split("\t").map((c) => c.trim()))

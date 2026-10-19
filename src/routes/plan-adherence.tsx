@@ -3,11 +3,13 @@
 // total. Both are pasted here from Excel:
 //   - packed SKUs: a day's packing sheet, every line at once (production and
 //     admins). A line's Full-day entry takes its packing actual from them.
+//     A saved day opens in PackedSkusEditor: change, remove or add SKUs one
+//     by one or all at once.
 //   - forecast: code · name · quantity for the month (admins).
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ClipboardPaste, Trash2 } from "lucide-react";
+import { ChevronDown, ClipboardPaste, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -24,6 +26,8 @@ import { cn } from "@/lib/utils";
 import { linesQuery, nonProductionDaysQuery } from "@/lib/queries";
 import { packedSkusQuery, skuForecastsQuery, skusQuery, type Sku } from "@/lib/packing";
 import { parseForecastSheet, parsePackedSheet, type PackedRow } from "@/lib/sku-paste";
+import { PackedSkusEditor } from "@/components/entry/PackedSkusEditor";
+import { ConfirmDialog } from "@/components/settings/shared";
 import { planAdherence } from "@/lib/plan-adherence";
 
 interface Search {
@@ -88,6 +92,8 @@ function PlanAdherencePage() {
   const [lineFilter, setLineFilter] = useState("");
   const [find, setFind] = useState("");
   const [panel, setPanel] = useState<"packed" | "forecast" | null>(null);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const [dropDay, setDropDay] = useState<{ day: string; lineId: string } | null>(null);
 
   const lineName = (id: string | null) =>
     id ? (lines.find((l) => l.id === id)?.name ?? "—") : "No line";
@@ -129,9 +135,13 @@ function PlanAdherencePage() {
       .delete()
       .eq("day", day)
       .eq("line_id", lineId);
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
     void logAudit("plan.remove_packed_day", "packed_skus", `${lineId}|${day}`, { day });
     toast.success(`Removed ${lineName(lineId)} · ${dayLabel(day)}`);
+    if (openDay === `${day}|${lineId}`) setOpenDay(null);
     qc.invalidateQueries({ queryKey: ["packed-skus"] });
   }
 
@@ -384,29 +394,64 @@ function PlanAdherencePage() {
                 Packed SKUs entered
               </h2>
               <ul data-testid="packed-days" className="mt-2">
-                {packedDays.map((d) => (
-                  <li
-                    key={`${d.day}|${d.lineId}`}
-                    className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-1.5 text-sm"
-                  >
-                    <span className="w-28 shrink-0 font-medium">{dayLabel(d.day)}</span>
-                    <span className="min-w-0 flex-1 truncate">{lineName(d.lineId)}</span>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {d.n} · {kg(d.kg)} kg
-                    </span>
-                    {canPastePacked && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove ${lineName(d.lineId)} ${dayLabel(d.day)}`}
-                        className="h-11 w-11 text-muted-foreground hover:text-destructive-strong md:h-9 md:w-9"
-                        onClick={() => removeDay(d.day, d.lineId)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </li>
-                ))}
+                {packedDays.map((d) => {
+                  const key = `${d.day}|${d.lineId}`;
+                  const open = openDay === key;
+                  return (
+                    <li key={key} className="border-t border-border">
+                      <div className="flex min-h-12 items-center gap-2 px-2 py-1 text-sm sm:px-4">
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          aria-label={`${open ? "Close" : "Open"} ${lineName(d.lineId)} ${dayLabel(d.day)}`}
+                          onClick={() => setOpenDay(open ? null : key)}
+                          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md px-2 text-left hover:bg-muted/60 md:min-h-9"
+                        >
+                          <ChevronDown
+                            className={cn(
+                              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                              open && "rotate-180",
+                            )}
+                          />
+                          <span className="w-24 shrink-0 font-medium sm:w-28">
+                            {dayLabel(d.day)}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{lineName(d.lineId)}</span>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">
+                            {d.n} · {kg(d.kg)} kg
+                          </span>
+                        </button>
+                        {canPastePacked && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Remove ${lineName(d.lineId)} ${dayLabel(d.day)}`}
+                            className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive-strong md:h-9 md:w-9"
+                            onClick={() => setDropDay({ day: d.day, lineId: d.lineId })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                      {open && (
+                        <PackedSkusEditor
+                          key={key}
+                          day={d.day}
+                          lineId={d.lineId}
+                          lineLabel={lineName(d.lineId)}
+                          dayLabel={dayLabel(d.day)}
+                          rows={(packedQ.data ?? []).filter(
+                            (p) => p.day === d.day && p.line_id === d.lineId,
+                          )}
+                          skus={skus}
+                          canEdit={canPastePacked}
+                          title="SKUs"
+                          className="bg-muted/30 px-3 pb-3 pt-2 sm:px-4"
+                        />
+                      )}
+                    </li>
+                  );
+                })}
                 {packedDays.length === 0 && (
                   <li className="border-t border-border px-4 py-4 text-sm text-muted-foreground">
                     Nothing pasted for {monthLabel(month)} yet.
@@ -417,6 +462,19 @@ function PlanAdherencePage() {
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={!!dropDay}
+        onOpenChange={(o) => !o && setDropDay(null)}
+        title={dropDay ? `Remove ${lineName(dropDay.lineId)} · ${dayLabel(dropDay.day)}?` : ""}
+        description={
+          <p>
+            All its packed SKUs are removed. The day&rsquo;s entry keeps the packing actual it has
+            now; change it there if it should change too.
+          </p>
+        }
+        confirmLabel="Remove"
+        onConfirm={() => (dropDay ? removeDay(dropDay.day, dropDay.lineId) : undefined)}
+      />
     </AppShell>
   );
 }
