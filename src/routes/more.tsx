@@ -9,7 +9,7 @@ import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-context";
-import { can } from "@/lib/permissions";
+import { can, type Permission } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { requireSession } from "@/lib/require-session";
 import {
@@ -63,6 +63,8 @@ type Item =
       name: string;
       sub?: string;
       to: "/users" | "/audit-log" | "/recap" | "/replay" | "/replay-requests" | "/plan-adherence";
+      /** Shown only to roles that may open it. */
+      permission?: Permission;
     }
   | { kind: "settings"; key: string; name: string; sub?: string; section: SettingsSection };
 
@@ -129,6 +131,7 @@ function MorePage() {
             name: "Plan adherence",
             sub: "Forecast against packed, per SKU",
             to: "/plan-adherence",
+            permission: "plan.view",
           },
           {
             kind: "route",
@@ -136,6 +139,7 @@ function MorePage() {
             name: "Month recap",
             sub: "This month in 7 cards",
             to: "/recap",
+            permission: "recap.view",
           },
           {
             kind: "route",
@@ -143,6 +147,7 @@ function MorePage() {
             name: "Replay a day",
             sub: "Watch a line's day, faults and all",
             to: "/replay",
+            permission: "recap.view",
           },
         ],
       },
@@ -316,8 +321,17 @@ function MorePage() {
         },
       );
     }
-    return out;
+    // Stories the role can't open are left out; an empty group goes too.
+    return out
+      .map((g) => ({
+        ...g,
+        items: g.items.filter(
+          (i) => i.kind !== "route" || !i.permission || can(role, i.permission),
+        ),
+      }))
+      .filter((g) => g.items.length > 0);
   }, [
+    role,
     canUsers,
     canSettings,
     lines,

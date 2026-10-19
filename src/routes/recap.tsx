@@ -38,7 +38,7 @@ export const Route = createFileRoute("/recap")({
   beforeLoad: requireSession,
   loader: ({ context }) => context.queryClient.ensureQueryData(linesQuery),
   component: () => (
-    <RequireAuth requirePermission="dashboard.view">
+    <RequireAuth requirePermission="recap.view">
       <RecapPage />
     </RequireAuth>
   ),

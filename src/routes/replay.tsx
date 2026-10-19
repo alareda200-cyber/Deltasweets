@@ -42,7 +42,7 @@ export const Route = createFileRoute("/replay")({
   beforeLoad: requireSession,
   loader: ({ context }) => context.queryClient.ensureQueryData(linesQuery),
   component: () => (
-    <RequireAuth requirePermission="dashboard.view">
+    <RequireAuth requirePermission="recap.view">
       <ReplayPage />
     </RequireAuth>
   ),

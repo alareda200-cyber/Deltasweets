@@ -53,7 +53,7 @@ export const Route = createFileRoute("/plan-adherence")({
   beforeLoad: requireSession,
   loader: ({ context }) => context.queryClient.ensureQueryData(linesQuery),
   component: () => (
-    <RequireAuth requirePermission="dashboard.view">
+    <RequireAuth requirePermission="plan.view">
       <PlanAdherencePage />
     </RequireAuth>
   ),

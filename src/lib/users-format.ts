@@ -163,10 +163,13 @@ export function statusChangeBlock(
 /** Rows of the "What each role can do" matrix — marks come from can(). */
 export const ROLE_MATRIX_ROWS: { label: string; permission: Permission }[] = [
   { label: "See the dashboard", permission: "dashboard.view" },
+  { label: "Plan adherence", permission: "plan.view" },
+  { label: "Month recap and Replay", permission: "recap.view" },
   { label: "Enter output and rework", permission: "entry.editProduction" },
   { label: "Log downtime", permission: "entry.editDowntime" },
   { label: "Score area owners", permission: "entry.editAreaOwners" },
   { label: "Open maintenance", permission: "maintenance.view" },
+  { label: "Log and edit faults", permission: "maintenance.edit" },
   { label: "Settings", permission: "settings.manage" },
   { label: "Users and audit log", permission: "users.manage" },
 ];

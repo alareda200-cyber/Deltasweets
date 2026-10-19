@@ -48,7 +48,9 @@ export function PushNotificationToggle() {
   const needsHomeScreen = mounted && iosNeedsHomeScreen();
 
   const allowed: PushTopic[] = [
-    ...(can(role, "dashboard.viewMaintenanceCard") ? (["fault"] as const) : []),
+    ...(can(role, "dashboard.viewMaintenanceCard") || can(role, "maintenance.view")
+      ? (["fault"] as const)
+      : []),
     ...(can(role, "entry.view") ? (["entry"] as const) : []),
   ];
 

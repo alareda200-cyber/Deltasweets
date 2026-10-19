@@ -41,7 +41,7 @@ const nav = [
   { to: "/", label: "Dashboard", permission: "dashboard.view" as const },
   { to: "/entry", label: "Daily entry", permission: "entry.view" as const },
   { to: "/maintenance", label: "Maintenance", permission: "maintenance.view" as const },
-  { to: "/plan-adherence", label: "Plan adherence", permission: "dashboard.view" as const },
+  { to: "/plan-adherence", label: "Plan adherence", permission: "plan.view" as const },
   { to: "/users", label: "Users", permission: "users.manage" as const },
   { to: "/audit-log", label: "Audit log", permission: "users.manage" as const },
   { to: "/settings", label: "Settings", permission: "settings.manage" as const },

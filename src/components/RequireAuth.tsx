@@ -1,13 +1,19 @@
 import { type ReactNode, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
-import { can, type Permission } from "@/lib/permissions";
+import { can, homeFor, type Permission } from "@/lib/permissions";
 import { shouldSuppressRedirect } from "@/lib/nav-loop-guard";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 
-export function RequireAuth({ children, requirePermission }: { children: ReactNode; requirePermission?: Permission }) {
+export function RequireAuth({
+  children,
+  requirePermission,
+}: {
+  children: ReactNode;
+  requirePermission?: Permission;
+}) {
   const { session, profile, role, loading, profileLoading } = useAuth();
   const navigate = useNavigate();
 
@@ -16,6 +22,22 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
       navigate({ to: "/login" });
     }
   }, [loading, session, navigate]);
+
+  // Signing in lands on the dashboard; a role without it (maintenance) goes
+  // to the first page it may open instead of "Access denied".
+  const home = homeFor(role);
+  const sendHome =
+    !loading &&
+    !profileLoading &&
+    !!session &&
+    !!profile &&
+    !profile.must_change_password &&
+    requirePermission === "dashboard.view" &&
+    !can(role, "dashboard.view") &&
+    home !== "/";
+  useEffect(() => {
+    if (sendHome && !shouldSuppressRedirect(home)) navigate({ to: home, replace: true });
+  }, [sendHome, home, navigate]);
 
   if (loading || profileLoading) {
     // profileLoading tracks the async profiles-table fetch separately from
@@ -41,7 +63,8 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
         <ShieldAlert className="h-8 w-8 text-destructive" />
         <h1 className="text-lg font-semibold">Access denied</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Your account has no profile on record. Contact an administrator if you believe this is a mistake.
+          Your account has no profile on record. Contact an administrator if you believe this is a
+          mistake.
         </p>
       </div>
     );
@@ -56,12 +79,17 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
             <CardDescription>Your password must be changed before you continue.</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChangePasswordForm submitLabel="Set Password" onSuccess={() => navigate({ to: "/" })} />
+            <ChangePasswordForm
+              submitLabel="Set Password"
+              onSuccess={() => navigate({ to: "/" })}
+            />
           </CardContent>
         </Card>
       </div>
     );
   }
+
+  if (sendHome) return null;
 
   if (requirePermission && !can(role, requirePermission)) {
     return (
@@ -69,7 +97,8 @@ export function RequireAuth({ children, requirePermission }: { children: ReactNo
         <ShieldAlert className="h-8 w-8 text-destructive" />
         <h1 className="text-lg font-semibold">Access denied</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Your role does not have permission to view this page. Contact an administrator if you believe this is a mistake.
+          Your role does not have permission to view this page. Contact an administrator if you
+          believe this is a mistake.
         </p>
       </div>
     );
