@@ -165,7 +165,7 @@ export function LastDayCard({
             sub={
               variance.state === "none"
                 ? "At or above plan"
-                : `${kg(variance.short)} short − ${kg(variance.rework)} rework${variance.state === "covered" ? " · rework covers it" : ""}`
+                : `${kg(variance.short)} short − ${kg(variance.rework)} rework${variance.wip > 0 ? ` − ${kg(variance.wip)} WIP` : ""}${variance.state === "covered" ? (variance.wip > 0 ? " · rework and WIP cover it" : " · rework covers it") : ""}`
             }
             value={`${kg(variance.net)} kg`}
             tone="plain"

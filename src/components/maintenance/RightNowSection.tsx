@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import type { MaintenanceEvent } from "@/lib/queries";
 import { TYPE_LABELS, typeBadgeVariant } from "@/lib/maintenance-format";
 import { useNow } from "@/hooks/use-now";
+import { useQuery } from "@tanstack/react-query";
+import { packingMachinesQuery } from "@/lib/packing";
 import { LinePulse } from "./LinePulse";
 import { CriticalImpact, isCriticalDefect } from "./CriticalImpact";
 
@@ -153,6 +155,8 @@ export function RightNowSection({
   allEvents?: MaintenanceEvent[];
 }) {
   const sorted = sortOpenFaults(openFaults);
+  const { data: machines = [] } = useQuery(packingMachinesQuery);
+  const machineName = new Map(machines.map((m) => [m.id, m.name]));
   const stopping = sorted.filter((e) => e.stops_line);
   const running = sorted.filter((e) => !e.stops_line);
   const linesStopped = new Set(stopping.map((e) => e.line_id ?? "unassigned"));
@@ -259,6 +263,11 @@ export function RightNowSection({
                             Stopping the line ·{" "}
                           </span>
                         )}
+                        {e.machine_id && machineName.get(e.machine_id) && (
+                          <span className="font-semibold text-warning-strong">
+                            {machineName.get(e.machine_id)} stopped ·{" "}
+                          </span>
+                        )}
                         {(e.production_lines?.name ?? "—") + " · " + TYPE_LABELS[e.type]}
                       </span>
                       {e.severity_label && (
@@ -285,7 +294,11 @@ export function RightNowSection({
                     <span
                       className={`hidden text-sm md:block ${e.stops_line ? "font-semibold text-destructive-strong" : "text-muted-foreground"}`}
                     >
-                      {e.stops_line ? "Stopping the line" : "Line running"}
+                      {e.stops_line
+                        ? "Stopping the line"
+                        : e.machine_id && machineName.get(e.machine_id)
+                          ? `${machineName.get(e.machine_id)} stopped`
+                          : "Line running"}
                     </span>
                     <span className="shrink-0 text-right md:text-left">
                       <span className="block text-sm font-semibold tabular-nums">

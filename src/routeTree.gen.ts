@@ -15,6 +15,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReplayRequestsRouteImport } from './routes/replay-requests'
 import { Route as ReplayRouteImport } from './routes/replay'
 import { Route as RecapRouteImport } from './routes/recap'
+import { Route as PlanAdherenceRouteImport } from './routes/plan-adherence'
 import { Route as MoreRouteImport } from './routes/more'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as LoginRouteImport } from './routes/login'
@@ -50,6 +51,11 @@ const ReplayRoute = ReplayRouteImport.update({
 const RecapRoute = RecapRouteImport.update({
   id: '/recap',
   path: '/recap',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlanAdherenceRoute = PlanAdherenceRouteImport.update({
+  id: '/plan-adherence',
+  path: '/plan-adherence',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MoreRoute = MoreRouteImport.update({
@@ -90,6 +96,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/plan-adherence': typeof PlanAdherenceRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
   '/replay-requests': typeof ReplayRequestsRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/plan-adherence': typeof PlanAdherenceRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
   '/replay-requests': typeof ReplayRequestsRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
   '/more': typeof MoreRoute
+  '/plan-adherence': typeof PlanAdherenceRoute
   '/recap': typeof RecapRoute
   '/replay': typeof ReplayRoute
   '/replay-requests': typeof ReplayRequestsRoute
@@ -135,6 +144,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/plan-adherence'
     | '/recap'
     | '/replay'
     | '/replay-requests'
@@ -149,6 +159,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/plan-adherence'
     | '/recap'
     | '/replay'
     | '/replay-requests'
@@ -163,6 +174,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/maintenance'
     | '/more'
+    | '/plan-adherence'
     | '/recap'
     | '/replay'
     | '/replay-requests'
@@ -178,6 +190,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MaintenanceRoute: typeof MaintenanceRoute
   MoreRoute: typeof MoreRoute
+  PlanAdherenceRoute: typeof PlanAdherenceRoute
   RecapRoute: typeof RecapRoute
   ReplayRoute: typeof ReplayRoute
   ReplayRequestsRoute: typeof ReplayRequestsRoute
@@ -228,6 +241,13 @@ declare module '@tanstack/react-router' {
       path: '/recap'
       fullPath: '/recap'
       preLoaderRoute: typeof RecapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plan-adherence': {
+      id: '/plan-adherence'
+      path: '/plan-adherence'
+      fullPath: '/plan-adherence'
+      preLoaderRoute: typeof PlanAdherenceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/more': {
@@ -282,6 +302,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MaintenanceRoute: MaintenanceRoute,
   MoreRoute: MoreRoute,
+  PlanAdherenceRoute: PlanAdherenceRoute,
   RecapRoute: RecapRoute,
   ReplayRoute: ReplayRoute,
   ReplayRequestsRoute: ReplayRequestsRoute,

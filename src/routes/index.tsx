@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { OeeSection } from "@/components/dashboard/PackingCards";
 import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, FileDown, Inbox, Loader2, Plus } from "lucide-react";
@@ -647,6 +648,12 @@ function PeriodBody({
   const entrySplit = splitDowntime(downtimes, kindOf);
   const mSplit = machineSplit(dayStops);
   const split = addSplits(entrySplit, mSplit);
+  // Minutes lost per entry day, as "Time lost" counts them — for the line OEE.
+  const lostByDay = new Map<string, number>();
+  for (const e of list) {
+    lostByDay.set(e.entry_date, (lostByDay.get(e.entry_date) ?? 0) + (Number(e.downtime_min) || 0));
+  }
+  for (const st of dayStops) lostByDay.set(st.day, (lostByDay.get(st.day) ?? 0) + st.minutes);
   const reasons = mergeReasonRows(
     reasonRows(downtimes, kindOf, severityLevels, productionAreas),
     machineReasonRows(dayStops),
@@ -807,6 +814,17 @@ function PeriodBody({
       )}
 
       <OutputTrendCard data={trend} targets={targets} />
+
+      <OeeSection
+        line={line}
+        from={from}
+        to={to}
+        entries={list}
+        events={mEventsQ.data ?? []}
+        stoppages={stoppagesQ.data ?? []}
+        rangeText={rangeShort}
+        lostByDay={lostByDay}
+      />
 
       <div
         data-pdf-section="time"
@@ -1110,14 +1128,15 @@ function varianceStrip(t: Totals): NonNullable<KpiTileProps["variance"]> {
     { pct: netShare, className: "bg-destructive" },
     { pct: 100 - netShare, className: "bg-warning" },
   ];
-  const math = `${kg(v.short)} short of plan − ${kg(v.rework)} rework`;
+  const wipText = v.wip > 0 ? ` − ${kg(v.wip)} WIP` : "";
+  const math = `${kg(v.short)} short of plan − ${kg(v.rework)} rework${wipText}`;
   if (v.state === "covered") {
     return {
       label,
       valueText: "0 kg",
       quiet: false,
-      detail: `${math} · rework covers it`,
-      mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework`,
+      detail: `${math} · ${v.wip > 0 ? "rework and WIP cover it" : "rework covers it"}`,
+      mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework${wipText}`,
       segments,
       barLabel: `Short of plan ${kg(v.short)} kilograms, all covered by ${kg(v.rework)} kilograms of rework`,
     };
@@ -1127,9 +1146,9 @@ function varianceStrip(t: Totals): NonNullable<KpiTileProps["variance"]> {
     valueText: `${kg(v.net)} kg`,
     quiet: false,
     detail: `${math} · ${pct1(v.netOfPlan ?? 0)} of plan`,
-    mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework`,
+    mobileDetail: `${kg(v.short)} − ${kg(v.rework)} rework${wipText}`,
     segments,
-    barLabel: `Short of plan ${kg(v.short)} kilograms: rework ${kg(v.rework)}, not explained ${kg(v.net)}`,
+    barLabel: `Short of plan ${kg(v.short)} kilograms: rework ${kg(v.rework)}${v.wip > 0 ? `, WIP ${kg(v.wip)}` : ""}, not explained ${kg(v.net)}`,
   };
 }
 

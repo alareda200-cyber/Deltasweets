@@ -8,6 +8,7 @@ export const SECTION_IDS = [
   "reasons",
   "fields",
   "targets",
+  "packing",
   "technicians",
   "departments",
   "categories",
@@ -71,6 +72,13 @@ export const SECTION_META: Record<SectionId, SectionMeta> = {
     description:
       "What the Dashboard and Daily entry judge against: adherence to plan, the time-lost alert and an optional rework limit.",
     keywords: "target goal adherence plan loss time lost rework limit 90",
+  },
+  packing: {
+    group: "Production setup",
+    title: "Packing",
+    description:
+      "Packing machines and their ideal speed, and the SKU list with kg per unit. The monthly forecast is on the Plan adherence page.",
+    keywords: "packing oee machine rovema twist sku carton speed weight",
   },
   technicians: {
     group: "Maintenance lists",
@@ -154,7 +162,10 @@ export const SECTION_META: Record<SectionId, SectionMeta> = {
 
 // Desktop sidebar grouping (the Settings board).
 export const DESKTOP_GROUPS: { title: string; items: (SectionId | "users")[] }[] = [
-  { title: "Production setup", items: ["lines", "areas", "reasons", "fields", "targets"] },
+  {
+    title: "Production setup",
+    items: ["lines", "areas", "reasons", "fields", "targets", "packing"],
+  },
   {
     title: "Maintenance lists",
     items: [
@@ -175,7 +186,10 @@ export const DESKTOP_GROUPS: { title: string; items: (SectionId | "users")[] }[]
 // rewrite history are pulled into their own "careful" group at the bottom.
 export const MOBILE_GROUPS: { title: string; items: (SectionId | "users")[]; careful?: boolean }[] =
   [
-    { title: "Production setup", items: ["lines", "areas", "reasons", "fields", "targets"] },
+    {
+      title: "Production setup",
+      items: ["lines", "areas", "reasons", "fields", "targets", "packing"],
+    },
     {
       title: "Maintenance lists",
       items: ["technicians", "departments", "categories", "types", "severity", "rootCauses"],

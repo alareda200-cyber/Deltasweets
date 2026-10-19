@@ -9,9 +9,12 @@ import { iso } from "@/lib/date-utils";
 // once the table crosses the cap — which is how four open faults became
 // "no open faults" on the Dashboard.
 const PAGE = 1000;
-async function selectAllRows<T>(
+export async function selectAllRows<T>(
   build: () => {
-    range: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>;
+    range: (
+      from: number,
+      to: number,
+    ) => PromiseLike<{ data: T[] | null; error: PostgrestError | null }>;
   },
 ): Promise<T[]> {
   const out: T[] = [];
@@ -33,6 +36,9 @@ export interface ProductionLine {
   is_active: boolean;
   /** The unit making is also counted in (e.g. "pallets"); null = kg only. */
   making_count_unit: string | null;
+  /** The line's making OEE in kg or in making_count_unit (Settings › Lines).
+   * Missing before 20261019120000_packing_oee. */
+  oee_basis?: "kg" | "count";
   /** Jammy, Delta… The database only returns the lines of the company in view. */
   company_id: string;
 }
@@ -225,6 +231,8 @@ export interface DailyEntry {
   rework_cooking: number;
   rework_making: number;
   rework_packing: number;
+  /** Made but not packed yet, kg (20261019120000_packing_oee). */
+  wip_kg?: number;
   custom_fields: Record<string, number | string>;
   created_at: string;
   updated_at: string;
@@ -545,6 +553,11 @@ export interface MaintenanceEvent {
   // forward-only from app_settings.root_cause_tracking_start_date, never
   // back-filled.
   root_cause_id: string | null;
+  // References packing_machines.id — a fault that stopped ONE packing machine
+  // (Rovema 2, Twist 3…), not the line: stops_line is false and it is never
+  // part of a stoppage. It lowers that machine's availability in the packing
+  // OEE only. See 20261019120000_packing_oee.sql.
+  machine_id: string | null;
 }
 
 export interface MaintenanceStoppage {
@@ -802,7 +815,12 @@ export async function syncStoppageAggregate(stoppageId: string): Promise<void> {
 // default to mechanical (checked first below), including the
 // all-equal-counts case.
 export function majorityMaintenanceType(events: { type: MaintenanceType }[]): MaintenanceType {
-  const counts: Record<MaintenanceType, number> = { mechanical: 0, electrical: 0, preventive: 0, refrigeration: 0 };
+  const counts: Record<MaintenanceType, number> = {
+    mechanical: 0,
+    electrical: 0,
+    preventive: 0,
+    refrigeration: 0,
+  };
   for (const e of events) counts[e.type]++;
   let winner: MaintenanceType = "mechanical";
   for (const t of ["electrical", "preventive", "refrigeration"] as const) {
@@ -817,7 +835,10 @@ export function majorityMaintenanceType(events: { type: MaintenanceType }[]): Ma
 // this matters (double-counting avoidance).
 export function stoppageDurationMinutes(stoppage: MaintenanceStoppage): number {
   const startedMs = new Date(stoppage.started_at).getTime();
-  const endMs = stoppage.status === "resolved" && stoppage.resolved_at ? new Date(stoppage.resolved_at).getTime() : Date.now();
+  const endMs =
+    stoppage.status === "resolved" && stoppage.resolved_at
+      ? new Date(stoppage.resolved_at).getTime()
+      : Date.now();
   return Math.max(0, (endMs - startedMs) / 60_000);
 }
 
@@ -828,7 +849,8 @@ export function stoppageDurationMinutes(stoppage: MaintenanceStoppage): number {
 // needs — this one only backs the stoppage-grouping helpers below.
 function eventDurationMinutes(e: MaintenanceEvent): number {
   const startedMs = new Date(e.started_at).getTime();
-  const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+  const endMs =
+    e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
   return Math.max(0, (endMs - startedMs) / 60_000);
 }
 
@@ -952,31 +974,66 @@ export function maintenanceEventsAsDowntimes(
   departments: Department[],
   downtimeTypes: DowntimeType[],
 ): EntryDowntime[] {
-  const mechanicalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "mechanical maintenance")?.id ?? null;
-  const electricalDeptId = departments.find((d) => d.name.trim().toLowerCase() === "electrical maintenance")?.id ?? null;
+  const mechanicalDeptId =
+    departments.find((d) => d.name.trim().toLowerCase() === "mechanical maintenance")?.id ?? null;
+  const electricalDeptId =
+    departments.find((d) => d.name.trim().toLowerCase() === "electrical maintenance")?.id ?? null;
   // Resolves to null (→ "Unclassified" in MaintenanceDowntimeCard's nameOf())
   // until a "Preventive Maintenance" department row exists in Settings —
   // same fallback behavior mechanical/electrical had before their
   // departments were seeded.
-  const preventiveDeptId = departments.find((d) => d.name.trim().toLowerCase() === "preventive maintenance")?.id ?? null;
+  const preventiveDeptId =
+    departments.find((d) => d.name.trim().toLowerCase() === "preventive maintenance")?.id ?? null;
   // Refrigeration faults are handled by an external contractor and are
   // unplanned failures (not scheduled maintenance), so they're classified
   // like mechanical/electrical below — same "Unclassified if the
   // master-data row is missing" fallback as the other department lookups.
-  const refrigerationDeptId = departments.find((d) => d.name.trim().toLowerCase() === "refrigeration maintenance")?.id ?? null;
+  const refrigerationDeptId =
+    departments.find((d) => d.name.trim().toLowerCase() === "refrigeration maintenance")?.id ??
+    null;
   // Mechanical/electrical events are unplanned equipment failures/repairs;
   // preventive events are scheduled maintenance by definition, so they're
   // classified as Planned downtime instead — same "Unclassified if the
   // master-data row is missing" fallback as the department lookups above.
-  const unplannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "unplanned")?.id ?? null;
-  const plannedTypeId = downtimeTypes.find((t) => t.name.trim().toLowerCase() === "planned")?.id ?? null;
+  const unplannedTypeId =
+    downtimeTypes.find((t) => t.name.trim().toLowerCase() === "unplanned")?.id ?? null;
+  const plannedTypeId =
+    downtimeTypes.find((t) => t.name.trim().toLowerCase() === "planned")?.id ?? null;
 
-  function typeMeta(type: MaintenanceType): { paretoReasonName: string; departmentId: string | null; downtimeTypeId: string | null } {
-    if (type === "mechanical") return { paretoReasonName: "Mechanical Maintenance", departmentId: mechanicalDeptId, downtimeTypeId: unplannedTypeId };
-    if (type === "electrical") return { paretoReasonName: "Electrical Maintenance", departmentId: electricalDeptId, downtimeTypeId: unplannedTypeId };
-    if (type === "preventive") return { paretoReasonName: "Preventive Maintenance", departmentId: preventiveDeptId, downtimeTypeId: plannedTypeId };
-    if (type === "refrigeration") return { paretoReasonName: "Refrigeration Maintenance", departmentId: refrigerationDeptId, downtimeTypeId: unplannedTypeId };
-    return { paretoReasonName: "Preventive Maintenance", departmentId: preventiveDeptId, downtimeTypeId: plannedTypeId };
+  function typeMeta(type: MaintenanceType): {
+    paretoReasonName: string;
+    departmentId: string | null;
+    downtimeTypeId: string | null;
+  } {
+    if (type === "mechanical")
+      return {
+        paretoReasonName: "Mechanical Maintenance",
+        departmentId: mechanicalDeptId,
+        downtimeTypeId: unplannedTypeId,
+      };
+    if (type === "electrical")
+      return {
+        paretoReasonName: "Electrical Maintenance",
+        departmentId: electricalDeptId,
+        downtimeTypeId: unplannedTypeId,
+      };
+    if (type === "preventive")
+      return {
+        paretoReasonName: "Preventive Maintenance",
+        departmentId: preventiveDeptId,
+        downtimeTypeId: plannedTypeId,
+      };
+    if (type === "refrigeration")
+      return {
+        paretoReasonName: "Refrigeration Maintenance",
+        departmentId: refrigerationDeptId,
+        downtimeTypeId: unplannedTypeId,
+      };
+    return {
+      paretoReasonName: "Preventive Maintenance",
+      departmentId: preventiveDeptId,
+      downtimeTypeId: plannedTypeId,
+    };
   }
 
   // Builds one EntryDowntime row from a single standalone event — shared by
@@ -985,7 +1042,8 @@ export function maintenanceEventsAsDowntimes(
   // guarantees it exists in the DB).
   function rowFromEvent(e: MaintenanceEvent): EntryDowntime {
     const startedMs = new Date(e.started_at).getTime();
-    const endMs = e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
+    const endMs =
+      e.status === "resolved" && e.resolved_at ? new Date(e.resolved_at).getTime() : Date.now();
     const meta = typeMeta(e.type);
     return {
       id: `maintenance-${e.id}`,
@@ -1161,7 +1219,8 @@ export const appSettingsQuery = () =>
         .select("reliability_start_date, root_cause_tracking_start_date")
         .eq("id", true)
         .maybeSingle();
-      if (error || !data) return { reliability_start_date: null, root_cause_tracking_start_date: null };
+      if (error || !data)
+        return { reliability_start_date: null, root_cause_tracking_start_date: null };
       return {
         reliability_start_date: data.reliability_start_date,
         root_cause_tracking_start_date: data.root_cause_tracking_start_date,
@@ -1326,7 +1385,6 @@ export const unplannedFaultCountQuery = (lineId: string | null, from: string, to
       return count ?? 0;
     },
   });
-
 
 // ---------------------------------------------------------------------------
 // Settings page

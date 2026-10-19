@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { useCompany } from "@/lib/companies";
+import { OeeBasisSection } from "./OeeBasisSection";
 import { CapacitySection } from "./CapacitySection";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -238,6 +239,8 @@ export function LinesSection({
       </Card>
 
       <CapacitySection lines={lines} />
+
+      <OeeBasisSection lines={lines} />
 
       <ConfirmDialog
         open={!!pendingDelete}

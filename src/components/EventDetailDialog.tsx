@@ -34,6 +34,7 @@ import {
 import { Trash2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
+import { machinesForLine, packingMachinesQuery } from "@/lib/packing";
 import { useAuth } from "@/lib/auth-context";
 import { can } from "@/lib/permissions";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
@@ -82,6 +83,13 @@ export function EventDetailDialog({
   const [severityLabel, setSeverityLabel] = useState("");
   const [type, setType] = useState<MaintenanceType>("mechanical");
   const [stopsLine, setStopsLine] = useState(true);
+  // A packing machine that stopped on its own (machine_id), not the line.
+  const [machineId, setMachineId] = useState("");
+  const { data: allMachines = [] } = useQuery(packingMachinesQuery);
+  const lineMachines =
+    event && !event.stoppage_id && event.line_id ? machinesForLine(allMachines, event.line_id) : [];
+  const machineName = allMachines.find((m) => m.id === machineId)?.name ?? null;
+  const impact: "stop" | "run" | "machine" = machineId ? "machine" : stopsLine ? "stop" : "run";
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [rootCauseId, setRootCauseId] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -106,9 +114,7 @@ export function EventDetailDialog({
   // Same rule as assignableTechnicians above: a cause already assigned to
   // this event stays selectable even if it's since been deactivated in
   // Settings — only new picks are restricted to is_active causes.
-  const assignableRootCauses = rootCauses.filter(
-    (c) => c.is_active || c.id === rootCauseId,
-  );
+  const assignableRootCauses = rootCauses.filter((c) => c.is_active || c.id === rootCauseId);
 
   // Reset the edit form whenever a *different* event is opened — keyed on
   // id (not the whole event object) so a background refetch of the events
@@ -123,6 +129,7 @@ export function EventDetailDialog({
       setSeverityLabel(event.severity_label ?? "");
       setType(event.type);
       setStopsLine(event.stops_line);
+      setMachineId(event.machine_id ?? "");
       setTechnicianIds(event.technician_ids);
       setRootCauseId(event.root_cause_id ?? "");
     }
@@ -163,6 +170,7 @@ export function EventDetailDialog({
         severity_label: string | null;
         technician_ids: string[];
         stops_line: boolean;
+        machine_id?: string | null;
         type: MaintenanceType;
         root_cause_id: string | null;
       } = {
@@ -173,10 +181,13 @@ export function EventDetailDialog({
         resolved_at: status === "resolved" ? new Date(resolvedAt).toISOString() : null,
         severity_label: severityLabel.trim() || null,
         technician_ids: technicianIds,
-        stops_line: stopsLine,
+        stops_line: machineId ? false : stopsLine,
         type,
         root_cause_id: rootCauseId || null,
       };
+      // Only sent when it is or was set, so editing works on a database
+      // without 20261019120000_packing_oee.
+      if (machineId || event.machine_id) updatePayload.machine_id = machineId || null;
       if (becomingResolved) {
         // Attribute the resolution to whoever is saving it right now — only
         // on the open/in_progress -> resolved transition, so re-saving an
@@ -387,7 +398,8 @@ export function EventDetailDialog({
                   </Select>
                 ) : (
                   <p className="mt-1">
-                    {rootCauses.find((c) => c.id === event.root_cause_id)?.name ?? "— not classified —"}
+                    {rootCauses.find((c) => c.id === event.root_cause_id)?.name ??
+                      "— not classified —"}
                   </p>
                 )}
               </div>
@@ -421,31 +433,76 @@ export function EventDetailDialog({
                 )}
               </div>
               <div className="col-span-2">
-                <Label className="text-xs">Production impact</Label>
+                <Label className="text-xs">
+                  {lineMachines.length > 0 ? "What stopped?" : "Production impact"}
+                </Label>
                 {canEdit ? (
                   <Select
-                    value={stopsLine ? "stop" : "run"}
-                    onValueChange={(v) => setStopsLine(v === "stop")}
+                    value={impact}
+                    onValueChange={(v) => {
+                      if (v === "machine") {
+                        setStopsLine(false);
+                        setMachineId(machineId || lineMachines[0]?.id || "");
+                      } else {
+                        setMachineId("");
+                        setStopsLine(v === "stop");
+                      }
+                    }}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger className="mt-1" aria-label="What stopped">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="stop">The line stopped — counts as downtime</SelectItem>
+                      {(lineMachines.length > 0 || machineId) && (
+                        <SelectItem value="machine">
+                          One packing machine stopped — not the line
+                        </SelectItem>
+                      )}
                       <SelectItem value="run">The line kept running — no downtime</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
                   <p className="mt-1">
                     <Badge variant={stopsLine ? "destructive" : "secondary"}>
-                      {stopsLine ? "Line stopped" : "Line kept running"}
+                      {machineName
+                        ? `${machineName} stopped · line running`
+                        : stopsLine
+                          ? "Line stopped"
+                          : "Line kept running"}
                     </Badge>
                   </p>
                 )}
-                {!stopsLine && (
+                {canEdit && impact === "machine" && lineMachines.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Machine">
+                    {lineMachines.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        aria-pressed={machineId === m.id}
+                        onClick={() => setMachineId(m.id)}
+                        className={`h-11 rounded-full border px-3 text-sm font-semibold transition-colors ${
+                          machineId === m.id
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-border bg-card hover:bg-muted"
+                        }`}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {impact === "machine" ? (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Still counted as an event — only its minutes are left out of downtime.
+                    Counts against {machineName ?? "the machine"} only: its availability drops, the
+                    line&rsquo;s downtime doesn&rsquo;t.
                   </p>
+                ) : (
+                  !stopsLine && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Still counted as an event — only its minutes are left out of downtime.
+                    </p>
+                  )
                 )}
               </div>
               <div className="col-span-2">

@@ -216,7 +216,9 @@ export interface PackingVariance {
   short: number;
   /** Rework recorded in the entries, kg. */
   rework: number;
-  /** max(0, short − rework), kg. */
+  /** Made but not packed yet at the end of the period (last entry day), kg. */
+  wip: number;
+  /** max(0, short − rework − wip), kg. */
   net: number;
   /** net ÷ packing plan; null without a plan. */
   netOfPlan: number | null;
@@ -225,11 +227,13 @@ export interface PackingVariance {
 export function packingVariance(t: Totals): PackingVariance {
   const rework = t.reworkCooking + t.reworkMaking + t.reworkPacking;
   const short = t.packingPlan > 0 ? Math.max(0, t.packingPlan - t.packingActual) : 0;
-  const net = Math.max(0, short - rework);
+  const wip = t.wipEnd ?? 0;
+  const net = Math.max(0, short - rework - wip);
   return {
     state: short <= 0 ? "none" : net <= 0 ? "covered" : "net",
     short,
     rework,
+    wip,
     net,
     netOfPlan: t.packingPlan > 0 ? net / t.packingPlan : null,
   };
@@ -256,6 +260,8 @@ export interface Totals {
   reworkCooking: number;
   reworkMaking: number;
   reworkPacking: number;
+  /** WIP of the last entry day in the list, kg (all its shifts). */
+  wipEnd?: number;
 }
 
 export function sumEntries(entries: DailyEntry[]): Totals {
@@ -291,6 +297,10 @@ export function sumEntries(entries: DailyEntry[]): Totals {
     t.reworkPacking += Number(e.rework_packing) || 0;
   }
   t.countedDays = countedDays.size;
+  const lastDay = entries.reduce((m, e) => (e.entry_date > m ? e.entry_date : m), "");
+  t.wipEnd = entries
+    .filter((e) => e.entry_date === lastDay)
+    .reduce((s, e) => s + (Number(e.wip_kg) || 0), 0);
   return t;
 }
 

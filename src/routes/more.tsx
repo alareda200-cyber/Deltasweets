@@ -61,7 +61,7 @@ type Item =
       key: string;
       name: string;
       sub?: string;
-      to: "/users" | "/audit-log" | "/recap" | "/replay" | "/replay-requests";
+      to: "/users" | "/audit-log" | "/recap" | "/replay" | "/replay-requests" | "/plan-adherence";
     }
   | { kind: "settings"; key: string; name: string; sub?: string; section: SettingsSection };
 
@@ -122,6 +122,13 @@ function MorePage() {
       {
         title: "Stories",
         items: [
+          {
+            kind: "route",
+            key: "plan",
+            name: "Plan adherence",
+            sub: "Forecast against packed, per SKU",
+            to: "/plan-adherence",
+          },
           {
             kind: "route",
             key: "recap",

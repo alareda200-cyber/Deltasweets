@@ -201,6 +201,7 @@ export type Database = {
           shift: string
           supervisor: string | null
           updated_at: string
+          wip_kg: number
         }
         Insert: {
           available_min?: number
@@ -224,6 +225,7 @@ export type Database = {
           shift?: string
           supervisor?: string | null
           updated_at?: string
+          wip_kg?: number
         }
         Update: {
           available_min?: number
@@ -247,6 +249,7 @@ export type Database = {
           shift?: string
           supervisor?: string | null
           updated_at?: string
+          wip_kg?: number
         }
         Relationships: [
           {
@@ -564,6 +567,171 @@ export type Database = {
         }
         Relationships: []
       }
+      entry_machines: {
+        Row: {
+          bag_g: number | null
+          bags: number
+          created_at: string
+          entry_id: string
+          id: string
+          machine_id: string
+          shifts: number
+        }
+        Insert: {
+          bag_g?: number | null
+          bags?: number
+          created_at?: string
+          entry_id: string
+          id?: string
+          machine_id: string
+          shifts: number
+        }
+        Update: {
+          bag_g?: number | null
+          bags?: number
+          created_at?: string
+          entry_id?: string
+          id?: string
+          machine_id?: string
+          shifts?: number
+        }
+        Relationships: []
+      }
+      packing_machines: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          line_id: string
+          name: string
+          sort_order: number
+          speed_per_min: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          line_id: string
+          name: string
+          sort_order?: number
+          speed_per_min: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          line_id?: string
+          name?: string
+          sort_order?: number
+          speed_per_min?: number
+        }
+        Relationships: []
+      }
+      skus: {
+        Row: {
+          code: string
+          company_id: string
+          created_at: string
+          id: string
+          is_active: boolean
+          kg_per_unit: number | null
+          line_id: string | null
+          name: string
+          unit: string | null
+        }
+        Insert: {
+          code: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          kg_per_unit?: number | null
+          line_id?: string | null
+          name?: string
+          unit?: string | null
+        }
+        Update: {
+          code?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          kg_per_unit?: number | null
+          line_id?: string | null
+          name?: string
+          unit?: string | null
+        }
+        Relationships: []
+      }
+      packed_skus: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          day: string
+          id: string
+          kg: number | null
+          line_id: string
+          qty: number
+          sku_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          day: string
+          id?: string
+          kg?: number | null
+          line_id: string
+          qty: number
+          sku_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          day?: string
+          id?: string
+          kg?: number | null
+          line_id?: string
+          qty?: number
+          sku_id?: string | null
+        }
+        Relationships: []
+      }
+      sku_forecasts: {
+        Row: {
+          code: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          month: string
+          qty: number
+          sku_id: string | null
+        }
+        Insert: {
+          code: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          month: string
+          qty: number
+          sku_id?: string | null
+        }
+        Update: {
+          code?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          month?: string
+          qty?: number
+          sku_id?: string | null
+        }
+        Relationships: []
+      }
       line_field_definitions: {
         Row: {
           created_at: string
@@ -615,6 +783,7 @@ export type Database = {
           description: string | null
           id: string
           line_id: string | null
+          machine_id: string | null
           resolved_at: string | null
           resolved_by: string | null
           root_cause_id: string | null
@@ -634,6 +803,7 @@ export type Database = {
           description?: string | null
           id?: string
           line_id?: string | null
+          machine_id?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
           root_cause_id?: string | null
@@ -653,6 +823,7 @@ export type Database = {
           description?: string | null
           id?: string
           line_id?: string | null
+          machine_id?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
           root_cause_id?: string | null
@@ -878,6 +1049,7 @@ export type Database = {
           id: string
           is_active: boolean
           making_count_unit: string | null
+          oee_basis: string
           name: string
           sort_order: number
         }
@@ -889,6 +1061,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           making_count_unit?: string | null
+          oee_basis?: string
           name: string
           sort_order?: number
         }
@@ -900,6 +1073,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           making_count_unit?: string | null
+          oee_basis?: string
           name?: string
           sort_order?: number
         }

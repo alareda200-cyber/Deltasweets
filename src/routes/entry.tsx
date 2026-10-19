@@ -16,6 +16,7 @@ import { EntryHistoryPanel } from "@/components/EntryHistoryPanel";
 import { CollapsibleRow } from "@/components/entry/CollapsibleRow";
 import { DOWNTIME_GRID_COLS, DowntimeRowEditor } from "@/components/entry/DowntimeRowEditor";
 import { EntrySection } from "@/components/entry/EntrySection";
+import { PackingMachinesBlock } from "@/components/entry/PackingMachinesBlock";
 import { JellyJar, Odometer, useGummyBurst, useTilt, type JarMood } from "@/components/motion";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -62,8 +63,12 @@ import {
   downtimeTypesQuery,
   productionTargetsQuery,
   DEFAULT_TARGETS,
+  maintenanceEventsQuery,
+  maintenanceStoppagesQuery,
   type EntryHistoryRow,
 } from "@/lib/queries";
+import { machinesForLine, packedFor, packedSkusQuery, packingMachinesQuery } from "@/lib/packing";
+import { computeLineOee } from "@/lib/oee";
 import { iso } from "@/lib/date-utils";
 import { requireSession } from "@/lib/require-session";
 import { logAudit } from "@/lib/audit";
@@ -81,6 +86,7 @@ import { cn } from "@/lib/utils";
 import {
   type DtRow,
   type EntryFormValues,
+  type MachineLine,
   type SwitchDecision,
   type ValidationResult,
   changedFields,
@@ -89,9 +95,11 @@ import {
   formatDay,
   formatSavedAt,
   sameDowntimes,
+  sameMachines,
   sameOwners,
   sameValues,
   savableDowntimes,
+  savableMachines,
   shiftLabel,
   validateValues,
   valuesFromRows,
@@ -213,9 +221,13 @@ async function fetchSlot(s: Slot): Promise<SlotLookup> {
     .maybeSingle();
   if (error) throw error;
   if (!data) return { kind: "empty" };
-  const [dts, owners] = await Promise.all([
+  const [dts, owners, machineRows] = await Promise.all([
     supabase.from("entry_downtimes").select("*").eq("entry_id", data.id).order("created_at"),
     supabase.from("entry_area_owners").select("*").eq("entry_id", data.id),
+    supabase
+      .from("entry_machines")
+      .select("machine_id, shifts, bags, bag_g")
+      .eq("entry_id", data.id),
   ]);
   if (dts.error) throw dts.error;
   if (owners.error) throw owners.error;
@@ -223,8 +235,42 @@ async function fetchSlot(s: Slot): Promise<SlotLookup> {
     kind: "existing",
     id: data.id,
     updatedAt: data.updated_at,
-    values: valuesFromRows(data, dts.data ?? [], owners.data ?? []),
+    values: valuesFromRows(data, dts.data ?? [], owners.data ?? [], tableRows(machineRows)),
   };
+}
+
+// The packing tables arrived with 20261019120000_packing_oee. Until that
+// migration is on a database, reading them must not break the entry page.
+function tableRows<T>(res: { data: T[] | null; error: { code?: string } | null }): T[] {
+  if (res.error) {
+    if (res.error.code === "PGRST205" || res.error.code === "42P01") return [];
+    throw res.error;
+  }
+  return res.data ?? [];
+}
+
+// Same insert-then-delete order as the downtime rows.
+async function replaceRows(
+  table: "entry_machines",
+  entryId: string,
+  rows: Record<string, unknown>[],
+) {
+  let newIds: string[] = [];
+  if (rows.length > 0) {
+    const { data, error } = await supabase
+      .from(table)
+      .insert(rows as never)
+      .select("id");
+    if (error) throw error;
+    newIds = (data ?? []).map((r: { id: string }) => r.id);
+  }
+  let del = supabase.from(table).delete().eq("entry_id", entryId);
+  if (newIds.length > 0) del = del.not("id", "in", `(${newIds.join(",")})`);
+  const { error: delErr } = await del;
+  if (delErr) {
+    if (newIds.length > 0) await supabase.from(table).delete().in("id", newIds);
+    throw delErr;
+  }
 }
 
 // Insert the new rows first, then delete the old ones. If the insert fails
@@ -322,6 +368,8 @@ function EntryPage() {
   const [downtimes, setDowntimes] = useState<DtRow[]>(initial.downtimes);
   const [areaOwnerSelections, setAreaOwnerSelections] = useState(initial.areaOwners);
   const [customValues, setCustomValues] = useState<Record<string, string>>(initial.customValues);
+  const [wip, setWip] = useState(initial.wip);
+  const [machineLines, setMachineLines] = useState<MachineLine[]>(initial.machines);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
@@ -380,6 +428,16 @@ function EntryPage() {
   const capPlan = capacity ? planFromCapacity(capacity, shift) : null;
   const makingPlanV = capPlan ? String(capPlan.kg) : makingPlan;
   const makingPlanCountV = capPlan?.count != null ? String(capPlan.count) : makingPlanCount;
+  // Packed SKUs (pasted from the packing sheet): when there are any, packing
+  // actual is their total kg and isn't typed.
+  const { data: allMachines = [] } = useQuery(packingMachinesQuery);
+  const lineMachines = machinesForLine(allMachines, lineId);
+  // Packed SKUs (Plan adherence page): a Full-day entry takes its packing
+  // actual from them, locked. The database keeps the saved entry in step.
+  const { data: packedRows = [] } = useQuery(packedSkusQuery(date, date));
+  const packed = shift === "DAY" ? packedFor(packedRows, lineId, date) : null;
+  const skuKg = packed ? packed.kg : null;
+  const packingActualV = skuKg !== null ? String(skuKg) : packingActual;
 
   const values: EntryFormValues = useMemo(
     () => ({
@@ -397,6 +455,8 @@ function EntryPage() {
       customValues,
       downtimes,
       areaOwners: areaOwnerSelections,
+      wip,
+      machines: machineLines,
     }),
     [
       makingPlan,
@@ -413,6 +473,8 @@ function EntryPage() {
       customValues,
       downtimes,
       areaOwnerSelections,
+      wip,
+      machineLines,
     ],
   );
   const dirty = useMemo(() => !sameValues(values, baseline), [values, baseline]);
@@ -444,6 +506,8 @@ function EntryPage() {
     setCustomValues(v.customValues);
     setDowntimes(v.downtimes);
     setAreaOwnerSelections(v.areaOwners);
+    setWip(v.wip);
+    setMachineLines(v.machines);
     setNewDowntimeIdx(null);
   }
 
@@ -573,7 +637,7 @@ function EntryPage() {
     const mPlan = Number(makingPlanV) || 0;
     const mActual = Number(makingActual) || 0;
     const pPlan = Number(packingPlan) || 0;
-    const pActual = Number(packingActual) || 0;
+    const pActual = Number(packingActualV) || 0;
     const avail = Number(availableMin) || 0;
     return {
       mPlan,
@@ -585,7 +649,7 @@ function EntryPage() {
       packingPct: packingPlan !== "" && pPlan > 0 ? (pActual / pPlan) * 100 : null,
       lossPct: availableMin !== "" && avail > 0 ? (totalDowntime / avail) * 100 : null,
     };
-  }, [makingPlanV, makingActual, packingPlan, packingActual, availableMin, totalDowntime]);
+  }, [makingPlanV, makingActual, packingPlan, packingActualV, availableMin, totalDowntime]);
 
   const isConflict = slot.status === "existing" && !editingSaved;
   const isNew = slot.status === "empty";
@@ -668,12 +732,13 @@ function EntryPage() {
           pick(canEditProduction, makingActualCount, orig.makingActualCount),
         ),
         packing_plan: Number(pick(canEditProduction, packingPlan, orig.packingPlan)) || 0,
-        packing_actual: Number(pick(canEditProduction, packingActual, orig.packingActual)) || 0,
+        packing_actual: Number(pick(canEditProduction, packingActualV, orig.packingActual)) || 0,
         available_min: Number(availableMin) || 0,
         downtime_min: effectiveDowntimes.reduce((s, d) => s + Number(d.minutes), 0),
         rework_cooking: Number(pick(canEditProduction, reworkCooking, orig.reworkCooking)) || 0,
         rework_making: Number(pick(canEditProduction, reworkMaking, orig.reworkMaking)) || 0,
         rework_packing: Number(pick(canEditProduction, reworkPacking, orig.reworkPacking)) || 0,
+        wip_kg: Number(pick(canEditProduction, wip, orig.wip)) || 0,
         custom_fields: Object.fromEntries(
           Object.entries(customValues).map(([k, v]) => [k, isNaN(Number(v)) ? v : Number(v)]),
         ),
@@ -747,6 +812,26 @@ function EntryPage() {
           );
         } catch (err) {
           failures.push(`downtime list (${errMsg(err)})`);
+        }
+      }
+      if (canEditProduction && !sameMachines(machineLines, orig.machines)) {
+        try {
+          const mine = new Set(lineMachines.map((m) => m.id));
+          await replaceRows(
+            "entry_machines",
+            saved.id,
+            savableMachines(machineLines)
+              .filter((m) => mine.has(m.machine_id))
+              .map((m) => ({
+                entry_id: saved.id,
+                machine_id: m.machine_id,
+                shifts: m.shifts,
+                bags: Number(m.bags) || 0,
+                bag_g: m.bagG.trim() === "" ? null : Number(m.bagG),
+              })),
+          );
+        } catch (err) {
+          failures.push(`packing machines (${errMsg(err)})`);
         }
       }
       if (canEditAreaOwners && !sameOwners(areaOwnerSelections, orig.areaOwners)) {
@@ -1026,6 +1111,59 @@ function EntryPage() {
     Number.isFinite(countActualN)
       ? (countActualN / countPlanN) * 100
       : null;
+  // Packing short of plan, less what rework and WIP explain.
+  const packingGap = (() => {
+    const short = Math.max(0, (Number(packingPlan) || 0) - (Number(packingActualV) || 0));
+    const rework = reworkTotal;
+    const w = Number(wip) || 0;
+    return { short, rework, wip: w, net: Math.max(0, short - rework - w) };
+  })();
+
+  // Today's OEE per packing machine, live from the form and the faults logged
+  // on the machines (Maintenance).
+  const { data: dayEvents = [] } = useQuery({
+    ...maintenanceEventsQuery(lineId, null, null, date, date),
+    enabled: lineMachines.length > 0,
+  });
+  const { data: lineStoppages = [] } = useQuery({
+    ...maintenanceStoppagesQuery(lineId),
+    enabled: lineMachines.length > 0,
+  });
+  const machineOee = useMemo(() => {
+    if (lineMachines.length === 0) return new Map();
+    const res = computeLineOee({
+      machines: lineMachines,
+      machineDays: machineLines.map((m) => ({
+        machine_id: m.machine_id,
+        entry_date: date,
+        shifts: m.shifts,
+        bags: Number(m.bags) || 0,
+      })),
+      events: dayEvents,
+      stoppages: lineStoppages,
+      lineId,
+      quality: [
+        {
+          entry_date: date,
+          packing_actual: Number(packingActualV) || 0,
+          rework_packing: Number(reworkPacking) || 0,
+        },
+      ],
+      from: date,
+      to: date,
+    });
+    return new Map(res.machines.map((m) => [m.machine.id, m]));
+  }, [
+    lineMachines,
+    machineLines,
+    dayEvents,
+    lineStoppages,
+    lineId,
+    date,
+    packingActualV,
+    reworkPacking,
+  ]);
+
   const outputRows = [
     {
       stage: "Making",
@@ -1035,6 +1173,7 @@ function EntryPage() {
       plan: makingPlanV,
       setPlan: setMakingPlan,
       locked: !!capPlan,
+      actualLocked: false,
       actual: makingActual,
       setActual: setMakingActual,
       pct: liveSummary.makingPct,
@@ -1051,6 +1190,7 @@ function EntryPage() {
             plan: makingPlanCountV,
             setPlan: setMakingPlanCount,
             locked: capPlan?.count != null,
+            actualLocked: false,
             actual: makingActualCount,
             setActual: setMakingActualCount,
             pct: countPct,
@@ -1067,7 +1207,8 @@ function EntryPage() {
       plan: packingPlan,
       setPlan: setPackingPlan,
       locked: false,
-      actual: packingActual,
+      actual: packingActualV,
+      actualLocked: skuKg !== null,
       setActual: setPackingActual,
       pct: liveSummary.packingPct,
       planKey: "packingPlan",
@@ -1554,15 +1695,23 @@ function EntryPage() {
                         error={fieldErr(o.actualKey)}
                         shakeKey={shakeOf(fieldErr(o.actualKey))}
                       >
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          aria-label={`${o.stage} actual, ${o.unit}`}
-                          className="h-11"
-                          value={o.actual}
-                          onChange={(e) => o.setActual(e.target.value)}
-                          disabled={!canEditProduction}
-                        />
+                        {o.actualLocked ? (
+                          <LockedPlan
+                            value={o.actual}
+                            label={`${o.stage} actual, ${o.unit}`}
+                            why="the packed SKUs"
+                          />
+                        ) : (
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            aria-label={`${o.stage} actual, ${o.unit}`}
+                            className="h-11"
+                            value={o.actual}
+                            onChange={(e) => o.setActual(e.target.value)}
+                            disabled={!canEditProduction}
+                          />
+                        )}
                       </Field>
                     </div>
                   </div>
@@ -1596,14 +1745,22 @@ function EntryPage() {
                         shakeKey={shakeOf(fieldErr(o.planKey))}
                       />
                     )}
-                    <GridInput
-                      label={`${o.stage} actual, ${o.unit}`}
-                      value={o.actual}
-                      onChange={o.setActual}
-                      disabled={!canEditProduction}
-                      error={fieldErr(o.actualKey)}
-                      shakeKey={shakeOf(fieldErr(o.actualKey))}
-                    />
+                    {o.actualLocked ? (
+                      <LockedPlan
+                        value={o.actual}
+                        label={`${o.stage} actual, ${o.unit}`}
+                        why="the packed SKUs"
+                      />
+                    ) : (
+                      <GridInput
+                        label={`${o.stage} actual, ${o.unit}`}
+                        value={o.actual}
+                        onChange={o.setActual}
+                        disabled={!canEditProduction}
+                        error={fieldErr(o.actualKey)}
+                        shakeKey={shakeOf(fieldErr(o.actualKey))}
+                      />
+                    )}
                     <span
                       className={cn(
                         "flex h-11 items-center text-xl font-bold tabular-nums",
@@ -1621,6 +1778,59 @@ function EntryPage() {
                 capacity={capacity}
                 shift={shift}
               />
+
+              <div className="grid grid-cols-1 gap-2 border-t border-border pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:items-end md:gap-4">
+                <Field
+                  label="WIP · made, not packed yet (kg)"
+                  error={fieldErr("wip")}
+                  shakeKey={shakeOf(fieldErr("wip"))}
+                >
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    aria-label="WIP, kg"
+                    className="h-11"
+                    value={wip}
+                    onChange={(e) => setWip(e.target.value)}
+                    disabled={!canEditProduction}
+                  />
+                </Field>
+                {packingGap.short > 0 && (
+                  <p
+                    data-testid="packing-gap"
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-xs font-medium",
+                      packingGap.net > 0
+                        ? "bg-warning/10 text-warning-strong"
+                        : "bg-success/10 text-success-strong",
+                    )}
+                  >
+                    Packing {fmtNum(packingGap.short)} kg short − {fmtNum(packingGap.rework)} rework
+                    − {fmtNum(packingGap.wip)} WIP = {fmtNum(packingGap.net)} kg not explained
+                  </p>
+                )}
+              </div>
+
+              {packed && (
+                <p data-testid="packed-note" className="text-xs text-muted-foreground">
+                  Packing actual from Plan adherence: {packed.kg.toLocaleString("en-US")} kg in{" "}
+                  {packed.count} {packed.count === 1 ? "SKU" : "SKUs"} packed on this day
+                  {packed.missing > 0 ? ` (${packed.missing} without a weight, left out)` : ""}.
+                  Change them there.
+                </p>
+              )}
+
+              {lineMachines.length > 0 && (
+                <PackingMachinesBlock
+                  machines={lineMachines}
+                  rows={machineLines}
+                  onChange={setMachineLines}
+                  oee={machineOee}
+                  errors={errors?.machines}
+                  skuKg={skuKg}
+                  disabled={!canEditProduction}
+                />
+              )}
 
               {customFields.length > 0 && (
                 <div className="border-t border-border pt-3">
@@ -2343,17 +2553,25 @@ function SaveButton({
 }
 
 // Making plan set by the line's capacity: shown, not typed.
-function LockedPlan({ value, label }: { value: string; label: string }) {
+function LockedPlan({
+  value,
+  label,
+  why = "the line's capacity",
+}: {
+  value: string;
+  label: string;
+  why?: string;
+}) {
   const n = Number(value);
   return (
     <div
       role="status"
-      aria-label={`${label}: ${value}, set by the line's capacity`}
+      aria-label={`${label}: ${value}, set by ${why}`}
       data-testid="locked-plan"
       className="flex h-11 items-center gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 px-3 text-base font-semibold tabular-nums"
     >
       <Lock className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-      {Number.isFinite(n) ? n.toLocaleString("en-US") : value}
+      {Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : value}
     </div>
   );
 }

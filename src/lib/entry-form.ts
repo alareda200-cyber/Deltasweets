@@ -14,6 +14,14 @@ export interface DtRow {
 
 export type OwnerSelections = Record<string, { ownerId: string; score: string }>;
 
+/** One packing machine on the entry. */
+export interface MachineLine {
+  machine_id: string;
+  shifts: number;
+  bags: string;
+  bagG: string;
+}
+
 export interface EntryFormValues {
   makingPlan: string;
   makingActual: string;
@@ -26,10 +34,14 @@ export interface EntryFormValues {
   reworkCooking: string;
   reworkMaking: string;
   reworkPacking: string;
+  /** Made but not packed yet at the end of the entry, kg. */
+  wip: string;
   comments: string;
   customValues: Record<string, string>;
   downtimes: DtRow[];
   areaOwners: OwnerSelections;
+  /** Packing machines that ran (only lines with machines). */
+  machines: MachineLine[];
 }
 
 // 1,440 is what 233 of the 234 saved entries use, shift A included — shift A
@@ -49,10 +61,12 @@ export function emptyValues(): EntryFormValues {
     reworkCooking: "0",
     reworkMaking: "0",
     reworkPacking: "0",
+    wip: "0",
     comments: "",
     customValues: {},
     downtimes: [],
     areaOwners: {},
+    machines: [],
   };
 }
 
@@ -67,6 +81,7 @@ export interface EntryRowLike {
   rework_cooking: number;
   rework_making: number;
   rework_packing: number;
+  wip_kg?: number | string | null;
   comments: string | null;
   custom_fields: unknown;
 }
@@ -84,10 +99,18 @@ export interface OwnerRowLike {
   performance_score: number | string | null;
 }
 
+export interface MachineRowLike {
+  machine_id: string;
+  shifts: number | string;
+  bags: number | string;
+  bag_g: number | string | null;
+}
+
 export function valuesFromRows(
   entry: EntryRowLike,
   downtimes: DowntimeRowLike[],
   owners: OwnerRowLike[],
+  machines: MachineRowLike[] = [],
 ): EntryFormValues {
   return {
     makingPlan: String(entry.making_plan),
@@ -101,6 +124,7 @@ export function valuesFromRows(
     reworkCooking: String(entry.rework_cooking),
     reworkMaking: String(entry.rework_making),
     reworkPacking: String(entry.rework_packing),
+    wip: String(Number(entry.wip_kg ?? 0)),
     comments: entry.comments ?? "",
     customValues: Object.fromEntries(
       Object.entries((entry.custom_fields ?? {}) as Record<string, unknown>).map(([k, v]) => [
@@ -123,7 +147,30 @@ export function valuesFromRows(
         },
       ]),
     ),
+    machines: machines.map((m) => ({
+      machine_id: m.machine_id,
+      shifts: Number(m.shifts),
+      bags: String(Number(m.bags)),
+      bagG: m.bag_g == null ? "" : String(Number(m.bag_g)),
+    })),
   };
+}
+
+/** Only machines that ran or packed something are saved. */
+export function savableMachines(rows: MachineLine[]): MachineLine[] {
+  return rows.filter((m) => m.shifts > 0 || (Number(m.bags) || 0) > 0);
+}
+
+function machinesKey(rows: MachineLine[]): string {
+  return JSON.stringify(
+    savableMachines(rows)
+      .map((m) => [m.machine_id, m.shifts, norm(m.bags), norm(m.bagG)])
+      .sort(([x], [y]) => String(x).localeCompare(String(y))),
+  );
+}
+
+export function sameMachines(a: MachineLine[], b: MachineLine[]): boolean {
+  return machinesKey(a) === machinesKey(b);
 }
 
 // "12" and "12.0" are the same number to the database, so they must not count
@@ -186,10 +233,12 @@ const FIELD_NAMES: Record<keyof EntryFormValues, string> = {
   reworkCooking: "Rework cooking",
   reworkMaking: "Rework making",
   reworkPacking: "Rework packing",
+  wip: "WIP",
   comments: "Notes",
   customValues: "Custom fields",
   downtimes: "Downtime",
   areaOwners: "Area owners",
+  machines: "Packing machines",
 };
 
 /**
@@ -210,6 +259,7 @@ export function changedFields(a: EntryFormValues, b: EntryFormValues): string[] 
     "reworkCooking",
     "reworkMaking",
     "reworkPacking",
+    "wip",
   ] as const;
   for (const k of scalar) {
     if (norm(a[k]) !== norm(b[k])) out.push(FIELD_NAMES[k]);
@@ -224,6 +274,7 @@ export function changedFields(a: EntryFormValues, b: EntryFormValues): string[] 
     out.push(FIELD_NAMES.downtimes);
   }
   if (!sameOwners(a.areaOwners, b.areaOwners)) out.push(FIELD_NAMES.areaOwners);
+  if (!sameMachines(a.machines, b.machines)) out.push(FIELD_NAMES.machines);
   return out;
 }
 
@@ -275,12 +326,15 @@ export type NumericField =
   | "availableMin"
   | "reworkCooking"
   | "reworkMaking"
-  | "reworkPacking";
+  | "reworkPacking"
+  | "wip";
 
 export interface ValidationResult {
   fields: Partial<Record<NumericField, string>>;
   downtimes: Record<number, string>;
   ownerScores: Record<string, string>;
+  /** By machine id. */
+  machines: Record<string, string>;
   count: number;
 }
 
@@ -315,6 +369,7 @@ export function validateValues(
       "reworkCooking",
       "reworkMaking",
       "reworkPacking",
+      "wip",
     ] as const) {
       const err = checkNonNegative(v[k]);
       if (err) fields[k] = err;
@@ -339,6 +394,21 @@ export function validateValues(
     });
   }
 
+  const machines: Record<string, string> = {};
+  if (can.production) {
+    for (const m of v.machines ?? []) {
+      const bags = m.bags.trim();
+      const g = m.bagG.trim();
+      if (bags !== "" && (!Number.isFinite(Number(bags)) || Number(bags) < 0)) {
+        machines[m.machine_id] = "Bags must be 0 or more";
+      } else if (g !== "" && (!Number.isFinite(Number(g)) || Number(g) <= 0)) {
+        machines[m.machine_id] = "Bag weight must be more than 0";
+      } else if (m.shifts > 0 && (Number(bags) || 0) > 0 && g === "") {
+        machines[m.machine_id] = "Enter the bag weight";
+      }
+    }
+  }
+
   const ownerScores: Record<string, string> = {};
   if (can.areaOwners) {
     for (const [areaId, sel] of Object.entries(v.areaOwners)) {
@@ -353,8 +423,12 @@ export function validateValues(
     fields,
     downtimes,
     ownerScores,
+    machines,
     count:
-      Object.keys(fields).length + Object.keys(downtimes).length + Object.keys(ownerScores).length,
+      Object.keys(fields).length +
+      Object.keys(downtimes).length +
+      Object.keys(ownerScores).length +
+      Object.keys(machines).length,
   };
 }
 

@@ -35,6 +35,7 @@ import { LinesSection } from "@/components/settings/LinesSection";
 import { FieldsSection } from "@/components/settings/FieldsSection";
 import { ReasonsSection } from "@/components/settings/ReasonsSection";
 import { TechniciansSection } from "@/components/settings/TechniciansSection";
+import { PackingSection } from "@/components/settings/PackingSection";
 import {
   AreaOwnersSection,
   DepartmentsSection,
@@ -172,6 +173,7 @@ function SettingsPage() {
       count: `${targets.makingPct}%`,
       sub: `Making ${targets.makingPct}% · packing ${targets.packingPct}% · time lost ${targets.lossPct}%`,
     },
+    packing: {},
     technicians: {
       count: String(technicians.length),
       sub: `${technicians.filter((t) => t.is_active).length} active`,
@@ -247,6 +249,8 @@ function SettingsPage() {
         return <TargetsSection targets={targets} qc={qc} />;
       case "technicians":
         return <TechniciansSection technicians={technicians} qc={qc} />;
+      case "packing":
+        return <PackingSection lines={lines} qc={qc} />;
       case "departments":
         return (
           <DepartmentsSection

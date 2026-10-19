@@ -117,6 +117,7 @@ import {
 } from "@/lib/maintenance-format";
 import type { ClosedDays } from "@/lib/maintenance-format";
 import { TechnicianMultiSelect } from "@/components/TechnicianMultiSelect";
+import { machinesForLine, packingMachinesQuery } from "@/lib/packing";
 import {
   linesQuery,
   maintenanceEventsQuery,
@@ -1476,6 +1477,7 @@ function MaintenancePage() {
     description: string;
     startedAt: string;
     stopsLine: boolean;
+    machineId?: string | null;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -1491,7 +1493,10 @@ function MaintenancePage() {
         started_at: data.startedAt,
         severity_label: data.severityLabel.trim() || null,
         technician_ids: data.technicianIds,
-        stops_line: data.stopsLine,
+        stops_line: data.machineId ? false : data.stopsLine,
+        // Only sent when set, so the form keeps working on a database
+        // without 20261019120000_packing_oee.
+        ...(data.machineId ? { machine_id: data.machineId } : {}),
         created_by: user?.id ?? null,
         stoppage_id: data.stoppageId,
         root_cause_id: data.rootCauseId,
@@ -1508,6 +1513,7 @@ function MaintenancePage() {
       title: data.title,
       stoppageId: data.stoppageId,
       rootCauseId: data.rootCauseId,
+      machineId: data.machineId ?? null,
     });
     if (data.stoppageId) {
       try {
@@ -1528,6 +1534,7 @@ function MaintenancePage() {
     description: string;
     startedAt: string;
     stopsLine: boolean;
+    machineId?: string | null;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -2857,6 +2864,7 @@ function CreateEventDialog({
     description: string;
     startedAt: string;
     stopsLine: boolean;
+    machineId?: string | null;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
@@ -2878,9 +2886,15 @@ function CreateEventDialog({
   // Defaults to true: a fault is presumed to have cost production time, and the
   // exception — work done while the line kept running — is what gets recorded.
   const [stopsLine, setStopsLine] = useState(true);
+  // A packing machine that stopped on its own (not the line). Not offered for
+  // an event added to a stoppage: a stoppage is the line stopping.
+  const [machineId, setMachineId] = useState("");
+  const [impact, setImpact] = useState<"stop" | "run" | "machine">("stop");
   const [technicianIds, setTechnicianIds] = useState<string[]>([]);
   const [rootCauseId, setRootCauseId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  const { data: allMachines = [] } = useQuery(packingMachinesQuery);
+  const lineMachines = stoppage ? [] : machinesForLine(allMachines, lineId);
   const { data: technicians = [] } = useQuery(techniciansQuery);
   const activeTechnicians = technicians.filter((t) => t.is_active);
   const { data: rootCauses = [] } = useQuery(rootCausesQuery());
@@ -2937,6 +2951,8 @@ function CreateEventDialog({
     setStartedAt(toDatetimeLocalValue(new Date()));
     setSeverityLabel("");
     setStopsLine(true);
+    setImpact("stop");
+    setMachineId("");
     setTechnicianIds([]);
     setRootCauseId("");
   }
@@ -2951,6 +2967,11 @@ function CreateEventDialog({
       toast.error("Started At is required.");
       return;
     }
+    const machineStop = impact === "machine" && lineMachines.length > 0;
+    if (machineStop && !machineId) {
+      toast.error("Pick the machine that stopped.");
+      return;
+    }
     setSubmitting(true);
     try {
       await onCreate({
@@ -2959,7 +2980,8 @@ function CreateEventDialog({
         title,
         description,
         startedAt: new Date(startedAt).toISOString(),
-        stopsLine,
+        stopsLine: machineStop ? false : stopsLine,
+        machineId: machineStop ? machineId : null,
         severityLabel,
         technicianIds,
         stoppageId: stoppage?.id ?? null,
@@ -3021,20 +3043,55 @@ function CreateEventDialog({
             </div>
           </div>
           <div>
-            <Label>Production impact</Label>
+            <Label>{lineMachines.length > 0 ? "What stopped?" : "Production impact"}</Label>
             <Select
-              value={stopsLine ? "stop" : "run"}
-              onValueChange={(v) => setStopsLine(v === "stop")}
+              value={lineMachines.length > 0 ? impact : stopsLine ? "stop" : "run"}
+              onValueChange={(v) => {
+                const next = v as "stop" | "run" | "machine";
+                setImpact(next);
+                setStopsLine(next === "stop");
+              }}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="What stopped">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="stop">The line stopped — counts as downtime</SelectItem>
+                {lineMachines.length > 0 && (
+                  <SelectItem value="machine">
+                    One packing machine stopped — not the line
+                  </SelectItem>
+                )}
                 <SelectItem value="run">The line kept running — no downtime</SelectItem>
               </SelectContent>
             </Select>
-            {!stopsLine && (
+            {lineMachines.length > 0 && impact === "machine" && (
+              <div className="mt-2">
+                <Label>Machine</Label>
+                <div className="mt-1 flex flex-wrap gap-1.5" role="group" aria-label="Machine">
+                  {lineMachines.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      aria-pressed={machineId === m.id}
+                      onClick={() => setMachineId(m.id)}
+                      className={`h-11 rounded-full border px-3 text-sm font-semibold transition-colors ${
+                        machineId === m.id
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border bg-card hover:bg-muted"
+                      }`}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Counts against this machine only: its availability drops, the line&rsquo;s
+                  downtime doesn&rsquo;t. Still counted as an event.
+                </p>
+              </div>
+            )}
+            {!stopsLine && impact !== "machine" && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Still counted as an event: it shows in MTBF, repeat-failure rate and how often this
                 machine fails. Only the minutes are left out.
@@ -3197,6 +3254,7 @@ function StoppageDialog({
     description: string;
     startedAt: string;
     stopsLine: boolean;
+    machineId?: string | null;
     severityLabel: string;
     technicianIds: string[];
     stoppageId: string | null;
