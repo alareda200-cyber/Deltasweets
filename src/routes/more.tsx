@@ -44,6 +44,7 @@ type SettingsSection =
   | "reasons"
   | "fields"
   | "targets"
+  | "packing"
   | "technicians"
   | "departments"
   | "types"
@@ -212,6 +213,13 @@ function MorePage() {
               name: "Targets",
               sub: `Making ${targets.makingPct}% · packing ${targets.packingPct}% · time lost ${targets.lossPct}%`,
               section: "targets",
+            },
+            {
+              kind: "settings",
+              key: "packing",
+              name: "Packing",
+              sub: "Packing machines and the SKU list",
+              section: "packing",
             },
           ],
         },

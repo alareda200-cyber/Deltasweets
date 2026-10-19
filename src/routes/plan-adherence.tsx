@@ -261,7 +261,7 @@ function PlanAdherencePage() {
               </p>
             )}
 
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)] md:items-start">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)] md:items-start">
               <section
                 className="rounded-xl border border-border bg-card"
                 aria-labelledby="by-line"
@@ -269,42 +269,50 @@ function PlanAdherencePage() {
                 <h2 id="by-line" className="px-4 pt-3 text-base font-semibold">
                   By line
                 </h2>
-                <table className="mt-2 w-full text-sm" data-testid="plan-lines">
-                  <thead className="bg-muted/60 text-xs text-muted-foreground">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-semibold">Line</th>
-                      <th className="px-2 py-2 text-right font-semibold">Forecast</th>
-                      <th className="px-2 py-2 text-right font-semibold">Packed</th>
-                      <th className="px-4 py-2 text-right font-semibold">Achieved</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ad.lines.map((l) => (
-                      <tr key={l.lineId ?? "none"} className="border-t border-border">
-                        <td className="px-4 py-2 font-semibold">{lineName(l.lineId)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{kg(l.forecastKg)}</td>
-                        <td className="px-2 py-2 text-right tabular-nums">{kg(l.packedKg)}</td>
-                        <td className="px-4 py-2 text-right">
-                          <span
-                            className={cn(
-                              "rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
-                              tone(l.achieved, share),
-                            )}
-                          >
-                            {pct(l.achieved)}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {ad.lines.length === 0 && (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm" data-testid="plan-lines">
+                    <thead className="bg-muted/60 text-xs text-muted-foreground">
                       <tr>
-                        <td colSpan={4} className="px-4 py-4 text-sm text-muted-foreground">
-                          No forecast and nothing packed in {monthLabel(month)} yet.
-                        </td>
+                        <th className="px-3 py-2 text-left font-semibold sm:px-4">Line</th>
+                        <th className="px-1.5 py-2 text-right font-semibold sm:px-2">Forecast</th>
+                        <th className="px-1.5 py-2 text-right font-semibold sm:px-2">Packed</th>
+                        <th className="px-3 py-2 text-right font-semibold sm:px-4">Achieved</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {ad.lines.map((l) => (
+                        <tr key={l.lineId ?? "none"} className="border-t border-border">
+                          <td className="max-w-28 truncate px-3 py-2 font-semibold sm:max-w-none sm:px-4">
+                            {lineName(l.lineId)}
+                          </td>
+                          <td className="px-1.5 py-2 text-right tabular-nums sm:px-2">
+                            {kg(l.forecastKg)}
+                          </td>
+                          <td className="px-1.5 py-2 text-right tabular-nums sm:px-2">
+                            {kg(l.packedKg)}
+                          </td>
+                          <td className="px-3 py-2 text-right sm:px-4">
+                            <span
+                              className={cn(
+                                "rounded-full px-2 py-0.5 text-xs font-bold tabular-nums",
+                                tone(l.achieved, share),
+                              )}
+                            >
+                              {pct(l.achieved)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {ad.lines.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-4 text-sm text-muted-foreground">
+                            No forecast and nothing packed in {monthLabel(month)} yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
                 <p className="px-4 py-2 text-xs text-muted-foreground">
                   kg. Green: at or ahead of where it should be by now.
                 </p>
