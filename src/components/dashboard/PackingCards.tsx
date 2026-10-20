@@ -4,7 +4,8 @@
 //   - the month's packed-kg forecast against packing actual.
 // The rules are in src/lib/oee.ts.
 // Each OEE card shows the period's OEE and, under it, the same OEE for the
-// last recorded day of the period (Ala, 19 Oct 2026).
+// last recorded day of the period (Ala, 19 Oct 2026). Under both cards, that
+// day by shift and by operator (ShiftOeeCards, 20 Oct 2026).
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/dashboard/DashboardCards";
@@ -24,6 +25,7 @@ import {
   packingMachinesQuery,
 } from "@/lib/packing";
 import { computeLineOee, oeeTone, type LineOee } from "@/lib/oee";
+import { ShiftOeeCards } from "@/components/dashboard/ShiftOeeCards";
 
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
 const kg = (n: number) => Math.round(n).toLocaleString("en-US");
@@ -147,6 +149,16 @@ export function OeeSection({
             rangeText={rangeText}
           />
         </div>
+      )}
+      {machines.length > 0 && (
+        <ShiftOeeCards
+          lineId={line.id}
+          machines={machines}
+          from={from}
+          to={to}
+          entries={entries}
+          stoppages={stoppages}
+        />
       )}
     </div>
   );
