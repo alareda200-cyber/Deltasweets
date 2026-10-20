@@ -257,28 +257,33 @@ function tableRows<T>(res: { data: T[] | null; error: { code?: string } | null }
   return res.data ?? [];
 }
 
-// Same insert-then-delete order as the downtime rows.
+// One row per machine and entry (UNIQUE entry_id, machine_id): upsert the
+// machines that ran, then remove the ones that no longer did. Inserting
+// first (the downtime rows' order) clashes with the row already there — and
+// with the summary the database writes from a pasted machine sheet when a
+// Full-day entry is first saved.
 async function replaceRows(
   table: "entry_machines",
   entryId: string,
-  rows: Record<string, unknown>[],
+  rows: {
+    entry_id: string;
+    machine_id: string;
+    shifts: number;
+    bags: number;
+    bag_g: number | null;
+  }[],
 ) {
-  let newIds: string[] = [];
   if (rows.length > 0) {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from(table)
-      .insert(rows as never)
-      .select("id");
+      .upsert(rows, { onConflict: "entry_id,machine_id" });
     if (error) throw error;
-    newIds = (data ?? []).map((r: { id: string }) => r.id);
   }
   let del = supabase.from(table).delete().eq("entry_id", entryId);
-  if (newIds.length > 0) del = del.not("id", "in", `(${newIds.join(",")})`);
+  if (rows.length > 0)
+    del = del.not("machine_id", "in", `(${rows.map((r) => r.machine_id).join(",")})`);
   const { error: delErr } = await del;
-  if (delErr) {
-    if (newIds.length > 0) await supabase.from(table).delete().in("id", newIds);
-    throw delErr;
-  }
+  if (delErr) throw delErr;
 }
 
 // Insert the new rows first, then delete the old ones. If the insert fails
