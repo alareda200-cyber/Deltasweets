@@ -149,7 +149,7 @@ export function ShiftOeeCards({
     <div data-testid="shift-oee" className="flex min-w-0 flex-col gap-3 md:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h3 className="text-[15px] font-semibold md:text-base">
-          Last recorded day · shifts & operators
+          Last machine sheet · shifts & operators
         </h3>
         <div className="flex flex-wrap gap-1.5 text-xs font-semibold">
           <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">
@@ -163,7 +163,7 @@ export function ShiftOeeCards({
               data-testid="shift-oee-q-pending"
               className="rounded-full bg-warning/15 px-2.5 py-1 text-warning-strong"
             >
-              Q pending
+              No day entry yet · Q pending
             </span>
           )}
         </div>
@@ -411,7 +411,13 @@ function Alerts({ data }: { data: ShiftOee }) {
   if (data.Q === null)
     items.push({
       warn: false,
-      node: <>No Full-day entry for this day yet, so Q is pending and the OEE is A × P.</>,
+      node: (
+        <>
+          {dayLabel(data.day)} has a machine sheet but no Full-day entry yet, so the cards above
+          still stop at the last day with an entry and Q is pending here (OEE = A × P). Once the
+          day&rsquo;s entry is saved, both show the same day.
+        </>
+      ),
     });
   if (!items.length) return null;
   return (

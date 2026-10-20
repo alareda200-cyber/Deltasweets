@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ClipboardPaste, ChevronDown } from "lucide-react";
+import { ClipboardPaste, ChevronDown, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/settings/shared";
 
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
 const kgFmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -54,7 +55,10 @@ export function PackingMachinesBlock({
   skus: Sku[];
   runs: MachineRun[];
 }) {
+  const qc = useQueryClient();
   const [pasting, setPasting] = useState(false);
+  // Delete the whole sheet of the day, or one row of it (Ala, 20 Oct 2026).
+  const [confirm, setConfirm] = useState<null | { all: true } | { run: MachineRun }>(null);
   const mineIds = useMemo(() => new Set(machines.map((m) => m.id)), [machines]);
   const myRuns = runs.filter((r) => mineIds.has(r.machine_id));
   const sheetMode = fullDay && myRuns.length > 0;
@@ -71,6 +75,65 @@ export function PackingMachinesBlock({
   }, 0);
   const anyRun = machines.some((m) => rowOf(m.id).shifts > 0);
 
+  // The form's machine lines follow the sheet rows that are left, the same
+  // way the database sums them, so saving the entry afterwards agrees.
+  function followRuns(left: MachineRun[]) {
+    const summary = summariseSheet(
+      left.map((r) => ({ machineId: r.machine_id, shift: r.shift, bags: r.bags, bagG: r.bag_g })),
+    );
+    onChange(
+      machines.map((m) => {
+        const s = summary.get(m.id);
+        return s
+          ? {
+              machine_id: m.id,
+              shifts: s.shifts,
+              bags: String(s.bags),
+              bagG: s.bagG === null ? "" : String(s.bagG),
+            }
+          : { machine_id: m.id, shifts: 0, bags: "", bagG: "" };
+      }),
+    );
+  }
+
+  async function deleteRuns(): Promise<boolean> {
+    if (!confirm) return false;
+    const q =
+      "all" in confirm
+        ? supabase
+            .from("machine_runs")
+            .delete()
+            .eq("day", day)
+            .in(
+              "machine_id",
+              machines.map((m) => m.id),
+            )
+        : supabase.from("machine_runs").delete().eq("id", confirm.run.id);
+    const { error } = await q;
+    if (error) {
+      toast.error(`Not deleted: ${error.message}`);
+      return false;
+    }
+    const left = "all" in confirm ? [] : myRuns.filter((r) => r.id !== confirm.run.id);
+    void logAudit(
+      "all" in confirm ? "entry.delete_machine_sheet" : "entry.delete_machine_run",
+      "machine_runs",
+      "all" in confirm ? day : confirm.run.id,
+      "all" in confirm
+        ? { day, rows: myRuns.length }
+        : { day, shift: confirm.run.shift, code: confirm.run.code, bags: confirm.run.bags },
+    );
+    toast.success("all" in confirm ? "Machine sheet deleted" : "Row deleted");
+    followRuns(left);
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["machine-runs", day] }),
+      qc.invalidateQueries({ queryKey: ["entry-machines"] }),
+    ]);
+    return true;
+  }
+  const confirmRun = confirm && "run" in confirm ? confirm.run : null;
+  const confirmMachine = confirmRun ? machines.find((m) => m.id === confirmRun.machine_id) : null;
+
   return (
     <div data-testid="packing-machines" className="flex flex-col gap-3 border-t border-border pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -78,15 +141,28 @@ export function PackingMachinesBlock({
           Packing machines
         </p>
         {fullDay && !disabled && (
-          <Button
-            type="button"
-            variant={pasting ? "outline" : sheetMode ? "outline" : "default"}
-            className="h-11 md:h-9"
-            onClick={() => setPasting((v) => !v)}
-          >
-            <ClipboardPaste className="mr-1.5 h-4 w-4" />
-            {pasting ? "Close" : sheetMode ? "Paste the sheet again" : "Paste machine sheet"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {sheetMode && !pasting && (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 text-destructive-strong md:h-9"
+                onClick={() => setConfirm({ all: true })}
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" />
+                Delete sheet
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant={pasting ? "outline" : sheetMode ? "outline" : "default"}
+              className="h-11 md:h-9"
+              onClick={() => setPasting((v) => !v)}
+            >
+              <ClipboardPaste className="mr-1.5 h-4 w-4" />
+              {pasting ? "Close" : sheetMode ? "Paste the sheet again" : "Paste machine sheet"}
+            </Button>
+          </div>
         )}
       </div>
       {pasting && (
@@ -95,20 +171,8 @@ export function PackingMachinesBlock({
           lineMachines={machines}
           allMachines={allMachines}
           skus={skus}
-          onSaved={(summary) => {
-            onChange(
-              machines.map((m) => {
-                const s = summary.get(m.id);
-                return s
-                  ? {
-                      machine_id: m.id,
-                      shifts: s.shifts,
-                      bags: String(s.bags),
-                      bagG: s.bagG === null ? "" : String(s.bagG),
-                    }
-                  : { machine_id: m.id, shifts: 0, bags: "", bagG: "" };
-              }),
-            );
+          onSaved={(saved) => {
+            followRuns(saved);
             setPasting(false);
           }}
           onCancel={() => setPasting(false)}
@@ -123,6 +187,7 @@ export function PackingMachinesBlock({
                 runs={myRuns.filter((r) => r.machine_id === m.id)}
                 line={rowOf(m.id)}
                 oee={oee.get(m.id)}
+                onDelete={disabled ? undefined : (run) => setConfirm({ run })}
               />
             ))
           : machines.map((m) => {
@@ -249,6 +314,38 @@ export function PackingMachinesBlock({
           {kgFmt(machinesKg - skuKg)} kg).
         </p>
       )}
+      <ConfirmDialog
+        open={!!confirm}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title={
+          confirmRun
+            ? `Delete this row of ${confirmMachine?.name ?? "the machine"} · shift ${confirmRun.shift}?`
+            : `Delete the machine sheet of ${day}?`
+        }
+        description={
+          confirmRun ? (
+            <p>
+              <span dir="auto">{confirmRun.name || confirmRun.code}</span> · {n0(confirmRun.bags)}{" "}
+              bags
+              {confirmRun.operator ? (
+                <>
+                  {" "}
+                  · <span dir="auto">{confirmRun.operator}</span>
+                </>
+              ) : null}
+              . The machine&rsquo;s shifts and bags for the day are worked out again from the rows
+              left.
+            </p>
+          ) : (
+            <p>
+              All {myRuns.length} rows of this line&rsquo;s machines are deleted, with their shifts
+              and bags on the day&rsquo;s entry. Paste the sheet again or type the machines by hand
+              afterwards.
+            </p>
+          )
+        }
+        onConfirm={deleteRuns}
+      />
     </div>
   );
 }
@@ -258,11 +355,13 @@ function SheetMachineCard({
   runs,
   line,
   oee,
+  onDelete,
 }: {
   machine: PackingMachine;
   runs: MachineRun[];
   line: MachineLine;
   oee: MachineOee | undefined;
+  onDelete?: (run: MachineRun) => void;
 }) {
   const [open, setOpen] = useState(false);
   const bags = runs.reduce((s, r) => s + r.bags, 0);
@@ -380,6 +479,16 @@ function SheetMachineCard({
                       </span>
                     )}
                   </span>
+                  {onDelete && (
+                    <button
+                      type="button"
+                      aria-label={`Delete ${r.name || r.code}, shift ${r.shift}`}
+                      onClick={() => onDelete(r)}
+                      className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive-strong md:h-8 md:w-8"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -402,7 +511,7 @@ function SheetPastePanel({
   lineMachines: PackingMachine[];
   allMachines: PackingMachine[];
   skus: Sku[];
-  onSaved: (summary: ReturnType<typeof summariseSheet>) => void;
+  onSaved: (runs: MachineRun[]) => void;
   onCancel: () => void;
 }) {
   const qc = useQueryClient();
@@ -451,14 +560,20 @@ function SheetPastePanel({
         qc.invalidateQueries({ queryKey: ["entry-machines"] }),
       ]);
       onSaved(
-        summariseSheet(
-          good.map((r) => ({
-            machineId: r.machine!.id,
-            shift: r.shift,
-            bags: r.bags,
-            bagG: r.bagG,
-          })),
-        ),
+        good.map((r, i) => ({
+          id: `new-${i}`,
+          day,
+          shift: r.shift,
+          machine_id: r.machine!.id,
+          sku_id: r.sku?.id ?? null,
+          code: r.code,
+          name: r.name,
+          operator: r.operator || null,
+          film_weight: r.film,
+          set_speed: r.setSpeed,
+          bags: r.bags,
+          bag_g: r.bagG,
+        })),
       );
     } catch (err) {
       toast.error(
