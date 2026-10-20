@@ -168,7 +168,7 @@ export function ShiftOeeCards({
           )}
         </div>
       </div>
-      <div className="grid min-w-0 gap-3.5 md:grid-cols-2 md:items-start md:gap-4">
+      <div className="grid min-w-0 gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4">
         <ShiftCard data={data} />
         <OperatorCard data={data} />
       </div>
@@ -368,7 +368,7 @@ function OperatorCard({ data }: { data: ShiftOee }) {
           </li>
         ))}
       </ol>
-      <p className="text-xs text-muted-foreground">
+      <p className="mt-auto text-xs text-muted-foreground">
         Operators sharing a machine in a shift split its time by their share of the bags.
       </p>
     </Card>

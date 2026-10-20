@@ -36,6 +36,20 @@ interface Line {
   name: string;
 }
 
+// A row of line tiles fills the card: 3 lines → 3 columns, not 3 of 4 with a
+// gap (Ala, 20 Oct 2026: "تنسيق الكروت"). On the phone an odd last tile
+// takes the whole row.
+const TILE_COLS: Record<number, string> = {
+  1: "md:grid-cols-2",
+  2: "md:grid-cols-2",
+  3: "md:grid-cols-3",
+  5: "md:grid-cols-3",
+  6: "md:grid-cols-3",
+  9: "md:grid-cols-3",
+};
+const tileCols = (n: number) =>
+  `${TILE_COLS[n] ?? "md:grid-cols-4"} [&>*:last-child:nth-child(odd)]:col-span-2 md:[&>*:last-child:nth-child(odd)]:col-span-1`;
+
 export interface TrendData {
   entries: DailyEntry[] | undefined;
   downtimes: EntryDowntime[] | undefined;
@@ -572,7 +586,10 @@ export function OutputTrendCard({
           />
         }
       />
-      <div ref={flipRef} className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3.5">
+      <div
+        ref={flipRef}
+        className={cn("grid grid-cols-2 gap-2.5 md:gap-3.5", tileCols(tiles.length))}
+      >
         {tiles.map((t, i) => {
           const d = t.now != null && t.usual != null ? t.now - t.usual : null;
           return (
@@ -723,7 +740,7 @@ export function ReworkTrendCard({ data, limitPct }: { data: TrendData; limitPct:
           No rework is rising or over the limit this week.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-3.5">
+        <div className={cn("grid grid-cols-2 gap-2.5 md:gap-3.5", tileCols(flagged.length))}>
           {flagged.map((t, i) => {
             const max = Math.max((limitPct ?? 0) * 1.6, t.now * 1.15, t.usual * 1.15, 0.5);
             return (
@@ -895,7 +912,7 @@ export function StopsTrendCard({ data }: { data: TrendData }) {
         title="Operational stops vs usual"
         sub={`${windowSub(data.window)} · downtime from the daily entries · minutes lost a production day`}
       />
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 md:gap-3.5">
+      <div className={cn("grid grid-cols-2 gap-2.5 md:gap-3.5", tileCols(trend.lines.length))}>
         {trend.lines.map((l, i) => {
           const mx = Math.max(l.now ?? 0, l.usual, 60) * 1.2;
           const d = l.now == null ? null : l.now - l.usual;

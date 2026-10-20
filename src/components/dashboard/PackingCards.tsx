@@ -120,7 +120,7 @@ export function OeeSection({
   const hasCapacity = capacities.some((c) => c.line_id === line.id);
   if (machines.length === 0 && !hasCapacity) return null;
   return (
-    <div data-pdf-section="oee" className="grid gap-3.5 md:grid-cols-2 md:items-start md:gap-4">
+    <div data-pdf-section="oee" className="grid gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4">
       <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground md:col-span-2">
         OEE
       </h2>
