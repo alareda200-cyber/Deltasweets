@@ -597,6 +597,57 @@ export type Database = {
         }
         Relationships: []
       }
+      machine_runs: {
+        Row: {
+          bag_g: number | null
+          bags: number
+          code: string
+          created_at: string
+          created_by: string | null
+          day: string
+          film_weight: number | null
+          id: string
+          machine_id: string
+          name: string
+          operator: string | null
+          set_speed: number | null
+          shift: string
+          sku_id: string | null
+        }
+        Insert: {
+          bag_g?: number | null
+          bags: number
+          code: string
+          created_at?: string
+          created_by?: string | null
+          day: string
+          film_weight?: number | null
+          id?: string
+          machine_id: string
+          name?: string
+          operator?: string | null
+          set_speed?: number | null
+          shift: string
+          sku_id?: string | null
+        }
+        Update: {
+          bag_g?: number | null
+          bags?: number
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          day?: string
+          film_weight?: number | null
+          id?: string
+          machine_id?: string
+          name?: string
+          operator?: string | null
+          set_speed?: number | null
+          shift?: string
+          sku_id?: string | null
+        }
+        Relationships: []
+      }
       packing_machines: {
         Row: {
           created_at: string

@@ -158,6 +158,51 @@ export const entryMachinesQuery = (from: string, to: string) =>
     },
   });
 
+/** One SKU a packing machine packed in one shift (the machine sheet). */
+export interface MachineRun {
+  id: string;
+  day: string;
+  shift: "A" | "B" | "C";
+  machine_id: string;
+  sku_id: string | null;
+  code: string;
+  name: string;
+  operator: string | null;
+  film_weight: number | null;
+  set_speed: number | null;
+  bags: number;
+  bag_g: number | null;
+}
+
+/** The machine sheet rows of one day, every machine of the company in view. */
+export const machineRunsQuery = (day: string) =>
+  queryOptions({
+    queryKey: ["machine-runs", day],
+    queryFn: async (): Promise<MachineRun[]> => {
+      const { data, error } = await supabase
+        .from("machine_runs")
+        .select(
+          "id, day, shift, machine_id, sku_id, code, name, operator, film_weight, set_speed, bags, bag_g",
+        )
+        .eq("day", day)
+        .order("shift")
+        .order("created_at");
+      // Before the migration the table isn't there: no sheet yet.
+      if (error) {
+        if (error.code === "PGRST205" || error.code === "42P01") return [];
+        throw error;
+      }
+      return (data ?? []).map((r) => ({
+        ...r,
+        shift: r.shift as MachineRun["shift"],
+        bags: Number(r.bags),
+        bag_g: r.bag_g == null ? null : Number(r.bag_g),
+        film_weight: r.film_weight == null ? null : Number(r.film_weight),
+        set_speed: r.set_speed == null ? null : Number(r.set_speed),
+      }));
+    },
+  });
+
 export function machinesForLine(machines: PackingMachine[], lineId: string): PackingMachine[] {
   return machines
     .filter((m) => m.line_id === lineId && m.is_active)

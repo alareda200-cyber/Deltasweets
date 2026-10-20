@@ -72,6 +72,7 @@ import {
   machinesForLine,
   packedFor,
   packedSkusQuery,
+  machineRunsQuery,
   packingMachinesQuery,
   skusQuery,
 } from "@/lib/packing";
@@ -439,6 +440,11 @@ function EntryPage() {
   // actual is their total kg and isn't typed.
   const { data: allMachines = [] } = useQuery(packingMachinesQuery);
   const lineMachines = machinesForLine(allMachines, lineId);
+  // The machine sheet of the day (Full-day entries), if one was pasted.
+  const { data: machineRuns = [] } = useQuery({
+    ...machineRunsQuery(date),
+    enabled: lineMachines.length > 0 && shift === "DAY",
+  });
   // Packed SKUs (Plan adherence page): a Full-day entry takes its packing
   // actual from them, locked. The database keeps the saved entry in step.
   const { data: packedRows = [] } = useQuery(packedSkusQuery(date, date));
@@ -1856,6 +1862,11 @@ function EntryPage() {
                   errors={errors?.machines}
                   skuKg={skuKg}
                   disabled={!canEditProduction}
+                  day={date}
+                  fullDay={shift === "DAY"}
+                  allMachines={allMachines}
+                  skus={skus}
+                  runs={machineRuns}
                 />
               )}
 
