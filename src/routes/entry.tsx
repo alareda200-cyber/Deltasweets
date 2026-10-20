@@ -113,6 +113,7 @@ import {
   valuesFromRows,
   countOrNull,
 } from "@/lib/entry-form";
+import { summariseSheet } from "@/lib/machine-sheet";
 
 // /entry?line=<id>&date=YYYY-MM-DD&shift=DAY opens that entry directly (the
 // Dashboard's "Open this entry" link). Only read once, when the page opens.
@@ -1150,11 +1151,36 @@ function EntryPage() {
     ...maintenanceStoppagesQuery(lineId),
     enabled: lineMachines.length > 0,
   });
+  // With a machine sheet the machines' shifts and bags are the sheet's, even
+  // before the day's Full-day entry is saved (Ala, 20 Oct 2026: the cards
+  // showed "0 shifts" for a day with a sheet and no entry). The database
+  // writes the same summary into the entry when it is saved.
+  const sheetLines: MachineLine[] | null = useMemo(() => {
+    if (shift !== "DAY") return null;
+    const ids = new Set(lineMachines.map((m) => m.id));
+    const mine = machineRuns.filter((r) => ids.has(r.machine_id));
+    if (mine.length === 0) return null;
+    const summary = summariseSheet(
+      mine.map((r) => ({ machineId: r.machine_id, shift: r.shift, bags: r.bags, bagG: r.bag_g })),
+    );
+    return lineMachines.map((m) => {
+      const x = summary.get(m.id);
+      return x
+        ? {
+            machine_id: m.id,
+            shifts: x.shifts,
+            bags: String(x.bags),
+            bagG: x.bagG === null ? "" : String(x.bagG),
+          }
+        : { machine_id: m.id, shifts: 0, bags: "", bagG: "" };
+    });
+  }, [shift, lineMachines, machineRuns]);
+  const shownMachines = sheetLines ?? machineLines;
   const machineOee = useMemo(() => {
     if (lineMachines.length === 0) return new Map();
     const res = computeLineOee({
       machines: lineMachines,
-      machineDays: machineLines.map((m) => ({
+      machineDays: shownMachines.map((m) => ({
         machine_id: m.machine_id,
         entry_date: date,
         shifts: m.shifts,
@@ -1176,7 +1202,7 @@ function EntryPage() {
     return new Map(res.machines.map((m) => [m.machine.id, m]));
   }, [
     lineMachines,
-    machineLines,
+    shownMachines,
     dayEvents,
     lineStoppages,
     lineId,
@@ -1861,7 +1887,7 @@ function EntryPage() {
               {lineMachines.length > 0 && (
                 <PackingMachinesBlock
                   machines={lineMachines}
-                  rows={machineLines}
+                  rows={shownMachines}
                   onChange={setMachineLines}
                   oee={machineOee}
                   errors={errors?.machines}
