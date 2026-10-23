@@ -13,7 +13,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { cn } from "@/lib/utils";
 import type { ProductionLine } from "@/lib/queries";
-import { packingMachinesQuery, skusQuery, type PackingMachine, type Sku } from "@/lib/packing";
+import {
+  packingMachinesQuery,
+  skusQuery,
+  type CountUnit,
+  type PackingMachine,
+  type Sku,
+} from "@/lib/packing";
 import { kgPerUnitFromName } from "@/lib/sku-weight";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,6 +57,7 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
   const [name, setName] = useState("");
   const [lineId, setLineId] = useState(lines[0]?.id ?? "");
   const [speed, setSpeed] = useState("");
+  const [unit, setUnit] = useState<CountUnit>("bags");
   const [toDelete, setToDelete] = useState<PackingMachine | null>(null);
   const lineName = (id: string) => lines.find((l) => l.id === id)?.name ?? "—";
 
@@ -58,14 +65,15 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
     setEditing(null);
     setName("");
     setSpeed("");
+    setUnit("bags");
   }
   async function save() {
     const n = name.trim();
     const sp = Number(speed);
     if (!n) return toast.error("Enter the machine's name.");
     if (!lineId) return toast.error("Pick the line it packs for.");
-    if (!(sp > 0)) return toast.error("Enter its ideal speed in bags per minute.");
-    const row = { name: n, line_id: lineId, speed_per_min: sp };
+    if (!(sp > 0)) return toast.error(`Enter its ideal speed in ${unit} per minute.`);
+    const row = { name: n, line_id: lineId, speed_per_min: sp, count_unit: unit };
     const { error } = editing
       ? await supabase.from("packing_machines").update(row).eq("id", editing.id)
       : await supabase
@@ -113,7 +121,7 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
         {isError && (
           <p className="text-sm text-destructive-strong">The machines didn&rsquo;t load.</p>
         )}
-        <div className="grid gap-3 sm:grid-cols-[1fr_10rem_9rem_auto] sm:items-end">
+        <div className="grid gap-3 sm:grid-cols-[1fr_10rem_8rem_9rem_auto] sm:items-end">
           <TextField label="Machine" value={name} onChange={setName} placeholder="e.g. Rovema 6" />
           <div className="space-y-1.5">
             <Label htmlFor="machine-line">Packs for</Label>
@@ -130,8 +138,20 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
               ))}
             </select>
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="machine-unit">Counts</Label>
+            <select
+              id="machine-unit"
+              className={selectCls}
+              value={unit}
+              onChange={(e) => setUnit(e.target.value as CountUnit)}
+            >
+              <option value="bags">Bags</option>
+              <option value="pieces">Pieces</option>
+            </select>
+          </div>
           <TextField
-            label="Bags per minute"
+            label={unit === "pieces" ? "Pieces per minute" : "Bags per minute"}
             type="number"
             value={speed}
             onChange={setSpeed}
@@ -164,12 +184,12 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
                     {!m.is_active && <InactiveChip />}
                   </span>
                   <span className="block text-xs tabular-nums text-muted-foreground sm:hidden">
-                    {m.speed_per_min} bags / min
+                    {m.speed_per_min} {m.count_unit} / min
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1">
                   <span className="mr-1 hidden text-sm tabular-nums whitespace-nowrap text-muted-foreground sm:inline">
-                    {m.speed_per_min} / min
+                    {m.speed_per_min} {m.count_unit} / min
                   </span>
                   <Button
                     type="button"
@@ -187,6 +207,7 @@ function MachinesCard({ lines, qc }: { lines: ProductionLine[]; qc: QC }) {
                       setName(m.name);
                       setLineId(m.line_id);
                       setSpeed(String(m.speed_per_min));
+                      setUnit(m.count_unit);
                     }}
                   />
                   <IconButton

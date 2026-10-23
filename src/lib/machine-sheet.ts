@@ -1,8 +1,13 @@
-// The machine sheet pasted on the daily entry (Ala, 20 Oct 2026):
-//   Code · Type · Operator · Bag weight · Machine · D-Speed · Total Quantity · Shift
-// Bag weight is the film's weight (kept only). D-Speed is the speed the
-// machine was set to run at; the OEE uses the machine's speed from Settings.
-// Total Quantity is bags. The header row and blank lines are skipped.
+// The machine sheet pasted on the daily entry. Two layouts, also mixed in one
+// paste — read from the right, so the extra Twist column doesn't shift them:
+//   Rovema (20 Oct 2026): Code · Type · Operator · Bag weight · Machine ·
+//     D-Speed · Total Quantity · Shift. Bag weight is the film's weight (kept
+//     only); the quantity is bags, their grams read from the SKU name.
+//   Twist (23 Oct 2026): Code · Type · Operator · Paper weight (kg a piece) ·
+//     Piece weight (kg) · Machine · D-Speed · Total Quantity · Shift. The code
+//     is the wrapper paper's, not a SKU; the quantity is pieces (7 g each).
+// D-Speed is the speed the machine was set to run at; the OEE uses the
+// machine's speed from Settings. Header rows and blank lines are skipped.
 import type { PackingMachine, Sku } from "@/lib/packing";
 
 export interface SheetRow {
@@ -54,17 +59,29 @@ export function parseMachineSheet(
   for (const raw of text.split(/\r?\n/)) {
     if (!raw.trim()) continue;
     const c = raw.split("\t").map((x) => x.trim());
-    const shift = (c[7] ?? "").toUpperCase();
-    const bags = num(c[6]);
-    if (!/^\d{6,}$/.test(c[0] ?? "") || !["A", "B", "C"].includes(shift) || bags === null) {
+    while (c.length > 0 && c[c.length - 1] === "") c.pop();
+    const n = c.length;
+    const shift = (c[n - 1] ?? "").toUpperCase();
+    const bags = num(c[n - 2]);
+    // 8 cells (Rovema) or 9 (Twist): one or two weights between operator and machine.
+    const weights = c.slice(3, n - 4);
+    if (
+      (n !== 8 && n !== 9) ||
+      !/^\d{6,}$/.test(c[0] ?? "") ||
+      !["A", "B", "C"].includes(shift) ||
+      bags === null
+    ) {
       out.ignored++;
       continue;
     }
-    const machineName = c[4] ?? "";
+    const machineName = c[n - 4] ?? "";
     const machine = byName.get(norm(machineName)) ?? null;
     if (!machine) unknown.add(machineName || "(empty)");
     const sku = opts.skus.get(c[0]) ?? null;
     const name = (sku?.name || c[1] || "").replace(/\s+/g, " ").trim();
+    // Twist: the piece weight in kg (0.007) or grams (7).
+    const piece = weights.length === 2 ? num(weights[1]) : null;
+    const pieceG = piece !== null && piece > 0 ? (piece < 1 ? piece * 1000 : piece) : null;
     out.rows.push({
       shift: shift as SheetRow["shift"],
       machineName,
@@ -73,10 +90,13 @@ export function parseMachineSheet(
       name,
       sku,
       operator: (c[2] ?? "").replace(/\s+/g, " ").trim(),
-      film: num(c[3]),
-      setSpeed: num(c[5]),
+      film: num(weights[0]),
+      setSpeed: num(c[n - 3]),
       bags,
-      bagG: gramsPerBag(c[1] || name) ?? gramsPerBag(name),
+      bagG:
+        pieceG !== null
+          ? Math.round(pieceG * 1000) / 1000
+          : (gramsPerBag(c[1] || name) ?? gramsPerBag(name)),
     });
   }
   out.unknownMachines = [...unknown];

@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/dashboard/DashboardCards";
 import { cn } from "@/lib/utils";
 import type { DailyEntry, MaintenanceStoppage } from "@/lib/queries";
-import { machineRunsQuery, type PackingMachine } from "@/lib/packing";
+import { machineRunsQuery, unitOfMachines, type PackingMachine } from "@/lib/packing";
 import { lineQuality, oeeTone } from "@/lib/oee";
 import {
   computeShiftOee,
@@ -143,6 +143,8 @@ export function ShiftOeeCards({
 
   if (!day || !data || data.shifts.every((s) => s.cells.length === 0)) return null;
   const qPending = data.Q === null;
+  // Rovema count bags, Twist wrapped pieces (Settings › Packing).
+  const unit = unitOfMachines(machines);
   const ran = new Set(data.shifts.flatMap((s) => s.cells.map((c) => c.machine.id))).size;
 
   return (
@@ -169,15 +171,15 @@ export function ShiftOeeCards({
         </div>
       </div>
       <div className="grid min-w-0 gap-3.5 md:grid-cols-2 md:items-stretch md:gap-4">
-        <ShiftCard data={data} />
-        <OperatorCard data={data} />
+        <ShiftCard data={data} unit={unit} />
+        <OperatorCard data={data} unit={unit} />
       </div>
       <Alerts data={data} />
     </div>
   );
 }
 
-function ShiftCard({ data }: { data: ShiftOee }) {
+function ShiftCard({ data, unit }: { data: ShiftOee; unit: string }) {
   const t = data.total;
   return (
     <Card labelledBy="dash-shift-oee">
@@ -197,7 +199,7 @@ function ShiftCard({ data }: { data: ShiftOee }) {
           {pct(t.oee)}
         </span>
         <span className="text-xs">
-          <b>Day</b> · {n0(t.bags)} bags · {n0(t.kg)} kg
+          <b>Day</b> · {n0(t.bags)} {unit} · {n0(t.kg)} kg
         </span>
         <span className="flex flex-wrap gap-3 text-xs text-muted-foreground tabular-nums">
           <span>
@@ -224,7 +226,7 @@ function ShiftCard({ data }: { data: ShiftOee }) {
               <span className="text-xs text-muted-foreground tabular-nums">
                 {SHIFT_HOURS[s.shift]}
                 {s.shift === "C" ? " (next day)" : ""}
-                {s.cells.length > 0 ? ` · ${n0(s.bags)} bags · ${n0(s.kg)} kg` : ""}
+                {s.cells.length > 0 ? ` · ${n0(s.bags)} ${unit} · ${n0(s.kg)} kg` : ""}
               </span>
             </span>
             <span
@@ -250,7 +252,7 @@ function ShiftCard({ data }: { data: ShiftOee }) {
                   c.conflict ? (
                     <span
                       key={c.machine.id}
-                      title="An open fault covers the whole shift, but it packed bags"
+                      title="An open fault covers the whole shift, but it still packed"
                       className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-warning/15 px-2 py-0.5 text-xs text-warning-strong"
                     >
                       {c.machine.name} · <b className="tabular-nums">{n0(c.bags)}</b> · excluded
@@ -274,7 +276,7 @@ function ShiftCard({ data }: { data: ShiftOee }) {
   );
 }
 
-function OperatorCard({ data }: { data: ShiftOee }) {
+function OperatorCard({ data, unit }: { data: ShiftOee; unit: string }) {
   const [order, setOrder] = useState<"high" | "low">("high");
   const [filter, setFilter] = useState<"all" | ShiftCode>("all");
   const list = useMemo(() => {
@@ -361,7 +363,7 @@ function OperatorCard({ data }: { data: ShiftOee }) {
                 {pct(o.oee)}
               </span>
               <span className="whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
-                {n0(o.bags)} bags · {n0(o.kg)} kg
+                {n0(o.bags)} {unit} · {n0(o.kg)} kg
               </span>
             </span>
             <Bar v={o.oee} className="col-start-2 col-end-4" />
@@ -369,7 +371,7 @@ function OperatorCard({ data }: { data: ShiftOee }) {
         ))}
       </ol>
       <p className="mt-auto text-xs text-muted-foreground">
-        Operators sharing a machine in a shift split its time by their share of the bags.
+        Operators sharing a machine in a shift split its time by their share of the {unit}.
       </p>
     </Card>
   );
@@ -390,8 +392,8 @@ function Alerts({ data }: { data: ShiftOee }) {
       node: (
         <>
           <b>{name}</b> — a fault covers shift{r.shifts.length > 1 ? "s" : ""}{" "}
-          {r.shifts.join(" and ")}, but it packed {n0(r.bags)} bags. Left out of the totals until
-          the fault is closed or corrected.
+          {r.shifts.join(" and ")}, but it packed {n0(r.bags)}. Left out of the totals until the
+          fault is closed or corrected.
         </>
       ),
     });
@@ -403,8 +405,8 @@ function Alerts({ data }: { data: ShiftOee }) {
           <b>
             {c.machine.name} · {c.shift}
           </b>{" "}
-          — P {pct(c.P)}: {n0(c.bags)} bags is faster than {c.machine.speed_per_min} / min. Check
-          the speed in Settings › Packing.
+          — P {pct(c.P)}: {n0(c.bags)} {c.machine.count_unit} is faster than{" "}
+          {c.machine.speed_per_min} / min. Check the speed in Settings › Packing.
         </>
       ),
     });

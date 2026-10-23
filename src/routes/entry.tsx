@@ -458,6 +458,20 @@ function EntryPage() {
   // The day's packed SKUs can be edited right here (PackedSkusEditor).
   const { data: skus = [] } = useQuery(skusQuery);
   const linePacked = packedRows.filter((p) => p.line_id === lineId && p.day === date);
+  // Wrapped SKUs ("مغلف") packed that day: what the Twist paper links to.
+  const wrappedPacked = useMemo(() => {
+    const byId = new Map(skus.map((x) => [x.id, x]));
+    const out = new Map<string, { code: string; name: string; qty: number; kg: number }>();
+    for (const p of linePacked) {
+      const sku = p.sku_id ? byId.get(p.sku_id) : undefined;
+      if (!sku || !sku.name.includes("مغلف")) continue;
+      const w = out.get(sku.code) ?? { code: sku.code, name: sku.name, qty: 0, kg: 0 };
+      w.qty += Number(p.qty) || 0;
+      w.kg += Number(p.kg) || 0;
+      out.set(sku.code, w);
+    }
+    return [...out.values()];
+  }, [linePacked, skus]);
   const skuKg = packed ? packed.kg : null;
   const packingActualV = skuKg !== null ? String(skuKg) : packingActual;
 
@@ -1888,6 +1902,7 @@ function EntryPage() {
                 <PackingMachinesBlock
                   machines={lineMachines}
                   rows={shownMachines}
+                  wrapped={wrappedPacked}
                   onChange={setMachineLines}
                   oee={machineOee}
                   errors={errors?.machines}

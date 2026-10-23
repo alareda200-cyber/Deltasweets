@@ -12,7 +12,16 @@ export interface PackingMachine {
   speed_per_min: number;
   sort_order: number;
   is_active: boolean;
+  /** What it counts: Rovema bags, Twist pieces (20261023120000). */
+  count_unit: CountUnit;
 }
+
+export type CountUnit = "bags" | "pieces";
+/** "bags" / "pieces", or "bag" / "piece" for one. */
+export const unitWord = (unit: CountUnit, n?: number) => (n === 1 ? unit.slice(0, -1) : unit);
+/** The unit of a set of machines: theirs when they agree, else "units". */
+export const unitOfMachines = (ms: { count_unit: CountUnit }[]) =>
+  ms.length > 0 && ms.every((m) => m.count_unit === ms[0].count_unit) ? ms[0].count_unit : "units";
 
 export interface Sku {
   id: string;
@@ -41,7 +50,12 @@ export const packingMachinesQuery = queryOptions({
       .order("sort_order")
       .order("name");
     if (error) throw error;
-    return (data ?? []).map((m) => ({ ...m, speed_per_min: Number(m.speed_per_min) }));
+    return (data ?? []).map((m) => ({
+      ...m,
+      speed_per_min: Number(m.speed_per_min),
+      // Before the migration the column isn't there: every machine counts bags.
+      count_unit: (m as { count_unit?: string }).count_unit === "pieces" ? "pieces" : "bags",
+    }));
   },
 });
 

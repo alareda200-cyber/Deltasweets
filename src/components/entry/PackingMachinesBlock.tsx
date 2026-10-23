@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import type { MachineLine } from "@/lib/entry-form";
 import type { MachineRun, PackingMachine, Sku } from "@/lib/packing";
+import { unitOfMachines, unitWord } from "@/lib/packing";
 import type { MachineOee } from "@/lib/oee";
 import { bagsKg } from "@/lib/oee";
 import { parseMachineSheet, summariseSheet } from "@/lib/machine-sheet";
@@ -41,6 +42,7 @@ export function PackingMachinesBlock({
   allMachines,
   skus,
   runs,
+  wrapped,
 }: {
   machines: PackingMachine[];
   rows: MachineLine[];
@@ -54,8 +56,16 @@ export function PackingMachinesBlock({
   allMachines: PackingMachine[];
   skus: Sku[];
   runs: MachineRun[];
+  /** Wrapped SKUs ("مغلف") packed for this line that day (Plan adherence). */
+  wrapped?: { code: string; name: string; qty: number; kg: number }[];
 }) {
   const qc = useQueryClient();
+  // Twist machines count wrapped pieces. Their paper is linked to whatever
+  // wrapped SKU was packed the same day (Ala, 23 Oct 2026), and their kg is
+  // compared with those SKUs, not with every SKU of the line.
+  const piecesLine = machines.length > 0 && machines.every((m) => m.count_unit === "pieces");
+  const wrappedKg = (wrapped ?? []).reduce((t, w) => t + w.kg, 0);
+  const wrappedCodes = (wrapped ?? []).map((w) => w.code);
   const [pasting, setPasting] = useState(false);
   // Delete the whole sheet of the day, or one row of it (Ala, 20 Oct 2026).
   const [confirm, setConfirm] = useState<null | { all: true } | { run: MachineRun }>(null);
@@ -188,6 +198,7 @@ export function PackingMachinesBlock({
                 line={rowOf(m.id)}
                 oee={oee.get(m.id)}
                 onDelete={disabled ? undefined : (run) => setConfirm({ run })}
+                linkedCodes={m.count_unit === "pieces" ? wrappedCodes : undefined}
               />
             ))
           : machines.map((m) => {
@@ -207,7 +218,7 @@ export function PackingMachinesBlock({
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-semibold">{m.name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {m.speed_per_min} bags/min
+                      {m.speed_per_min} {m.count_unit}/min
                     </span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -236,12 +247,12 @@ export function PackingMachinesBlock({
                     <>
                       <div className="grid grid-cols-[1.3fr_1fr] gap-2">
                         <label className="flex flex-col gap-1 text-xs font-semibold">
-                          Bags
+                          {m.count_unit === "pieces" ? "Pieces" : "Bags"}
                           <Input
                             type="number"
                             inputMode="numeric"
                             className="h-11 text-base"
-                            aria-label={`${m.name} bags`}
+                            aria-label={`${m.name} ${m.count_unit}`}
                             value={r.bags}
                             disabled={disabled}
                             onChange={(e) => set(m.id, { bags: e.target.value })}
@@ -295,11 +306,45 @@ export function PackingMachinesBlock({
       </div>
       {sheetMode && (
         <p className="text-xs text-muted-foreground">
-          From the machine sheet: a shift with rows counts as run (480 min). P = bags ÷ (the
-          machine&rsquo;s speed in Settings × those minutes); D-Speed is shown next to each SKU.
+          From the machine sheet: a shift with rows counts as run (480 min). P ={" "}
+          {unitOfMachines(machines)} ÷ (the machine&rsquo;s speed in Settings × those minutes);
+          D-Speed is shown next to each row.
         </p>
       )}
-      {anyRun && skuKg !== null && skuKg > 0 && (
+      {piecesLine && anyRun && (
+        <div
+          data-testid="machines-vs-wrapped"
+          className={cn(
+            "flex flex-col gap-1.5 rounded-lg px-3 py-2 text-xs font-medium",
+            wrappedKg > 0 && Math.abs(machinesKg - wrappedKg) <= wrappedKg * 0.05
+              ? "bg-success/10 text-success-strong"
+              : "bg-warning/10 text-warning-strong",
+          )}
+        >
+          {wrappedKg > 0 ? (
+            <>
+              <span>
+                Wrapped {kgFmt(machinesKg)} kg on the machines vs wrapped SKUs packed{" "}
+                {kgFmt(wrappedKg)} kg ({machinesKg - wrappedKg >= 0 ? "+" : ""}
+                {kgFmt(machinesKg - wrappedKg)} kg).
+              </span>
+              <span className="flex flex-wrap gap-1.5 font-normal text-foreground">
+                {(wrapped ?? []).map((w) => (
+                  <span
+                    key={w.code}
+                    className="rounded-md border border-border bg-card px-2 py-0.5 tabular-nums"
+                  >
+                    {w.code} · <span dir="auto">{w.name}</span> · {n0(w.qty)} · {kgFmt(w.kg)} kg
+                  </span>
+                ))}
+              </span>
+            </>
+          ) : (
+            <span>No wrapped SKU packed this day — paste the packed SKUs on Plan adherence.</span>
+          )}
+        </div>
+      )}
+      {!piecesLine && anyRun && skuKg !== null && skuKg > 0 && (
         <p
           data-testid="machines-vs-skus"
           className={cn(
@@ -326,7 +371,7 @@ export function PackingMachinesBlock({
           confirmRun ? (
             <p>
               <span dir="auto">{confirmRun.name || confirmRun.code}</span> · {n0(confirmRun.bags)}{" "}
-              bags
+              {confirmMachine?.count_unit ?? "bags"}
               {confirmRun.operator ? (
                 <>
                   {" "}
@@ -356,13 +401,18 @@ function SheetMachineCard({
   line,
   oee,
   onDelete,
+  linkedCodes,
 }: {
   machine: PackingMachine;
   runs: MachineRun[];
   line: MachineLine;
   oee: MachineOee | undefined;
   onDelete?: (run: MachineRun) => void;
+  /** Twist: the wrapped SKUs packed that day, which its paper rows link to. */
+  linkedCodes?: string[];
 }) {
+  const unit = machine.count_unit;
+  const item = unit === "pieces" ? "paper" : "SKU";
   const [open, setOpen] = useState(false);
   const bags = runs.reduce((s, r) => s + r.bags, 0);
   const kg = bagsKg(Number(line.bags) || 0, Number(line.bagG) || null);
@@ -373,7 +423,9 @@ function SheetMachineCard({
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-semibold">{machine.name}</span>
-        <span className="text-xs text-muted-foreground">{machine.speed_per_min} bags/min</span>
+        <span className="text-xs text-muted-foreground">
+          {machine.speed_per_min} {unit}/min
+        </span>
       </div>
       <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`${machine.name} shifts`}>
         {SHIFTS.map((s) => {
@@ -405,7 +457,7 @@ function SheetMachineCard({
               </span>
               {rs.length > 0 && (
                 <span className="truncate text-[11px] text-muted-foreground">
-                  {rs.length} {rs.length === 1 ? "SKU" : "SKUs"}
+                  {rs.length} {rs.length === 1 ? item : `${item}s`}
                   {rs[0].operator ? ` · ${rs[0].operator.split(" ")[0]}` : ""}
                 </span>
               )}
@@ -426,7 +478,8 @@ function SheetMachineCard({
         <>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span className="tabular-nums">
-              {line.shifts} {line.shifts === 1 ? "shift" : "shifts"} · {n0(bags)} bags
+              {line.shifts} {line.shifts === 1 ? "shift" : "shifts"} · {n0(bags)}{" "}
+              {unitWord(unit, bags)}
             </span>
             {kg !== null && <span className="tabular-nums">· {n0(kg)} kg</span>}
             {oee && oee.faultMin > 0 && (
@@ -449,7 +502,9 @@ function SheetMachineCard({
             className="flex min-h-11 items-center gap-1 self-start text-xs font-semibold text-primary md:min-h-8"
           >
             <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
-            {open ? "Hide SKUs" : `SKUs and operators (${runs.length})`}
+            {open
+              ? `Hide ${item}s`
+              : `${item === "paper" ? "Papers" : "SKUs"} and operators (${runs.length})`}
           </button>
           {open && (
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border text-xs">
@@ -463,6 +518,14 @@ function SheetMachineCard({
                     <span className="block truncate text-muted-foreground" dir="auto">
                       {r.operator || "—"}
                     </span>
+                    {linkedCodes && !r.sku_id && (
+                      <span
+                        className="block truncate text-muted-foreground tabular-nums"
+                        title={`Paper ${r.code}`}
+                      >
+                        → {linkedCodes.length ? linkedCodes.join(" · ") : "no wrapped SKU packed"}
+                      </span>
+                    )}
                   </span>
                   <span className="shrink-0 text-right tabular-nums">
                     <span className="block font-semibold">{n0(r.bags)}</span>
@@ -591,8 +654,8 @@ function SheetPastePanel({
     >
       <p className="text-xs text-muted-foreground">
         Copy the machine sheet from Excel, every shift at once: Code · Type · Operator · Bag weight
-        · Machine · D-Speed · Total Quantity · Shift. It replaces what the machines had for this
-        day.
+        · Machine · D-Speed · Total Quantity · Shift. Twist sheets have Paper weight · Piece weight
+        in place of Bag weight. It replaces what the machines had for this day.
       </p>
       <Textarea
         aria-label="Machine sheet rows"
@@ -611,8 +674,8 @@ function SheetPastePanel({
             <thead className="bg-muted/60 text-muted-foreground">
               <tr>
                 <th className="px-2 py-1.5 text-left font-semibold">Machine</th>
-                <th className="px-2 py-1.5 text-left font-semibold">SKU</th>
-                <th className="px-2 py-1.5 text-right font-semibold">Bags</th>
+                <th className="px-2 py-1.5 text-left font-semibold">SKU / paper</th>
+                <th className="px-2 py-1.5 text-right font-semibold">Qty</th>
                 <th className="px-2 py-1.5 text-right font-semibold">D-Speed</th>
                 <th className="px-2 py-1.5 text-left font-semibold">Operator</th>
               </tr>
@@ -624,7 +687,8 @@ function SheetPastePanel({
                 return [
                   <tr key={`h-${s}`} className="border-t border-border bg-muted/40">
                     <td colSpan={5} className="px-2 py-1 font-semibold">
-                      Shift {s} · {rs.length} rows · {n0(rs.reduce((t, r) => t + r.bags, 0))} bags
+                      Shift {s} · {rs.length} rows · {n0(rs.reduce((t, r) => t + r.bags, 0))}{" "}
+                      {unitOfMachines(rs.flatMap((r) => (r.machine ? [r.machine] : [])))}
                     </td>
                   </tr>,
                   ...rs.map((r, i) => (

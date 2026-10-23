@@ -650,6 +650,7 @@ export type Database = {
       }
       packing_machines: {
         Row: {
+          count_unit: string
           created_at: string
           id: string
           is_active: boolean
@@ -659,6 +660,7 @@ export type Database = {
           speed_per_min: number
         }
         Insert: {
+          count_unit?: string
           created_at?: string
           id?: string
           is_active?: boolean
@@ -668,6 +670,7 @@ export type Database = {
           speed_per_min: number
         }
         Update: {
+          count_unit?: string
           created_at?: string
           id?: string
           is_active?: boolean
