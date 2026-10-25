@@ -22,6 +22,7 @@ import type {
   SeverityLevel,
 } from "@/lib/queries";
 import { iso } from "@/lib/date-utils";
+import { entryAvailableMin } from "@/lib/available";
 
 // Targets come from Settings › Targets (productionTargetsQuery). The bands
 // around them keep the shape the app always had: with the default 90% target,
@@ -291,7 +292,7 @@ export function sumEntries(entries: DailyEntry[]): Totals {
     }
     t.packingPlan += Number(e.packing_plan) || 0;
     t.packingActual += Number(e.packing_actual) || 0;
-    t.availableMin += Number(e.available_min) || 0;
+    t.availableMin += entryAvailableMin(e);
     t.reworkCooking += Number(e.rework_cooking) || 0;
     t.reworkMaking += Number(e.rework_making) || 0;
     t.reworkPacking += Number(e.rework_packing) || 0;

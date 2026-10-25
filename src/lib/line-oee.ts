@@ -13,6 +13,7 @@
 
 import { capacityFor, type LineCapacity } from "@/lib/capacity";
 import type { DailyEntry } from "@/lib/queries";
+import { entryAvailableMin } from "@/lib/available";
 
 export type OeeBasis = "kg" | "count";
 
@@ -59,7 +60,7 @@ export function lineOee(args: {
     }
     const minutes = cap.basis === "day" ? 1440 : 480;
     const rate = Number(perBasis) / minutes;
-    const a = Number(e.available_min) || 0;
+    const a = entryAvailableMin(e);
     avail += a;
     rateMin += rate * a;
     made += Number(actual) || 0;

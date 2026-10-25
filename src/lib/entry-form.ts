@@ -1,3 +1,4 @@
+import { maxAvailableMin } from "@/lib/available";
 // Pure helpers for the Daily Entry form (src/routes/entry.tsx).
 //
 // Kept free of React and Supabase imports so the rules that decide whether a
@@ -358,6 +359,7 @@ function checkNonNegative(v: string): string | null {
 export function validateValues(
   v: EntryFormValues,
   can: { production: boolean; downtime: boolean; areaOwners: boolean },
+  shift?: string,
 ): ValidationResult {
   const fields: ValidationResult["fields"] = {};
   if (can.production) {
@@ -380,8 +382,10 @@ export function validateValues(
   {
     const t = v.availableMin.trim();
     const n = Number(t);
-    if (t === "" || !Number.isFinite(n) || n <= 0 || n > MAX_DAY_MIN) {
-      fields.availableMin = "Enter 1 to 1,440 minutes";
+    const max = maxAvailableMin(shift);
+    if (t === "" || !Number.isFinite(n) || n <= 0 || n > max) {
+      fields.availableMin =
+        max === MAX_DAY_MIN ? "Enter 1 to 1,440 minutes" : "A shift has 1 to 480 minutes";
     }
   }
 

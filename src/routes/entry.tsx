@@ -743,6 +743,7 @@ function EntryPage() {
         downtime: canEditDowntime,
         areaOwners: canEditAreaOwners,
       },
+      shift,
     );
     if (check.count > 0) {
       setErrors(check);

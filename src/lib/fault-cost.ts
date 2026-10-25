@@ -17,6 +17,7 @@
 // running at 0 minutes, non-production time left out.
 import type { DailyEntry } from "@/lib/queries";
 import { faultKey } from "@/lib/maintenance-format";
+import { entryAvailableMin } from "@/lib/available";
 
 export interface CostStop {
   lineId: string | null;
@@ -84,7 +85,7 @@ export function faultCost(input: {
     }
     p.plan += Number(e.making_plan) || 0;
     p.made += Number(e.making_actual) || 0;
-    p.available += Number(e.available_min) || 0;
+    p.available += entryAvailableMin(e);
     p.days.add(e.entry_date);
   }
 
