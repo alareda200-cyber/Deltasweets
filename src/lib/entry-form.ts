@@ -44,12 +44,14 @@ export interface EntryFormValues {
   machines: MachineLine[];
 }
 
-// 1,440 is what 233 of the 234 saved entries use, shift A included — shift A
-// is in practice the plant's single daily shift, so this is not derived from
-// the shift.
+// A full day is 1,440 minutes and one shift 480 (Ala, 25 Oct 2026: shift
+// entries saved with 1,440 cut the Marshmallows OEE to about a third).
 export const DEFAULT_AVAILABLE_MIN = "1440";
+export const SHIFT_AVAILABLE_MIN = "480";
+export const defaultAvailableMin = (shift?: string) =>
+  shift && shift !== "DAY" ? SHIFT_AVAILABLE_MIN : DEFAULT_AVAILABLE_MIN;
 
-export function emptyValues(): EntryFormValues {
+export function emptyValues(shift?: string): EntryFormValues {
   return {
     makingPlan: "",
     makingActual: "",
@@ -57,7 +59,7 @@ export function emptyValues(): EntryFormValues {
     makingActualCount: "",
     packingPlan: "",
     packingActual: "",
-    availableMin: DEFAULT_AVAILABLE_MIN,
+    availableMin: defaultAvailableMin(shift),
     reworkCooking: "0",
     reworkMaking: "0",
     reworkPacking: "0",

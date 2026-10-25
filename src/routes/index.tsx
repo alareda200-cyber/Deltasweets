@@ -1,6 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { OeeSection } from "@/components/dashboard/PackingCards";
+import { packedSkusQuery } from "@/lib/packing";
+import { withPackedActual } from "@/lib/packed-actual";
 import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, FileDown, Inbox, Loader2, Plus } from "lucide-react";
@@ -490,7 +492,12 @@ function PeriodBody({
   const countUnit = line.making_count_unit?.trim() || null;
   const stage = pdfBothStages || (pickedStage === "count" && !countUnit) ? "making" : pickedStage;
   const entriesQ = useQuery(entriesQuery(line.id, from, to));
-  const entries = entriesQ.data;
+  // Packing actual from Plan adherence's pasted SKUs (src/lib/packed-actual.ts).
+  const packedQ = useQuery(packedSkusQuery(from, to));
+  const entries = useMemo(
+    () => withPackedActual(entriesQ.data, packedQ.data),
+    [entriesQ.data, packedQ.data],
+  );
   const entryIds = useMemo(() => (entries ?? []).map((e) => e.id), [entries]);
   const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entryIds));
   const ownersQ = useQuery(entryAreaOwnersForEntriesQuery(entryIds));
@@ -514,10 +521,15 @@ function PeriodBody({
   const today = iso(new Date());
   const trendWindow = useMemo(() => faultTrendWindow(today), [today]);
   const trendEntriesQ = useQuery(allLinesEntriesQuery(trendWindow.from, trendWindow.to));
+  const trendPackedQ = useQuery(packedSkusQuery(trendWindow.from, trendWindow.to));
+  const trendEntries = useMemo(
+    () => withPackedActual(trendEntriesQ.data, trendPackedQ.data),
+    [trendEntriesQ.data, trendPackedQ.data],
+  );
   const trendIds = useMemo(() => (trendEntriesQ.data ?? []).map((e) => e.id), [trendEntriesQ.data]);
   const trendDowntimesQ = useQuery(entryDowntimesForEntriesQuery(trendIds));
   const trend: TrendData = {
-    entries: trendEntriesQ.data,
+    entries: trendEntries,
     downtimes: trendEntriesQ.data && trendIds.length === 0 ? [] : trendDowntimesQ.data,
     loading: trendEntriesQ.isPending,
     error: trendEntriesQ.isError || trendDowntimesQ.isError,

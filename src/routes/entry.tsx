@@ -100,6 +100,9 @@ import {
   changedFields,
   decideSwitch,
   emptyValues,
+  defaultAvailableMin,
+  DEFAULT_AVAILABLE_MIN,
+  SHIFT_AVAILABLE_MIN,
   formatDay,
   formatSavedAt,
   sameDowntimes,
@@ -367,7 +370,8 @@ function EntryPage() {
   const [shift, setShift] = useState(search.shift ?? "DAY");
   const supervisor = "";
   const operator = "";
-  const initial = useMemo(() => emptyValues(), []);
+  // first render only: the slot's shift picks 1,440 or 480 minutes
+  const [initial] = useState(() => emptyValues(search.shift ?? "DAY"));
   const [comments, setComments] = useState(initial.comments);
   const [makingPlan, setMakingPlan] = useState(initial.makingPlan);
   const [makingActual, setMakingActual] = useState(initial.makingActual);
@@ -561,8 +565,17 @@ function EntryPage() {
     }
     setSlot({ status: "empty" });
     setEditingSaved(false);
-    if (decision === "carry") return; // keep the unsaved new entry as typed
-    const blank = emptyValues();
+    if (decision === "carry") {
+      // keep the unsaved new entry as typed, but a default left untouched
+      // follows the slot: 1,440 for a full day, 480 for a shift
+      setAvailableMin((v) =>
+        v === DEFAULT_AVAILABLE_MIN || v === SHIFT_AVAILABLE_MIN
+          ? defaultAvailableMin(target.shift)
+          : v,
+      );
+      return;
+    }
+    const blank = emptyValues(target.shift);
     applyValues(blank);
     setBaseline(blank);
   }
@@ -957,7 +970,7 @@ function EntryPage() {
 
       // If the deleted entry is the one currently loaded in the form, clear it.
       if (targetId === currentId) {
-        const blank = emptyValues();
+        const blank = emptyValues(shift);
         applyValues(blank);
         setBaseline(blank);
         setSlot({ status: "empty" });
@@ -1008,7 +1021,7 @@ function EntryPage() {
       setDate(target.date);
       setShift(target.shift);
       applyValues(copied);
-      setBaseline(emptyValues());
+      setBaseline(emptyValues(target.shift));
       setReadOnly(false);
       setErrors(null);
       setShowHistory(false);
@@ -1639,7 +1652,7 @@ function EntryPage() {
             variant="outline"
             className="max-md:h-11"
             onClick={() => {
-              const blank = emptyValues();
+              const blank = emptyValues(shift);
               applyValues(blank);
               setBaseline(blank);
               void reloadSlot();

@@ -84,6 +84,19 @@ export function PackingMachinesBlock({
     return s + (r.shifts > 0 ? (bagsKg(Number(r.bags) || 0, Number(r.bagG) || null) ?? 0) : 0);
   }, 0);
   const anyRun = machines.some((m) => rowOf(m.id).shifts > 0);
+  // A machine can pack another line's SKUs (Rovema 4 packs Marshmallows). The
+  // machine's OEE stays with its line, but those SKUs' kg belong to their own
+  // line (Ala, 25 Oct 2026), so they leave this line's machines-vs-SKUs check.
+  const lineId = machines[0]?.line_id;
+  const skuLine = useMemo(() => new Map(skus.map((x) => [x.id, x.line_id])), [skus]);
+  const otherRuns = sheetMode
+    ? myRuns.filter((r) => {
+        const l = r.sku_id ? skuLine.get(r.sku_id) : null;
+        return !!l && l !== lineId;
+      })
+    : [];
+  const otherKg = otherRuns.reduce((t, r) => t + (bagsKg(r.bags, r.bag_g) ?? 0), 0);
+  const ownKg = machinesKg - otherKg;
 
   // The form's machine lines follow the sheet rows that are left, the same
   // way the database sums them, so saving the entry afterwards agrees.
@@ -349,14 +362,22 @@ export function PackingMachinesBlock({
           data-testid="machines-vs-skus"
           className={cn(
             "rounded-lg px-3 py-2 text-xs font-medium",
-            Math.abs(machinesKg - skuKg) <= skuKg * 0.05
+            Math.abs(ownKg - skuKg) <= skuKg * 0.05
               ? "bg-success/10 text-success-strong"
               : "bg-warning/10 text-warning-strong",
           )}
         >
-          Machines {kgFmt(machinesKg)} kg vs SKUs {kgFmt(skuKg)} kg (
-          {machinesKg - skuKg >= 0 ? "+" : ""}
-          {kgFmt(machinesKg - skuKg)} kg).
+          Machines {kgFmt(ownKg)} kg vs SKUs {kgFmt(skuKg)} kg ({ownKg - skuKg >= 0 ? "+" : ""}
+          {kgFmt(ownKg - skuKg)} kg).
+          {otherKg > 0 && (
+            <span data-testid="machines-other-line" className="block font-normal">
+              {[...new Set(otherRuns.map((r) => machines.find((m) => m.id === r.machine_id)?.name))]
+                .filter(Boolean)
+                .join(", ")}{" "}
+              also packed {kgFmt(otherKg)} kg of other lines&rsquo; SKUs — counted on their line,
+              not here.
+            </span>
+          )}
         </p>
       )}
       <ConfirmDialog

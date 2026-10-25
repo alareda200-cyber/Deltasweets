@@ -22,6 +22,8 @@ import {
   type DailyEntry,
 } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { packedSkusQuery } from "@/lib/packing";
+import { withPackedActual } from "@/lib/packed-actual";
 
 interface RecapSearch {
   month?: string;
@@ -102,7 +104,12 @@ function RecapPage() {
   const { data: lines } = useSuspenseQuery(linesQuery);
   const { data: targets = DEFAULT_TARGETS } = useQuery(productionTargetsQuery());
   const entriesQ = useQuery(monthEntriesQuery(b.from, b.to));
-  const entries = useMemo(() => entriesQ.data ?? [], [entriesQ.data]);
+  // Packing actual from Plan adherence's pasted SKUs (src/lib/packed-actual.ts).
+  const packedQ = useQuery(packedSkusQuery(b.from, b.to));
+  const entries = useMemo(
+    () => withPackedActual(entriesQ.data, packedQ.data) ?? [],
+    [entriesQ.data, packedQ.data],
+  );
   const downtimesQ = useQuery(entryDowntimesForEntriesQuery(entries.map((e) => e.id)));
   const eventsQ = useQuery({
     ...maintenanceEventsQuery(null, null, null, b.from, b.to),
