@@ -5,8 +5,8 @@
 //   A 08:00–16:00 on the day · B 16:00–24:00 on the day · C 00:00–08:00 the next day.
 // For each machine in each shift it ran (has sheet rows):
 //   planned = 480 − preventive work on the machine inside the shift
-//   down    = its own faults + the line's stops (stops_line, a stoppage as one
-//             window) inside the shift, overlaps once, never more than planned
+//   down    = its own faults inside the shift, overlaps once, never more than
+//             planned (line stops don't stop the packing machines — 25 Oct 2026)
 //   run     = planned − down
 //   A = run ÷ planned · P = (bags ÷ speed from Settings) ÷ run
 //   Q = the line's packing quality that day; while the day has no entry Q is
@@ -19,7 +19,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MaintenanceEvent, MaintenanceStoppage } from "@/lib/queries";
-import { collapseStoppageEvents } from "@/lib/queries";
 import type { MachineRun, PackingMachine } from "@/lib/packing";
 import { SHIFT_MIN } from "@/lib/oee";
 
@@ -150,13 +149,6 @@ export function computeShiftOee(args: {
   const Q = args.Q;
   const byId = new Map(args.machines.map((m) => [m.id, m]));
 
-  const lineStops = collapseStoppageEvents(
-    args.events.filter((e) => e.line_id === args.lineId),
-    args.stoppages,
-  )
-    .filter((e) => e.stops_line && !e.machine_id && e.type !== "preventive")
-    .map((e) => interval(e, now));
-
   // cells: shift × machine
   const cellMap = new Map<string, ShiftCell>();
   for (const r of args.runs) {
@@ -198,7 +190,7 @@ export function computeShiftOee(args: {
     const faults = own.filter((e) => e.type !== "preventive").map((e) => interval(e, now));
     const prev = own.filter((e) => e.type === "preventive").map((e) => interval(e, now));
     c.plannedMin = Math.max(0, SHIFT_MIN - unionMinutesWithin(prev, win));
-    c.downMin = Math.min(c.plannedMin, unionMinutesWithin([...faults, ...lineStops], win));
+    c.downMin = Math.min(c.plannedMin, unionMinutesWithin(faults, win));
     c.runMin = Math.max(0, c.plannedMin - c.downMin);
     c.idealMin = c.machine.speed_per_min > 0 ? c.bags / c.machine.speed_per_min : 0;
     c.P = ratio(c.idealMin, c.runMin);

@@ -466,9 +466,8 @@ function PackingOeeCard({
             />
           )}
           <p className="text-xs text-muted-foreground">
-            Lost {mins(oee.lostToStopsMin)} min to faults and line stops and{" "}
-            {mins(oee.lostToSpeedMin)} min to running below ideal speed, out of{" "}
-            {mins(oee.plannedMin)} planned machine minutes.
+            Lost {mins(oee.lostToStopsMin)} min to machine faults and {mins(oee.lostToSpeedMin)} min
+            to running below ideal speed, out of {mins(oee.plannedMin)} planned machine minutes.
           </p>
           <ul className="flex flex-col" data-testid="oee-machines">
             {oee.machines.map((m) => {

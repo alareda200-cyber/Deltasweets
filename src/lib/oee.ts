@@ -4,9 +4,11 @@
 //   planned  = shifts run (0–3, from the daily entry) × 480 min
 //              − preventive work logged on that machine
 //   down     = the machine's own faults (maintenance events with its
-//              machine_id) together with the line's stops (stops_line = true,
-//              a stoppage counted as one window), overlaps counted once,
-//              never more than planned
+//              machine_id), overlaps counted once, never more than planned.
+//              The line's stops are NOT counted: when the making line stops
+//              (a depositor servo…) the packing machines keep packing from
+//              stock (Ala, 25 Oct 2026 — Rovema 2 packed 68,050 bags in a
+//              shift with 88 min of line stops, which showed as P 116%).
 //   run      = planned − down
 //   A = run ÷ planned
 //   P = (bags ÷ ideal speed) ÷ run       ideal minutes ÷ run minutes
@@ -19,7 +21,6 @@
 // fault runs until now.
 
 import type { MaintenanceEvent, MaintenanceStoppage } from "@/lib/queries";
-import { collapseStoppageEvents } from "@/lib/queries";
 import type { PackingMachine } from "@/lib/packing";
 
 export const SHIFT_MIN = 480;
@@ -65,7 +66,7 @@ export interface MachineOee extends OeeFigures {
 
 export interface LineOee extends OeeFigures {
   machines: MachineOee[];
-  /** Minutes lost to faults and line stops, and to running below ideal speed. */
+  /** Minutes lost to the machines' faults, and to running below ideal speed. */
   lostToStopsMin: number;
   lostToSpeedMin: number;
   packed: number;
@@ -156,12 +157,6 @@ export function computeLineOee(args: {
     [...daysOfQuality].map(([day, list]) => [day, lineQuality(list).Q]),
   );
 
-  // The line's stops: stops_line = true, faults only, a stoppage as one window.
-  const lineEvents = args.events.filter((e) => e.line_id === args.lineId);
-  const lineStops = collapseStoppageEvents(lineEvents, args.stoppages)
-    .filter((e) => e.stops_line && !e.machine_id && e.type !== "preventive")
-    .map((e) => interval(e, now));
-
   const rangeWin: Interval = [dayBounds(args.from)[0], dayBounds(args.to)[1]];
 
   const machines = args.machines.map((m): MachineOee => {
@@ -194,7 +189,7 @@ export function computeLineOee(args: {
       const win = dayBounds(day);
       const dayPlanned = Math.max(0, d.shifts * SHIFT_MIN - unionMinutesWithin(prevIv, win));
       const dayFault = Math.min(dayPlanned, unionMinutesWithin(faultIv, win));
-      const dayDown = Math.min(dayPlanned, unionMinutesWithin([...faultIv, ...lineStops], win));
+      const dayDown = Math.min(dayPlanned, unionMinutesWithin(faultIv, win));
       planned += dayPlanned;
       down += dayDown;
       faultMin += dayFault;
