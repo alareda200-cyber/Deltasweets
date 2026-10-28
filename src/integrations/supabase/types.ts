@@ -725,6 +725,10 @@ export type Database = {
           day: string
           id: string
           kg: number | null
+          kind: string
+          client: string | null
+          country: string | null
+          note: string | null
           line_id: string
           qty: number
           sku_id: string | null
@@ -736,6 +740,10 @@ export type Database = {
           day: string
           id?: string
           kg?: number | null
+          kind?: string
+          client?: string | null
+          country?: string | null
+          note?: string | null
           line_id: string
           qty: number
           sku_id?: string | null
@@ -747,9 +755,70 @@ export type Database = {
           day?: string
           id?: string
           kg?: number | null
+          kind?: string
+          client?: string | null
+          country?: string | null
+          note?: string | null
           line_id?: string
           qty?: number
           sku_id?: string | null
+        }
+        Relationships: []
+      }
+      sku_orders: {
+        Row: {
+          client: string | null
+          code: string
+          company_id: string
+          country: string | null
+          created_at: string
+          created_by: string | null
+          delay_reason: string | null
+          id: string
+          month: string
+          note: string | null
+          order_code: string | null
+          pm_date: string | null
+          qty: number
+          seq: number
+          sku_id: string | null
+          type: string | null
+        }
+        Insert: {
+          client?: string | null
+          code: string
+          company_id?: string
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          delay_reason?: string | null
+          id?: string
+          month: string
+          note?: string | null
+          order_code?: string | null
+          pm_date?: string | null
+          qty: number
+          seq: number
+          sku_id?: string | null
+          type?: string | null
+        }
+        Update: {
+          client?: string | null
+          code?: string
+          company_id?: string
+          country?: string | null
+          created_at?: string
+          created_by?: string | null
+          delay_reason?: string | null
+          id?: string
+          month?: string
+          note?: string | null
+          order_code?: string | null
+          pm_date?: string | null
+          qty?: number
+          seq?: number
+          sku_id?: string | null
+          type?: string | null
         }
         Relationships: []
       }

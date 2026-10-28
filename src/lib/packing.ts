@@ -1,6 +1,7 @@
 // Packing machines, SKUs and monthly forecasts (migration
 // 20261019120000_packing_oee). The database keeps the company scope, so each
 // query returns only the company in view.
+import type { OrderLine } from "@/lib/orders";
 import { queryOptions } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { selectAllRows } from "@/lib/queries";
@@ -78,6 +79,11 @@ export interface PackedSku {
   code: string;
   qty: number;
   kg: number | null;
+  /** FG workbook › Entry: Local/Export, client, country (28 Oct 2026). */
+  kind: "local" | "export";
+  client: string | null;
+  country: string | null;
+  note: string | null;
 }
 
 /** Packed SKUs of the company in view between two days (inclusive). */
@@ -88,7 +94,7 @@ export const packedSkusQuery = (from: string, to: string) =>
       const rows = await selectAllRows(() =>
         supabase
           .from("packed_skus")
-          .select("id, line_id, day, sku_id, code, qty, kg")
+          .select("id, line_id, day, sku_id, code, qty, kg, kind, client, country, note")
           .gte("day", from)
           .lte("day", to)
           .order("day")
@@ -98,6 +104,7 @@ export const packedSkusQuery = (from: string, to: string) =>
         ...r,
         qty: Number(r.qty),
         kg: r.kg == null ? null : Number(r.kg),
+        kind: r.kind === "export" ? "export" : "local",
       }));
     },
   });
@@ -249,5 +256,29 @@ export const machineEventsQuery = (machineIds: string[], from: string, to: strin
         .or(`resolved_at.is.null,resolved_at.gte.${startIso}`);
       if (error) throw error;
       return (data ?? []) as unknown as import("@/lib/queries").MaintenanceEvent[];
+    },
+  });
+
+/** B2B and export order lines (FG workbook › B2B & Export) of the months in [from, to]. */
+export const skuOrdersQuery = (fromMonth: string, toMonth: string) =>
+  queryOptions({
+    queryKey: ["sku-orders", fromMonth, toMonth],
+    queryFn: async (): Promise<OrderLine[]> => {
+      const rows = await selectAllRows(() =>
+        supabase
+          .from("sku_orders")
+          .select(
+            "id, month, seq, code, order_code, qty, client, country, type, pm_date, delay_reason, note",
+          )
+          .gte("month", fromMonth)
+          .lte("month", toMonth)
+          .order("month")
+          .order("seq"),
+      ).catch((e: { code?: string }) => {
+        // before migration 20261028120000 the table isn't there: no orders
+        if (e?.code === "PGRST205" || e?.code === "42P01") return [];
+        throw e;
+      });
+      return (rows as OrderLine[]).map((r) => ({ ...r, qty: Number(r.qty) }));
     },
   });
