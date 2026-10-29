@@ -48,6 +48,7 @@ export function PlanDaily({
   skus,
   canEdit,
   onRemoveDay,
+  pdf = false,
 }: {
   ad: Adherence;
   packed: PackedSku[];
@@ -57,9 +58,11 @@ export function PlanDaily({
   skus: Sku[];
   canEdit: boolean;
   onRemoveDay: (day: string, lineId: string) => void;
+  // PDF export: the calendar and its legend alone, all lines, nothing picked.
+  pdf?: boolean;
 }) {
   const [line, setLine] = useState("");
-  const [sel, setSel] = useState<string | null>(() => ad.lastDay);
+  const [sel, setSel] = useState<string | null>(() => (pdf ? null : ad.lastDay));
   const [open, setOpen] = useState<string | null>(null);
   const lineIds = useMemo(() => {
     const kg = new Map<string, number>();
@@ -73,12 +76,83 @@ export function PlanDaily({
   const lead = first ? (new Date(`${first}T00:00:00`).getDay() + 1) % 7 : 0;
   const picked = sel ? ad.daily.find((d) => d.day === sel) : undefined;
 
+  const calendar = (
+    <section
+      className="min-w-0 rounded-2xl border border-border bg-card p-3 shadow-card md:p-4"
+      data-pdf-section={pdf ? "daily" : undefined}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold md:text-base">
+          {first ? monthShort(first) : ""} · tons a day{line ? ` · ${lineName(line)}` : ""}
+          {pdf ? " · all lines" : ""}
+        </h2>
+        <span className="text-[11px] text-muted-foreground">
+          colour = local t vs forecast pace {tons(pace)} t{pdf ? "" : " · tap a day"}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-7 gap-1 md:gap-1.5" data-testid="packed-days">
+        {WEEK.map((w) => (
+          <span key={w} className="text-center text-[11px] font-semibold text-muted-foreground">
+            {w}
+          </span>
+        ))}
+        {Array.from({ length: lead }, (_, i) => (
+          <span key={`lead-${i}`} />
+        ))}
+        {ad.daily.map((d) => {
+          const v = valueOf(d);
+          const has = d.localKg + d.exportKg > 0;
+          const tone = has && v > 0 ? toneOf(v, pace, d.working) : "none";
+          return (
+            <button
+              key={d.day}
+              type="button"
+              disabled={!has}
+              aria-pressed={sel === d.day}
+              aria-label={`${shortDay(d.day)}${has ? `, ${tons(v)} t` : d.working ? ", nothing packed" : ", day off"}`}
+              onClick={() => {
+                setSel(sel === d.day ? null : d.day);
+                setOpen(null);
+              }}
+              data-tone={tone}
+              className={cn(
+                "flex min-h-12 flex-col justify-between rounded-lg border p-1 text-left md:min-h-14 md:p-1.5",
+                has ? TONE[tone] : "border-dashed border-border text-muted-foreground",
+                !has && d.day > today && "opacity-50",
+                d.day === today && "outline outline-2 outline-offset-1 outline-primary",
+                sel === d.day && "ring-2 ring-foreground ring-offset-1 ring-offset-card",
+              )}
+            >
+              <span className="text-[10.5px] font-bold opacity-80">
+                {dayNum(d.day)}
+                {d.friday ? <span className="hidden sm:inline"> · Fri</span> : null}
+              </span>
+              <span className="text-xs font-extrabold tabular-nums md:text-base">
+                {has ? tons(v) : d.working ? "—" : "off"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {LEGEND.map((l) => (
+          <span key={l.tone} className="inline-flex items-center gap-1">
+            <i aria-hidden="true" className={cn("h-2.5 w-2.5 rounded-sm border", TONE[l.tone])} />
+            {l.label}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+  if (pdf) return calendar;
+
   return (
     <div className="flex flex-col gap-3 md:gap-4" data-testid="plan-daily">
       <div
         className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5"
         role="group"
         aria-label="Line"
+        data-pdf-exclude="true"
       >
         {["", ...lineIds].map((id) => (
           <button
@@ -105,71 +179,7 @@ export function PlanDaily({
         ))}
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:items-start md:gap-4">
-        <section className="min-w-0 rounded-2xl border border-border bg-card p-3 shadow-card md:p-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold md:text-base">
-              {first ? monthShort(first) : ""} · tons a day{line ? ` · ${lineName(line)}` : ""}
-            </h2>
-            <span className="text-[11px] text-muted-foreground">
-              colour = local t vs forecast pace {tons(pace)} t · tap a day
-            </span>
-          </div>
-          <div className="mt-2 grid grid-cols-7 gap-1 md:gap-1.5" data-testid="packed-days">
-            {WEEK.map((w) => (
-              <span key={w} className="text-center text-[11px] font-semibold text-muted-foreground">
-                {w}
-              </span>
-            ))}
-            {Array.from({ length: lead }, (_, i) => (
-              <span key={`lead-${i}`} />
-            ))}
-            {ad.daily.map((d) => {
-              const v = valueOf(d);
-              const has = d.localKg + d.exportKg > 0;
-              const tone = has && v > 0 ? toneOf(v, pace, d.working) : "none";
-              return (
-                <button
-                  key={d.day}
-                  type="button"
-                  disabled={!has}
-                  aria-pressed={sel === d.day}
-                  aria-label={`${shortDay(d.day)}${has ? `, ${tons(v)} t` : d.working ? ", nothing packed" : ", day off"}`}
-                  onClick={() => {
-                    setSel(sel === d.day ? null : d.day);
-                    setOpen(null);
-                  }}
-                  data-tone={tone}
-                  className={cn(
-                    "flex min-h-12 flex-col justify-between rounded-lg border p-1 text-left md:min-h-14 md:p-1.5",
-                    has ? TONE[tone] : "border-dashed border-border text-muted-foreground",
-                    !has && d.day > today && "opacity-50",
-                    d.day === today && "outline outline-2 outline-offset-1 outline-primary",
-                    sel === d.day && "ring-2 ring-foreground ring-offset-1 ring-offset-card",
-                  )}
-                >
-                  <span className="text-[10.5px] font-bold opacity-80">
-                    {dayNum(d.day)}
-                    {d.friday ? <span className="hidden sm:inline"> · Fri</span> : null}
-                  </span>
-                  <span className="text-xs font-extrabold tabular-nums md:text-base">
-                    {has ? tons(v) : d.working ? "—" : "off"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            {LEGEND.map((l) => (
-              <span key={l.tone} className="inline-flex items-center gap-1">
-                <i
-                  aria-hidden="true"
-                  className={cn("h-2.5 w-2.5 rounded-sm border", TONE[l.tone])}
-                />
-                {l.label}
-              </span>
-            ))}
-          </div>
-        </section>
+        {calendar}
 
         <section
           className="min-w-0 rounded-2xl border border-border bg-card p-3 shadow-card md:p-4"
@@ -297,6 +307,7 @@ function DayPanel({
               <Button
                 type="button"
                 variant={open === id ? "default" : "outline"}
+                data-pdf-exclude="true"
                 className="h-11 px-3 md:h-8"
                 onClick={() => setOpen(open === id ? null : id)}
                 aria-label={`${open === id ? "Close" : "Edit"} ${lineName(id)} ${shortDay(d.day)}`}
@@ -307,6 +318,7 @@ function DayPanel({
                 <Button
                   type="button"
                   variant="ghost"
+                  data-pdf-exclude="true"
                   size="icon"
                   className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive-strong md:h-8 md:w-8"
                   aria-label={`Remove ${lineName(id)} ${shortDay(d.day)}`}

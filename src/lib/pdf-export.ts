@@ -19,6 +19,70 @@ export interface PdfExportOptions {
   from: string;
   to: string;
   onProgress?: (message: string) => void;
+  // Optional, off for the dashboard. The file name to save under, instead of
+  // the one built from the dashboard name, line and dates.
+  filename?: string;
+  // Optional, off for the dashboard. Applies the sm:/md:/lg:/xl: rules to the
+  // container's descendants whatever the real window width, so an export from
+  // a phone lays out exactly like one from a 1280px window.
+  forceDesktopMedia?: boolean;
+}
+
+// Matches a breakpoint condition as Tailwind v4 emits it, "(width>=48rem)",
+// and the older "(min-width: 768px)" form.
+const MIN_WIDTH_RE = /^\(\s*(?:min-width\s*:|width\s*>=)\s*([\d.]+)(px|rem)\s*\)$/;
+
+/**
+ * A <style> that repeats every breakpoint rule active at DESKTOP_CAPTURE_WIDTH
+ * without its @media condition, scoped under [data-pdf-desktop] with :where()
+ * so each rule keeps its own specificity, and appended last so it wins over
+ * the base utilities just as the real media query would. Returns a cleanup.
+ */
+function forceDesktopMediaOn(container: HTMLElement): () => void {
+  const fits = (cond: string) => {
+    const m = MIN_WIDTH_RE.exec(cond.trim());
+    if (!m) return false;
+    const px = Number(m[1]) * (m[2] === "rem" ? 16 : 1);
+    return px <= DESKTOP_CAPTURE_WIDTH;
+  };
+  const out: string[] = [];
+  const walk = (rules: CSSRuleList) => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSMediaRule) {
+        if (!fits(rule.conditionText ?? rule.media.mediaText)) continue;
+        const inner = Array.from(rule.cssRules)
+          .map((r) => r.cssText)
+          .join("\n");
+        // Nested inside a style rule (unflattened CSS nesting): keep the parent selector.
+        const parent = rule.parentRule;
+        out.push(
+          parent instanceof CSSStyleRule
+            ? `:where([data-pdf-desktop]) { ${parent.selectorText} { ${inner} } }`
+            : `:where([data-pdf-desktop]) { ${inner} }`,
+        );
+      } else if (rule instanceof CSSStyleRule && rule.cssRules?.length) {
+        walk(rule.cssRules);
+      } else if (rule instanceof CSSGroupingRule && !(rule instanceof CSSMediaRule)) {
+        walk(rule.cssRules); // @layer, @supports
+      }
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      walk(sheet.cssRules);
+    } catch {
+      // A cross-origin sheet can't be read; it holds no app breakpoints.
+    }
+  }
+  const style = document.createElement("style");
+  style.dataset.pdfDesktop = "true";
+  style.textContent = out.join("\n");
+  document.head.appendChild(style);
+  container.dataset.pdfDesktop = "true";
+  return () => {
+    style.remove();
+    delete container.dataset.pdfDesktop;
+  };
 }
 
 interface LogoInfo {
@@ -135,6 +199,8 @@ export async function exportDashboardToPdf({
   from,
   to,
   onProgress,
+  filename: filenameOverride,
+  forceDesktopMedia,
 }: PdfExportOptions): Promise<void> {
   onProgress?.("Preparing PDF…");
   const logo = await loadLogo();
@@ -176,6 +242,7 @@ export async function exportDashboardToPdf({
   for (const el of variantEls) {
     el.style.display = el.dataset.pdfVariant === "mobile" ? "none" : "block";
   }
+  const undoDesktopMedia = forceDesktopMedia ? forceDesktopMediaOn(container) : null;
 
   // Width and display changes above resize the charts (Recharts measures its
   // box with a ResizeObserver, which reports on a later frame). Capture only
@@ -253,9 +320,12 @@ export async function exportDashboardToPdf({
     }
 
     onProgress?.("Saving file…");
-    const filename = `${dashboardName.replace(/[^a-z0-9]+/gi, "_")}_${lineName.replace(/[^a-z0-9]+/gi, "_")}_${from}_to_${to}.pdf`;
+    const filename =
+      filenameOverride ??
+      `${dashboardName.replace(/[^a-z0-9]+/gi, "_")}_${lineName.replace(/[^a-z0-9]+/gi, "_")}_${from}_to_${to}.pdf`;
     doc.save(filename);
   } finally {
+    undoDesktopMedia?.();
     container.style.width = originalWidth;
     container.style.maxWidth = originalMaxWidth;
     sectionEls.forEach((el, i) => {

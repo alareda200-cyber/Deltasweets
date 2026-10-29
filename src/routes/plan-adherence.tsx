@@ -13,13 +13,16 @@
 // Monthly (month by month), Orders. Data health closes the page.
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardPaste,
+  FileDown,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -49,7 +52,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SkuBoard } from "@/components/plan/PlanParts";
+import { useCompany } from "@/lib/companies";
+import { SkuBoard, SkuBoardPdf } from "@/components/plan/PlanParts";
 import { InsightCards, LineBullets, PlanHero } from "@/components/plan/PlanHero";
 import { buildInsights } from "@/lib/plan-insights";
 import { PlanDaily } from "@/components/plan/PlanDaily";
@@ -127,6 +131,13 @@ function PlanAdherencePage() {
   const [lineFilter, setLineFilter] = useState("");
   const [panel, setPanel] = useState<"fg" | "packed" | "forecast" | null>(null);
   const [dropDay, setDropDay] = useState<{ day: string; lineId: string } | null>(null);
+  const { current: company } = useCompany();
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
+  // While exporting, every tab's content renders together off screen for the
+  // capture; the page on screen, its tab and filters, never change.
+  const [pdfAll, setPdfAll] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const lineName = (id: string | null) =>
     id ? (lines.find((l) => l.id === id)?.name ?? "—") : "No line";
@@ -177,6 +188,45 @@ function PlanAdherencePage() {
 
   const loading = forecastsQ.isPending || packedQ.isPending || ordersQ.isPending;
   const failed = forecastsQ.isError || packedQ.isError || ordersQ.isError;
+  const monthEmpty =
+    ad.forecastKg === 0 && ad.packedKg === 0 && ad.exportKg === 0 && groups.length === 0;
+  const hasLineBullets = ad.lines.some((l) => l.forecastKg > 0 || l.packedKg > 0);
+
+  async function handleExportPdf() {
+    if (exporting || loading || failed || monthEmpty) return;
+    setExporting(true);
+    setExportProgress("Preparing PDF…");
+    setPdfAll(true);
+    try {
+      // Let React mount the off-screen copy and its chart measure itself.
+      await new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300))),
+      );
+      const container = exportRef.current;
+      if (!container) throw new Error("Nothing to export");
+      const companyName = company?.name ?? "Plant";
+      const { exportDashboardToPdf } = await import("@/lib/pdf-export");
+      await exportDashboardToPdf({
+        container,
+        dashboardName: "Plan adherence",
+        lineName: companyName,
+        from: monthStart,
+        to: ad.lastDay ?? monthEnd,
+        onProgress: (msg) => setExportProgress(msg),
+        filename: `Plan_adherence_${companyName.replace(/[^a-z0-9]+/gi, "_")}_${month}.pdf`,
+        forceDesktopMedia: true,
+      });
+      toast.success("PDF exported successfully");
+      void logAudit("plan.export_pdf", "plan", month, { month });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`PDF export failed: ${msg}`);
+    } finally {
+      setPdfAll(false);
+      setExporting(false);
+      setExportProgress("");
+    }
+  }
   const canUpdate = canPastePacked || canForecast;
   const setView = (v: View) =>
     navigate({
@@ -222,8 +272,11 @@ function PlanAdherencePage() {
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <div className="inline-flex h-11 items-center rounded-lg border border-border bg-card md:h-9">
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="inline-flex h-11 items-center rounded-lg border border-border bg-card md:h-9"
+              data-pdf-exclude="true"
+            >
               <button
                 type="button"
                 aria-label="Previous month"
@@ -266,10 +319,34 @@ function PlanAdherencePage() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+            <Button
+              variant="outline"
+              className="h-11 md:h-9"
+              onClick={handleExportPdf}
+              disabled={exporting || loading || failed || monthEmpty}
+              data-pdf-exclude="true"
+              data-testid="plan-export-pdf"
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              {exporting ? (
+                <span className="max-w-[9rem] truncate sm:max-w-none">
+                  {exportProgress || "Preparing PDF…"}
+                </span>
+              ) : (
+                <>
+                  <span className="hidden sm:inline">Export PDF</span>
+                  <span className="sm:hidden">PDF</span>
+                </>
+              )}
+            </Button>
             {canUpdate && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button className="h-11 md:h-9">
+                  <Button className="h-11 md:h-9" data-pdf-exclude="true">
                     <ClipboardPaste className="mr-1.5 h-4 w-4" />
                     <span className="hidden sm:inline">Update data</span>
                     <span className="sm:hidden">Update</span>
@@ -364,6 +441,7 @@ function PlanAdherencePage() {
               role="tablist"
               aria-label="Plan views"
               className="-mx-1 flex gap-1 overflow-x-auto rounded-2xl border border-border bg-card p-1 shadow-card md:mx-0"
+              data-pdf-exclude="true"
             >
               {tabs.map((t) => (
                 <button
@@ -450,6 +528,71 @@ function PlanAdherencePage() {
           </>
         )}
       </div>
+      {pdfAll &&
+        createPortal(
+          // Off screen, at the capture width: the whole month, all four tabs.
+          <div
+            ref={exportRef}
+            aria-hidden="true"
+            data-pdf-capturing="true"
+            className="pointer-events-none fixed top-0 flex w-[1280px] flex-col gap-4"
+            style={{ left: -20000 }}
+          >
+            <div data-pdf-section="hero">
+              <PlanHero ad={ad} groups={groups} closedNote={monthHasClosedDays} />
+            </div>
+            {insights.length > 0 && (
+              <div data-pdf-section="insights">
+                <InsightCards items={insights} />
+              </div>
+            )}
+            {(hasLineBullets || ad.noWeight > 0) && (
+              <div data-pdf-section="lines" className="flex flex-col gap-4">
+                {ad.noWeight > 0 && (
+                  <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs font-medium text-warning-strong">
+                    {ad.noWeight} forecast {ad.noWeight === 1 ? "SKU has" : "SKUs have"} no kg per
+                    unit in Settings › Packing, so {ad.noWeight === 1 ? "it is" : "they are"} left
+                    out of the kg totals.
+                  </p>
+                )}
+                <LineBullets
+                  ad={ad}
+                  lineName={lineName}
+                  color={color}
+                  selected=""
+                  onPick={() => {}}
+                />
+              </div>
+            )}
+            <SkuBoardPdf ad={ad} lineName={lineName} />
+            <PlanDaily
+              pdf
+              ad={ad}
+              packed={packedMonth}
+              today={today}
+              lineName={lineName}
+              color={color}
+              skus={skus}
+              canEdit={false}
+              onRemoveDay={() => {}}
+            />
+            <div data-pdf-section="monthly">
+              <PlanMonthly months={monthly} lineName={lineName} color={color} />
+            </div>
+            <div data-pdf-section="orders">
+              <PlanOrders groups={groups} skus={skus} monthLabel={monthLabel(month)} />
+            </div>
+            <div data-pdf-section="health">
+              <DataHealth
+                ad={ad}
+                packed={packedMonth}
+                forecastCount={(forecastsQ.data ?? []).length}
+                groups={groups}
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
       <ConfirmDialog
         open={!!dropDay}
         onOpenChange={(o) => !o && setDropDay(null)}
@@ -548,6 +691,7 @@ function PackedPastePanel({
     <section
       className="flex flex-col gap-3 rounded-xl border border-primary/40 bg-card p-4"
       data-testid="packed-panel"
+      data-pdf-exclude="true"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -681,6 +825,7 @@ function ForecastPastePanel({
     <section
       className="flex flex-col gap-3 rounded-xl border border-primary/40 bg-card p-4"
       data-testid="forecast-panel"
+      data-pdf-exclude="true"
     >
       <div>
         <h2 className="text-base font-semibold">Paste forecast · {monthLabel(month)}</h2>
