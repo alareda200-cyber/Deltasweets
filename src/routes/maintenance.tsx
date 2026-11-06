@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { withPackingOnlyDays } from "@/lib/packing-only-day";
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -1242,9 +1243,9 @@ function MaintenancePage() {
   const cost = useMemo(() => {
     if (!costRange) return { lines: [], rows: [], unpricedMinutes: 0 };
     if (!costEntriesQ.data) return null;
-    const entries = lineId
-      ? costEntriesQ.data.filter((e) => e.line_id === lineId)
-      : costEntriesQ.data;
+    // A Full-day entry next to shifts is packing-only (src/lib/packing-only-day.ts).
+    const all = withPackingOnlyDays(costEntriesQ.data) ?? [];
+    const entries = lineId ? all.filter((e) => e.line_id === lineId) : all;
     return faultCost({ stops: costStops, entries, lines });
   }, [costRange, costEntriesQ.data, costStops, lines, lineId]);
   const costDays = useMemo(() => {

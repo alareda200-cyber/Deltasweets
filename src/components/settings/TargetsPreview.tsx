@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { withPackingOnlyDays } from "@/lib/packing-only-day";
 import { useQuery } from "@tanstack/react-query";
 import { entriesQuery, linesQuery } from "@/lib/queries";
 import { JellyJar } from "@/components/motion";
@@ -42,7 +43,7 @@ export function TargetsPreview({
   const target = stage === "making" ? makingPct : packingPct;
   const days = useMemo(() => {
     const byDay = new Map<string, { actual: number; plan: number }>();
-    for (const e of entriesQ.data ?? []) {
+    for (const e of withPackingOnlyDays(entriesQ.data) ?? []) {
       const d = byDay.get(e.entry_date) ?? { actual: 0, plan: 0 };
       d.actual += (stage === "making" ? e.making_actual : e.packing_actual) ?? 0;
       d.plan += (stage === "making" ? e.making_plan : e.packing_plan) ?? 0;
