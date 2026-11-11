@@ -629,3 +629,857 @@
   --story-7a: oklch(0.2 0.04 255);
   --story-7b: oklch(0.38 0.16 262);
 }
+
+/* ── Plant floor (route /plant) ──────────────────────────────────────────
+   Mockup "Jammy Control Room" (approved 10 Nov 2026). The page is a stage of
+   its own: a night control room with a Day switch, glass panels over a slow
+   aurora. Its colours are its own tokens (not the app theme), so it reads the
+   same on a wall screen whatever theme the app is in. Everything is scoped
+   under .pf. The phone layout is a container query on the stage, so it also
+   holds inside a narrow window. */
+.pf {
+  --pf-bg: #070b17;
+  --pf-bg2: #0c1326;
+  --pf-panel: rgba(19, 27, 52, 0.66);
+  --pf-panel2: rgba(255, 255, 255, 0.05);
+  --pf-stroke: rgba(255, 255, 255, 0.1);
+  --pf-ink: #eaf0ff;
+  --pf-muted: #93a0bf;
+  --pf-pri: #6f9bff;
+  --pf-pri2: #9bbcff;
+  --pf-deep: #2b4fd6;
+  --pf-on-pri: #051034;
+  --pf-cyan: #3fd7e6;
+  --pf-candy: #ff6fa8;
+  --pf-good: #3ddc97;
+  --pf-warn: #ffb648;
+  --pf-bad: #ff5d6c;
+  --pf-sh: 0 24px 50px -28px rgba(0, 0, 0, 0.8);
+  --pf-aur: 0.55;
+  --pf-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --pf-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 16px 18px 18px;
+  color: var(--pf-ink);
+  color-scheme: dark;
+  font-size: 14px;
+  line-height: 1.45;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, var(--pf-bg2), transparent 60%), var(--pf-bg);
+  box-shadow:
+    0 40px 90px -50px rgba(10, 20, 70, 0.55),
+    0 0 0 1px rgba(120, 140, 220, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pf-cq {
+  container-type: inline-size;
+}
+.pf.pf-day {
+  --pf-bg: #eef2fc;
+  --pf-bg2: #dfe7fb;
+  --pf-panel: rgba(255, 255, 255, 0.8);
+  --pf-panel2: rgba(20, 40, 110, 0.05);
+  --pf-stroke: rgba(20, 40, 110, 0.12);
+  --pf-ink: #0f1836;
+  --pf-muted: #56618a;
+  --pf-pri: #2848c8;
+  --pf-pri2: #4a6cf0;
+  --pf-deep: #2848c8;
+  --pf-on-pri: #ffffff;
+  --pf-cyan: #0a9fb1;
+  --pf-candy: #d6336c;
+  --pf-good: #0f8a55;
+  --pf-warn: #b06a00;
+  --pf-bad: #d12f45;
+  --pf-sh: 0 24px 50px -30px rgba(30, 50, 130, 0.35);
+  --pf-aur: 0.5;
+  color-scheme: light;
+}
+.pf:fullscreen {
+  border-radius: 0;
+  overflow: auto;
+  padding: 22px 26px;
+}
+.pf button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pf button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.pf :focus-visible {
+  outline: 2px solid var(--pf-pri);
+  outline-offset: 2px;
+}
+.pf-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.pf-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.pf-aurora i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: var(--pf-aur);
+  animation: pf-drift 22s ease-in-out infinite alternate;
+}
+.pf-aurora i:nth-child(1) {
+  width: 520px;
+  height: 420px;
+  left: -120px;
+  top: -140px;
+  background: var(--pf-deep);
+}
+.pf-aurora i:nth-child(2) {
+  width: 460px;
+  height: 380px;
+  right: -140px;
+  top: 60px;
+  background: var(--pf-cyan);
+  opacity: calc(var(--pf-aur) * 0.5);
+  animation-duration: 27s;
+  animation-delay: -8s;
+}
+.pf-aurora i:nth-child(3) {
+  width: 420px;
+  height: 360px;
+  left: 35%;
+  bottom: -200px;
+  background: var(--pf-candy);
+  opacity: calc(var(--pf-aur) * 0.42);
+  animation-duration: 31s;
+  animation-delay: -15s;
+}
+.pf-aurora::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--pf-stroke) 1px, transparent 1px),
+    linear-gradient(90deg, var(--pf-stroke) 1px, transparent 1px);
+  background-size: 44px 44px;
+  opacity: 0.35;
+  mask-image: radial-gradient(900px 520px at 50% 0%, #000, transparent 75%);
+}
+@keyframes pf-drift {
+  to {
+    transform: translate3d(60px, 40px, 0) scale(1.15);
+  }
+}
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+@keyframes pf-alarm {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pf-bad) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+@keyframes pf-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+@keyframes pf-feedin {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.97);
+  }
+}
+
+/* head */
+.pf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.pf-title {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.pf-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+}
+.pf-title h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.pf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.pf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--pf-stroke);
+  background: var(--pf-panel2);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pf-chip.live {
+  color: var(--pf-good);
+  border-color: color-mix(in srgb, var(--pf-good) 45%, transparent);
+}
+.pf-chip.rep {
+  color: var(--pf-warn);
+  border-color: color-mix(in srgb, var(--pf-warn) 45%, transparent);
+}
+.pf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.pf-chip.live .pf-dot,
+.pf-lane .pf-dot {
+  animation: pf-pulse 1.6s ease-in-out infinite;
+}
+.pf-btn {
+  border: 0;
+  border-radius: 11px;
+  padding: 0 14px;
+  min-height: 38px;
+  font-weight: 600;
+  font-size: 13.5px;
+  background: linear-gradient(135deg, var(--pf-pri), var(--pf-pri2));
+  color: var(--pf-on-pri) !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 10px 22px -10px var(--pf-pri);
+  transition:
+    transform 0.25s var(--pf-spring),
+    box-shadow 0.25s;
+  white-space: nowrap;
+}
+.pf-btn:not(:disabled):hover {
+  transform: translateY(-2px);
+}
+.pf-btn:not(:disabled):active {
+  transform: scale(0.95);
+}
+.pf-btn.out {
+  background: var(--pf-panel2);
+  color: var(--pf-ink) !important;
+  border: 1px solid var(--pf-stroke);
+  box-shadow: none;
+}
+
+/* cards */
+.pf-grid {
+  display: grid;
+  gap: 12px;
+}
+.pf-g4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pf-g2 {
+  grid-template-columns: minmax(0, 2.5fr) minmax(0, 1fr);
+  align-items: start;
+}
+.pf-card {
+  position: relative;
+  min-width: 0;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--pf-stroke);
+  background: var(--pf-panel);
+  box-shadow: var(--pf-sh);
+  backdrop-filter: blur(16px) saturate(140%);
+  animation: pf-rise 0.75s var(--pf-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.pf-card h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.pf-card h2 small {
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--pf-muted);
+}
+.pf-sub {
+  color: var(--pf-muted);
+  font-size: 12px;
+}
+.pf-sub b {
+  color: var(--pf-ink);
+  font-weight: 600;
+}
+.pf-big {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.pf-big small {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--pf-muted);
+}
+.pf-orb {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-top: 6px;
+}
+.pf-orb-mid {
+  position: relative;
+  width: 104px;
+  height: 104px;
+}
+.pf-orb-mid svg {
+  transform: rotate(-90deg);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--pf-pri) 45%, transparent));
+}
+.pf-orb-mid circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.pf-orb-mid .bg {
+  stroke: var(--pf-panel2);
+}
+.pf-orb-mid .fg {
+  stroke: var(--pf-pri);
+  stroke-dasharray: 100;
+  stroke-dashoffset: calc(100 - var(--p, 0));
+  transition: stroke-dashoffset 1.2s var(--pf-ease);
+}
+.pf-orb-mid > div {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+.pf-rows {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+.pf-rows > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pf-rows i {
+  font-style: normal;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pf-muted);
+}
+.pf-rows i::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--k);
+}
+.pf-rows b {
+  white-space: nowrap;
+}
+
+/* lanes */
+.pf-lanes {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pf-lane {
+  position: relative;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 140px;
+  grid-template-areas: "info belt nums";
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--pf-stroke);
+  background: var(--pf-panel2);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 0.25s,
+    transform 0.35s var(--pf-ease),
+    background 0.25s;
+}
+@media (hover: hover) {
+  .pf-lane:hover {
+    border-color: var(--lc);
+    transform: translateX(4px);
+    background: color-mix(in srgb, var(--lc) 9%, transparent);
+  }
+}
+.pf-lane:focus-visible {
+  outline-color: var(--lc);
+}
+.pf-lane.stopped {
+  border-color: color-mix(in srgb, var(--pf-bad) 55%, transparent);
+  animation: pf-alarm 1.2s ease-in-out infinite;
+}
+.pf-info {
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.pf-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 700;
+  min-width: 0;
+}
+.pf-name i {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--lc);
+  box-shadow: 0 0 10px var(--lc);
+}
+.pf-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-st {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding-left: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--pf-good);
+  min-width: 0;
+}
+.pf-st .pf-dot {
+  align-self: center;
+  width: 6px;
+  height: 6px;
+}
+.pf-lane.stopped .pf-st {
+  color: var(--pf-bad);
+}
+.pf-lane.preventive .pf-st {
+  color: var(--pf-pri);
+}
+.pf-lane.sum-bad .pf-st {
+  color: var(--pf-warn);
+}
+.pf-lane.sum-ok .pf-st,
+.pf-lane.sum-bad .pf-dot,
+.pf-lane.sum-ok .pf-dot {
+  animation: none;
+}
+.pf-lane.off .pf-st {
+  color: var(--pf-muted);
+}
+.pf-lane.off .pf-dot {
+  animation: none;
+}
+.pf-more {
+  padding-left: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--pf-muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.pf-lane canvas {
+  grid-area: belt;
+  display: block;
+  width: 100%;
+  height: 60px;
+}
+.pf-nums {
+  grid-area: nums;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+  align-items: flex-end;
+  min-width: 0;
+}
+.pf-nums b {
+  font-size: 19px;
+  font-weight: 800;
+}
+.pf-nums small {
+  font-size: 11px;
+  color: var(--pf-muted);
+  white-space: nowrap;
+}
+
+/* timeline */
+.pf-scrub {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pf-stroke);
+}
+.pf-sc {
+  position: relative;
+  min-height: 44px;
+  padding: 6px 0 16px;
+}
+.pf-sc-map {
+  display: grid;
+  gap: 2px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pf-sc-map div {
+  position: relative;
+  height: 5px;
+  background: var(--pf-panel2);
+}
+.pf-sc-map i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 2px;
+}
+.pf-sc-map i.on {
+  background: color-mix(in srgb, var(--lc) 34%, transparent);
+  border-radius: 0;
+}
+.pf-sc-map i.stop {
+  background: var(--pf-bad);
+}
+.pf-sc-map i.pm {
+  background: var(--pf-pri);
+}
+.pf-sc-fill {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 16px;
+  width: var(--f, 100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--pf-pri) 22%, transparent)
+  );
+  border-right: 2px solid var(--pf-pri);
+  border-radius: 8px 0 0 8px;
+  box-shadow: 6px 0 18px -4px var(--pf-pri);
+  pointer-events: none;
+}
+.pf-sc input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+}
+.pf-sc input:disabled {
+  cursor: default;
+}
+.pf-sc input:focus-visible + .pf-sc-ticks {
+  color: var(--pf-pri);
+}
+.pf-sc-ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 12px;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--pf-muted);
+  pointer-events: none;
+}
+.pf-sc-ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.pf-sc-ticks span:first-child {
+  transform: none;
+}
+.pf-sc-ticks span:last-child {
+  transform: translateX(-100%);
+}
+.pf-sc-time {
+  min-width: 58px;
+  text-align: right;
+  font-size: 20px;
+  font-weight: 800;
+}
+.pf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--pf-muted);
+}
+.pf-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pf-legend span::before {
+  content: "";
+  width: 10px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--k);
+}
+.pf-legend a,
+.pf-note a {
+  color: var(--pf-pri);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* feed */
+.pf-feed {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.pf-feed li {
+  display: grid;
+  grid-template-columns: 40px 10px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 9px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: var(--pf-panel2);
+  font-size: 12.5px;
+}
+.pf-feed li.new {
+  animation: pf-feedin 0.6s var(--pf-spring) both;
+  border-color: color-mix(in srgb, var(--pf-pri) 45%, transparent);
+}
+.pf-feed time {
+  color: var(--pf-muted);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+.pf-feed li > i {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--k, var(--pf-muted));
+}
+.pf-feed b {
+  display: block;
+  font-weight: 600;
+}
+.pf-feed span span {
+  color: var(--pf-muted);
+  font-size: 11.5px;
+}
+.pf-empty {
+  margin-top: 10px;
+  padding: 14px;
+  border-radius: 11px;
+  background: var(--pf-panel2);
+  color: var(--pf-muted);
+  font-size: 12.5px;
+}
+.pf-note {
+  margin: 0;
+  color: var(--pf-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pf-skel {
+  height: 76px;
+  border-radius: 14px;
+  background: var(--pf-panel2);
+  animation: pf-skel 1.6s ease-in-out infinite;
+}
+@keyframes pf-skel {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pf-daynav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pf-daynav > button {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+.pf-chip:disabled {
+  opacity: 0.4;
+}
+.pf-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--pf-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--pf-warn) 12%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pf-banner svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--pf-warn);
+}
+.pf-banner button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-weight: 700;
+  color: var(--pf-pri);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* a narrow stage: phones */
+@container (max-width: 760px) {
+  .pf-g4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pf-g2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-orbcard,
+  .pf-widecard {
+    grid-column: 1 / -1;
+  }
+  .pf-big {
+    font-size: 26px;
+  }
+  .pf-lane {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "info nums"
+      "belt belt";
+    gap: 6px 10px;
+    padding: 10px 12px;
+  }
+  .pf-lane canvas {
+    height: 52px;
+  }
+  .pf-name span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .pf-nums b {
+    font-size: 17px;
+  }
+  .pf-scrub {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "map map"
+      "play live";
+    gap: 10px;
+  }
+  .pf-scrub .pf-sc {
+    grid-area: map;
+  }
+  .pf-scrub .pf-play {
+    grid-area: play;
+    justify-self: start;
+    min-height: 44px;
+  }
+  .pf-scrub .pf-live {
+    grid-area: live;
+    min-height: 44px;
+  }
+  .pf-scrub .pf-sc-time {
+    display: none;
+  }
+  .pf-chip {
+    min-height: 40px;
+  }
+  .pf-daynav > button {
+    width: 40px;
+  }
+}
+@container (max-width: 520px) {
+  .pf {
+    border-radius: 18px;
+    padding: 12px 12px 14px;
+  }
+  .pf-card {
+    padding: 12px;
+  }
+  .pf-title h1 {
+    font-size: 19px;
+  }
+  .pf-fs {
+    display: none;
+  }
+}

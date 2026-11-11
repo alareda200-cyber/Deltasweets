@@ -141,10 +141,18 @@ export function RightNowStrip({
     tone,
   );
 
+  // Every line on one screen, live: the Plant floor (route /plant).
+  const plantLink = (
+    <Link to="/plant" className="shrink-0 text-sm font-semibold text-primary hover:underline">
+      Plant floor ›
+    </Link>
+  );
+
   if (!canOpenMaintenance) {
     return (
       <div className={shell} role="status">
         {body}
+        {plantLink}
       </div>
     );
   }
@@ -165,6 +173,7 @@ export function RightNowStrip({
       <div data-pdf-variant="desktop" className="hidden md:block">
         <div className={shell}>
           {body}
+          {plantLink}
           <Link
             to="/maintenance"
             className="shrink-0 text-sm font-semibold text-primary hover:underline"

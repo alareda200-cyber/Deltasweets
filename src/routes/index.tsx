@@ -136,6 +136,10 @@ export const Route = createFileRoute("/")({
       },
     ],
   }),
+  // ?line=<id> opens the Dashboard on that line (the Plant floor links here).
+  validateSearch: (search: Record<string, unknown>): { line?: string } => ({
+    line: typeof search.line === "string" && search.line ? search.line : undefined,
+  }),
   beforeLoad: requireSession,
   loader: ({ context }) =>
     Promise.all([
@@ -175,7 +179,10 @@ function Dashboard() {
   const [preset, setPreset] = useState<Preset>("month");
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
-  const [lineId, setLineId] = useState(lines[0]?.id ?? "");
+  const wanted = Route.useSearch().line;
+  const [lineId, setLineId] = useState(
+    (wanted && lines.some((l) => l.id === wanted) ? wanted : lines[0]?.id) ?? "",
+  );
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
   const exportRef = useRef<HTMLDivElement>(null);

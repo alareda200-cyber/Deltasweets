@@ -17,6 +17,8 @@ export interface OdometerProps {
   fromZero?: boolean;
   /** Extra delay before the first roll, ms. */
   delay?: number;
+  /** Roll time, ms. Shorter for a number that changes many times a second. */
+  duration?: number;
   className?: string;
   /** Read by screen readers instead of the rolling digits. */
   label?: string;
@@ -43,6 +45,7 @@ export function Odometer({
   grouping = false,
   fromZero = true,
   delay = 0,
+  duration = 900,
   className,
   label,
 }: OdometerProps) {
@@ -99,7 +102,9 @@ export function Odometer({
                   transform: `translateY(-${Number(ch) * 10}%)`,
                   transition: reduced
                     ? undefined
-                    : `transform 900ms cubic-bezier(.34,1.3,.64,1) ${fromRight * 70}ms`,
+                    : duration >= 600
+                      ? `transform ${duration}ms cubic-bezier(.34,1.3,.64,1) ${fromRight * 70}ms`
+                      : `transform ${duration}ms cubic-bezier(.22,1,.36,1)`,
                 }}
               >
                 {DIGITS.map((d) => (

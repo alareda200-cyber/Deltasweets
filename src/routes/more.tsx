@@ -62,7 +62,14 @@ type Item =
       key: string;
       name: string;
       sub?: string;
-      to: "/users" | "/audit-log" | "/recap" | "/replay" | "/replay-requests" | "/plan-adherence";
+      to:
+        | "/users"
+        | "/audit-log"
+        | "/recap"
+        | "/replay"
+        | "/replay-requests"
+        | "/plan-adherence"
+        | "/plant";
       /** Shown only to roles that may open it. */
       permission?: Permission;
     }
@@ -125,6 +132,14 @@ function MorePage() {
       {
         title: "Stories",
         items: [
+          {
+            kind: "route",
+            key: "plant",
+            name: "Plant floor",
+            sub: "Every line right now, and the day so far",
+            to: "/plant",
+            permission: "dashboard.view",
+          },
           {
             kind: "route",
             key: "plan",
