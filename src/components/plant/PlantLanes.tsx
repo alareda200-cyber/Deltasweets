@@ -469,16 +469,21 @@ export function PlantLanes({
         return (
           <Link
             key={line.id}
-            to="/"
-            search={{ line: line.id }}
+            to="/plant/$lineId"
+            params={{ lineId: line.id }}
             className={cn("pf-lane", cls)}
             style={{ "--lc": look.col } as React.CSSProperties}
-            aria-label={`${line.name}: ${txt.head}. Open it on the Dashboard`}
+            aria-label={`${line.name}: ${txt.head}. Open its line room`}
             data-line={line.name}
             data-state={summary ? "summary" : s.state}
           >
             <span className="pf-info">
-              <span className="pf-name">
+              {/* Shares a view-transition name with the line room's title, so
+                  opening a lane zooms its name into the room. */}
+              <span
+                className="pf-name"
+                style={{ viewTransitionName: `pfl-${line.id}` } as React.CSSProperties}
+              >
                 <i aria-hidden="true" />
                 <span>{line.name}</span>
               </span>

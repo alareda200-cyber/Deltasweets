@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Info, Maximize2, Minimize2, Moon, Sun } from
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { PlantLanes } from "@/components/plant/PlantLanes";
+import { usePlantLook } from "@/components/plant/use-look";
 import { DayScrubber, PlantFeed, PlantTiles } from "@/components/plant/PlantParts";
 import { useNow } from "@/hooks/use-now";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
@@ -54,7 +55,6 @@ export const Route = createFileRoute("/plant")({
 
 /** How long "Replay the day" takes, whatever the hour. */
 const REPLAY_MS = 9000;
-const THEME_KEY = "pf-look";
 
 function PlantPage() {
   const { role } = useAuth();
@@ -169,23 +169,7 @@ function PlantPage() {
   }, [win.startMs]);
 
   // The stage's own look: night by default, remembered on this device.
-  const [day, setDay] = useState(false);
-  useEffect(() => {
-    try {
-      setDay(window.localStorage.getItem(THEME_KEY) === "day");
-    } catch {
-      /* private mode: stay on night */
-    }
-  }, []);
-  const toggleDay = () =>
-    setDay((d) => {
-      try {
-        window.localStorage.setItem(THEME_KEY, d ? "night" : "day");
-      } catch {
-        /* not remembered */
-      }
-      return !d;
-    });
+  const [day, toggleDay] = usePlantLook();
 
   const stage = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
@@ -336,7 +320,7 @@ function PlantPage() {
                   <h2>
                     Plant floor
                     <small>
-                      tap a line to open it on the Dashboard
+                      tap a line to open its room
                       {locked ? "" : " · drag the timeline to look back"}
                     </small>
                   </h2>
