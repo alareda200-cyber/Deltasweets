@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Info, Maximize2, Minimize2, Moon, Sun } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
+import { LongestStops, PlantClock, PlantPulse } from "@/components/plant/PlantClock";
 import { PlantLanes } from "@/components/plant/PlantLanes";
 import { usePlantLook } from "@/components/plant/use-look";
 import { DayScrubber, PlantFeed, PlantTiles } from "@/components/plant/PlantParts";
@@ -347,6 +348,13 @@ function PlantPage() {
                   />
                 </section>
                 <PlantFeed feed={model.feed} t={snap.t} live={live} canFaults={canFaults} />
+              </div>
+              <div className="pf-grid pf-g2e">
+                <PlantClock model={model} snap={snap} day={day} canFaults={canFaults} />
+                <div className="pf-grid">
+                  <PlantPulse model={model} day={day} />
+                  <LongestStops model={model} canFaults={canFaults} />
+                </div>
               </div>
               <p className="pf-note">
                 A line shows Running until a stop is logged in Maintenance, and faults are usually

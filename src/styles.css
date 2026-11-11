@@ -1406,6 +1406,94 @@
   text-underline-offset: 2px;
 }
 
+/* ── The day as a clock ── */
+.pf-g2e {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+.pf-clock {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin-top: 8px;
+}
+.pf-clock svg {
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  overflow: visible;
+}
+.pf-clock text {
+  fill: var(--pf-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pf-clock .arc {
+  fill: none;
+  stroke-linecap: butt;
+  outline: none;
+  transition:
+    stroke-dasharray 1.1s var(--pf-ease),
+    stroke-width 0.2s;
+}
+.pf-clock .arc.on {
+  stroke-opacity: 0.32;
+}
+.pf-clock .arc.open {
+  transition: stroke-width 0.2s;
+  animation: pf-openarc 1.3s ease-in-out infinite;
+}
+.pf-clock .arc:not(.on) {
+  cursor: pointer;
+}
+.pf-clock .arc:not(.on):hover,
+.pf-clock .arc:focus-visible {
+  stroke-width: 15;
+}
+@keyframes pf-openarc {
+  50% {
+    stroke-opacity: 0.35;
+  }
+}
+.pf-clock .hand {
+  transform-origin: 150px 150px;
+  transition: transform 0.5s var(--pf-ease);
+}
+.pf-clock .hand line {
+  stroke: var(--pf-ink);
+  stroke-width: 1.5;
+  stroke-opacity: 0.8;
+}
+.pf-clock .hand circle {
+  fill: var(--pf-ink);
+}
+.pf-clock .ctr {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 1px;
+  padding: 0 34%;
+  text-align: center;
+  pointer-events: none;
+}
+.pf-clock .ctr b {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.pf-clock .ctr span {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--pf-muted);
+}
+.pf-ecg {
+  display: block;
+  width: 100%;
+  height: 64px;
+  margin-top: 8px;
+}
+
 /* ── Line room (/plant/$lineId) ── */
 .pf-back {
   display: inline-flex;
@@ -1861,7 +1949,8 @@
   .pf-g4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .pf-g2 {
+  .pf-g2,
+  .pf-g2e {
     grid-template-columns: minmax(0, 1fr);
   }
   .pf-orbcard,
