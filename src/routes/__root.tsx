@@ -1,3 +1,4 @@
+import { BootIntro } from "@/components/BootIntro";
 import { THEME_BOOT } from "@/lib/theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -115,6 +116,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Outlet />
+        <BootIntro />
         <Toaster richColors position="top-right" />
       </AuthProvider>
     </QueryClientProvider>
