@@ -1,5 +1,5 @@
 import { BootIntro } from "@/components/BootIntro";
-import { THEME_BOOT } from "@/lib/theme";
+import { applyStoredLook, THEME_BOOT } from "@/lib/theme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/lib/auth-context";
 
@@ -98,8 +98,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: ReactNode }) {
+  // No className on <html>: the look (Night = the "dark" class) is set by the
+  // head script before the first paint and by applyStoredLook after React
+  // renders <html> (src/lib/theme.ts). A className="dark" prop here forced
+  // Night back on every load, undoing a saved Day.
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
         {/* Night or Day before the first paint (src/lib/theme.ts). */}
@@ -112,6 +116,8 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  // The saved Night / Day, again after React's first render of <html>.
+  useLayoutEffect(applyStoredLook, []);
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
