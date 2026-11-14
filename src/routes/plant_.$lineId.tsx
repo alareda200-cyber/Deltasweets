@@ -184,7 +184,7 @@ function LineRoomPage() {
                   )}
                   <button
                     type="button"
-                    className="pf-chip"
+                    className="pf-chip pf-lookchip"
                     onClick={toggleDay}
                     aria-pressed={day}
                     aria-label={day ? "Switch the stage to night" : "Switch the stage to day"}

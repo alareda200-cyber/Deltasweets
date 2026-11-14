@@ -9,7 +9,10 @@ import {
   AlertTriangle,
   Wrench,
   Ellipsis,
+  Factory,
   Moon,
+  Search,
+  Sun,
 } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
@@ -33,21 +36,11 @@ import { useNotifications } from "@/lib/notifications";
 import { PushNotificationToggle } from "@/components/PushNotificationToggle";
 import { Input } from "@/components/ui/input";
 import { CompanyMenu, CompanyPill } from "@/components/CompanySwitcher";
+import { CommandPalette } from "@/components/CommandPalette";
+import { NAV_ITEMS } from "@/components/nav-items";
+import { useLook } from "@/lib/theme";
 
-// Desktop top nav (md and up). Text-only links, per the approved header
-// mockup. Permission-filtered below so a role never sees a link that
-// dead-ends on RequireAuth's access-denied screen.
-const nav = [
-  { to: "/", label: "Dashboard", permission: "dashboard.view" as const },
-  { to: "/entry", label: "Daily entry", permission: "entry.view" as const },
-  { to: "/maintenance", label: "Maintenance", permission: "maintenance.view" as const },
-  { to: "/plan-adherence", label: "Plan adherence", permission: "plan.view" as const },
-  { to: "/users", label: "Users", permission: "users.manage" as const },
-  { to: "/audit-log", label: "Audit log", permission: "users.manage" as const },
-  { to: "/settings", label: "Settings", permission: "settings.manage" as const },
-];
-
-// Mobile bottom tab bar (below md). Three permission-filtered tabs plus
+// Mobile bottom tab bar (below md). Four permission-filtered tabs plus
 // "More", which every role gets: it is the only way to reach Users, Audit
 // log, Settings, profile, password and sign-out on a phone. `permission:
 // null` means "always shown".
@@ -58,6 +51,13 @@ const mobileNav = [
     icon: LayoutDashboard,
     permission: "dashboard.view" as const,
     match: ["/"],
+  },
+  {
+    to: "/plant",
+    label: "Plant",
+    icon: Factory,
+    permission: "dashboard.view" as const,
+    match: ["/plant"],
   },
   {
     to: "/entry",
@@ -170,7 +170,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     touchLastSeen();
   }, [pathname]);
   const navigate = useNavigate();
-  const visibleNav = nav.filter((n) => can(role, n.permission));
+  const visibleNav = NAV_ITEMS.filter((n) => can(role, n.permission));
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const visibleMobileNav = mobileNav.filter(
     (n) => n.permission === null || can(role, n.permission),
   );
@@ -187,14 +188,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const alertCount = notifications.length;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 border-b border-border bg-card/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 pl-4 pr-3 md:h-16 md:gap-7 md:px-8 lg:px-10">
+    <div className="min-h-screen">
+      <SideRail items={visibleNav} pathname={pathname} />
+      <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl md:pl-[84px]">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 pl-4 pr-3 md:h-16 md:gap-5 md:px-8 lg:px-10">
           <div className="flex min-w-0 shrink items-center gap-2.5">
             <Link
               to="/"
               aria-label="Delta Sweets, Dashboard"
-              className="flex min-h-11 shrink-0 items-center rounded-lg"
+              className="flex min-h-11 shrink-0 items-center rounded-lg md:hidden"
             >
               <span
                 aria-hidden="true"
@@ -226,30 +228,20 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           {/* min-w-0 + overflow-x-auto: between md and ~1100px the six links
               scroll inside the nav instead of widening the header. */}
-          <nav
-            aria-label="Main"
-            className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-hide md:flex"
+          {/* Search or jump (Ctrl K): pages, lines, actions. */}
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="ml-auto grid h-11 w-11 place-items-center rounded-[10px] text-foreground transition-colors hover:bg-muted md:ml-0 md:flex md:h-10 md:w-auto md:min-w-[240px] md:items-center md:gap-2 md:border md:border-border md:bg-muted md:px-3 md:text-sm md:text-muted-foreground md:hover:border-primary"
+            aria-label="Search or jump (Ctrl K)"
           >
-            {visibleNav.map((n) => {
-              const active = isActive(pathname, n.to);
-              return (
-                <Link
-                  key={n.to}
-                  to={n.to}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "flex h-10 shrink-0 items-center whitespace-nowrap rounded-[10px] px-3.5 text-sm transition-colors",
-                    active
-                      ? "bg-primary/10 font-semibold text-primary [view-transition-name:nav-pill]"
-                      : "text-foreground hover:bg-muted",
-                  )}
-                >
-                  {n.label}
-                </Link>
-              );
-            })}
-          </nav>
-          <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
+            <Search className="h-5 w-5 md:h-4 md:w-4" aria-hidden="true" />
+            <span className="hidden md:inline">Search or jump…</span>
+            <kbd className="ml-auto hidden rounded-md border border-border px-1.5 text-[11px] font-semibold md:inline">
+              Ctrl K
+            </kbd>
+          </button>
+          <div className="flex shrink-0 items-center gap-1 md:ml-auto md:gap-2">
             <PushNotificationToggle />
             <ThemeToggle />
             <DropdownMenu>
@@ -354,13 +346,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           doesn't render. */}
       {/* Keyed by the company in view: switching starts the page fresh, so no
           line picked under the other company lingers in a page's own state. */}
-      <main key={companyKey} className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 md:px-8 md:py-8">
+      <main
+        key={companyKey}
+        className="mx-auto max-w-[1600px] px-4 pt-6 pb-28 md:py-8 md:pl-[116px] md:pr-8"
+      >
         {children}
       </main>
 
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-card md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-background/80 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         <BottomNavPill
           index={visibleMobileNav.findIndex((n) => n.match.some((m) => isActive(pathname, m)))}
@@ -385,6 +380,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         })}
       </nav>
 
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <MyProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
       <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
     </div>
@@ -392,16 +388,81 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function ThemeToggle() {
+  const [look, toggle] = useLook();
+  const night = look === "night";
   return (
     <button
       type="button"
-      onClick={() => document.documentElement.classList.toggle("dark")}
+      onClick={toggle}
       className="grid h-11 w-11 place-items-center rounded-[10px] text-foreground transition-colors hover:bg-muted md:border md:border-border md:bg-card"
-      aria-label="Toggle dark theme"
-      title="Toggle dark theme"
+      aria-label={night ? "Switch to Day" : "Switch to Night"}
+      title={night ? "Switch to Day" : "Switch to Night"}
     >
-      <Moon className="h-5 w-5 md:h-[18px] md:w-[18px]" />
+      {night ? (
+        <Sun className="h-5 w-5 md:h-[18px] md:w-[18px]" />
+      ) : (
+        <Moon className="h-5 w-5 md:h-[18px] md:w-[18px]" />
+      )}
     </button>
+  );
+}
+
+/**
+ * Desktop navigation (md and up): a rail down the left edge with the logo, one
+ * icon per page and a short label, and a glowing indicator that slides to the
+ * page in view (Control Room design).
+ */
+function SideRail({ items, pathname }: { items: typeof NAV_ITEMS; pathname: string }) {
+  const reduced = usePrefersReducedMotion();
+  const active = items.findIndex((n) => isActive(pathname, n.to));
+  const STEP = 62; // item height (58) + gap (4)
+  return (
+    <aside
+      aria-label="Pages"
+      className="fixed inset-y-0 left-0 z-50 hidden w-[84px] flex-col items-center gap-1 border-r border-border bg-background/60 pt-3 backdrop-blur-xl md:flex"
+    >
+      <Link
+        to="/"
+        aria-label="Delta Sweets, Dashboard"
+        className="mb-3 grid h-11 w-11 place-items-center rounded-[13px] text-sm font-black text-white shadow-elevated"
+        style={{ background: "linear-gradient(135deg, #2b4fd6, #3fd7e6)" }}
+      >
+        DS
+      </Link>
+      <nav aria-label="Main" className="relative flex flex-col gap-1">
+        {active >= 0 && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1 top-0 h-[58px] w-[60px] rounded-[14px] bg-primary/15 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_40%,transparent)] before:absolute before:-left-[13px] before:top-3 before:bottom-3 before:w-[3px] before:rounded before:bg-primary before:shadow-[0_0_12px_var(--primary)]"
+            style={{
+              transform: `translateY(${active * STEP}px)`,
+              transition: reduced ? undefined : "transform 550ms var(--ease-out-soft)",
+            }}
+          />
+        )}
+        {items.map((n) => {
+          const on = isActive(pathname, n.to);
+          return (
+            <Link
+              key={n.to}
+              to={n.to}
+              aria-current={on ? "page" : undefined}
+              title={n.label}
+              className={cn(
+                "group relative z-[1] flex h-[58px] w-[68px] flex-col items-center justify-center gap-1 rounded-[14px] text-[10.5px] font-semibold transition-colors",
+                on ? "text-primary" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <n.icon
+                className="h-5 w-5 transition-transform duration-300 group-hover:scale-110"
+                aria-hidden="true"
+              />
+              <span className="leading-none">{n.short}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
   );
 }
 

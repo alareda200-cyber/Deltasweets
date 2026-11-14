@@ -1,28 +1,10 @@
-import { useEffect, useState } from "react";
-
-const KEY = "pf-look";
+import { useLook } from "@/lib/theme";
 
 /**
- * The control room's own look: night by default, day on request, remembered
- * on this device for every Plant floor page.
+ * The control room's look is the app's look now (Night / Day, src/lib/theme.ts):
+ * true = Day. Kept as a hook so the Plant floor pages read the same as before.
  */
 export function usePlantLook(): [boolean, () => void] {
-  const [day, setDay] = useState(false);
-  useEffect(() => {
-    try {
-      setDay(window.localStorage.getItem(KEY) === "day");
-    } catch {
-      /* private mode: stay on night */
-    }
-  }, []);
-  const toggle = () =>
-    setDay((d) => {
-      try {
-        window.localStorage.setItem(KEY, d ? "night" : "day");
-      } catch {
-        /* not remembered */
-      }
-      return !d;
-    });
-  return [day, toggle];
+  const [look, toggle] = useLook();
+  return [look === "day", toggle];
 }

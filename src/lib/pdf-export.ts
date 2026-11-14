@@ -1,3 +1,4 @@
+import { printLook } from "@/lib/theme";
 import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 
@@ -243,6 +244,8 @@ export async function exportDashboardToPdf({
     el.style.display = el.dataset.pdfVariant === "mobile" ? "none" : "block";
   }
   const undoDesktopMedia = forceDesktopMedia ? forceDesktopMediaOn(container) : null;
+  // The report is light whatever the look on screen (Night / Day).
+  const undoPrint = printLook(container);
 
   // Width and display changes above resize the charts (Recharts measures its
   // box with a ResizeObserver, which reports on a later frame). Capture only
@@ -252,7 +255,7 @@ export async function exportDashboardToPdf({
   );
 
   try {
-    const backgroundColor = getComputedStyle(document.body).backgroundColor || "#ffffff";
+    const backgroundColor = getComputedStyle(container).backgroundColor || "#ffffff";
     const captured: HTMLImageElement[] = [];
     for (let i = 0; i < sectionEls.length; i++) {
       onProgress?.(`Capturing section ${i + 1} of ${sectionEls.length}…`);
@@ -325,6 +328,7 @@ export async function exportDashboardToPdf({
       `${dashboardName.replace(/[^a-z0-9]+/gi, "_")}_${lineName.replace(/[^a-z0-9]+/gi, "_")}_${from}_to_${to}.pdf`;
     doc.save(filename);
   } finally {
+    undoPrint();
     undoDesktopMedia?.();
     container.style.width = originalWidth;
     container.style.maxWidth = originalMaxWidth;

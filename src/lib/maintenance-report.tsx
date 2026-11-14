@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
+import { printLook } from "@/lib/theme";
 import type { MaintenanceEvent, MaintenanceMetric, MaintenanceType, MaintenanceStatus } from "@/lib/queries";
 import { TYPE_LABELS, STATUS_LABELS, formatDuration, formatHours, sortByWorstMtbf, eventDowntimeMinutes, eventElapsedMinutes } from "@/lib/maintenance-format";
 import type { ClosedDays } from "@/lib/maintenance-format";
@@ -1148,6 +1149,8 @@ export async function exportMaintenanceReportToPdf({
   hiddenContainer.style.top = "0";
   hiddenContainer.style.left = "-99999px";
   document.body.appendChild(hiddenContainer);
+  // Light whatever the look on screen (Night / Day).
+  const undoPrint = printLook(hiddenContainer);
   const root = createRoot(hiddenContainer);
 
   try {
@@ -1321,6 +1324,7 @@ export async function exportMaintenanceReportToPdf({
     doc.save(`maintenance-report-${safeLine}-${dateStr}.pdf`);
   } finally {
     root.unmount();
+    undoPrint();
     document.body.removeChild(hiddenContainer);
   }
 }

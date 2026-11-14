@@ -46,6 +46,114 @@
 }
 
 :root {
+  /* Control Room look (mockup "Jammy Control Room", approved 10 Nov 2026).
+     Day = these values; Night (the default) = .dark below. Status inks keep
+     their measured contrast (see the note on --success-strong). */
+  --radius: 0.9rem;
+  --background: #eef2fc;
+  --foreground: #0f1836;
+  --card: rgb(255 255 255 / 0.82);
+  --card-solid: #ffffff;
+  --card-foreground: #0f1836;
+  --popover: #ffffff;
+  --popover-foreground: #0f1836;
+  --primary: #2848c8;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(20 40 110 / 0.06);
+  --secondary-foreground: #0f1836;
+  --muted: rgb(20 40 110 / 0.06);
+  --muted-foreground: #56618a;
+  --accent: #0a9fb1;
+  --accent-foreground: #ffffff;
+  --success: oklch(0.65 0.16 155);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.78 0.18 75);
+  --warning-foreground: oklch(0.2 0.05 60);
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(1 0 0);
+
+  /* Ink versions of the status hues. --success/--warning/--destructive are
+     tuned as FILLS — as small text on white they measure 3.00 / 2.05 / 4.41,
+     all under 4.5, and amber can never reach 3:1 against any tint of itself
+     no matter the alpha, so a lighter track cannot rescue a --warning meter.
+     These darker steps are what status *text*, and any meter fill sitting on
+     a /15 tint of its own hue, must use. Measured on white / on the /15 chip:
+       success     #007c36  5.33 / 4.52
+       warning     #aa5900  5.07 / 4.54
+       destructive #d00021  5.67 / 4.52 */
+  --success-strong: oklch(0.5 0.16 155);
+  --warning-strong: oklch(0.545 0.18 75);
+  --destructive-strong: oklch(0.54 0.22 25);
+  --border: rgb(20 40 110 / 0.13);
+  --input: rgb(20 40 110 / 0.16);
+  --ring: #2848c8;
+  --chart-1: #2f55d4;
+  --chart-2: #0a9fb1;
+  --chart-3: #0f9d63;
+  --chart-4: #d08a0c;
+  --chart-5: #d12f45;
+
+  --gradient-hero: linear-gradient(135deg, #2848c8, #4a6cf0);
+  --gradient-accent: linear-gradient(135deg, #2848c8, #0a9fb1);
+  --shadow-card: 0 1px 2px rgb(30 50 130 / 0.06), 0 24px 50px -30px rgb(30 50 130 / 0.35);
+  --shadow-elevated: 0 18px 40px -14px rgb(40 72 200 / 0.35);
+  --aurora-1: #6f8ff0;
+  --aurora-2: #5fd3e0;
+  --aurora-3: #f08cb8;
+  --aurora-alpha: 0.42;
+  --grid-line: rgb(20 40 110 / 0.07);
+}
+
+.dark {
+  --background: #070b17;
+  --foreground: #eaf0ff;
+  --card: rgb(19 27 52 / 0.72);
+  --card-solid: #111a33;
+  --card-foreground: #eaf0ff;
+  --popover: #111a33;
+  --popover-foreground: #eaf0ff;
+  --primary: #6f9bff;
+  --primary-foreground: #051034;
+  --secondary: rgb(255 255 255 / 0.06);
+  --secondary-foreground: #eaf0ff;
+  --muted: rgb(255 255 255 / 0.06);
+  --muted-foreground: #93a0bf;
+  --accent: #3fd7e6;
+  --accent-foreground: #051034;
+  --success: #3ddc97;
+  --success-foreground: #051034;
+  --warning: #ffb648;
+  --warning-foreground: #051034;
+  --destructive: #ff5d6c;
+  --destructive-foreground: #ffffff;
+  /* On the night card the base hues already read; only red is lifted. */
+  --success-strong: #3ddc97;
+  --warning-strong: #ffb648;
+  --destructive-strong: #ff7a86;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.14);
+  --ring: #6f9bff;
+  --chart-1: #6f9bff;
+  --chart-2: #3fd7e6;
+  --chart-3: #3ddc97;
+  --chart-4: #ffb648;
+  --chart-5: #ff5d6c;
+
+  --gradient-hero: linear-gradient(135deg, #2b4fd6, #6f9bff);
+  --gradient-accent: linear-gradient(135deg, #2b4fd6, #3fd7e6);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 50px -28px rgb(0 0 0 / 0.8);
+  --shadow-elevated: 0 18px 40px -14px rgb(111 155 255 / 0.35);
+  --aurora-1: #2b4fd6;
+  --aurora-2: #3fd7e6;
+  --aurora-3: #ff6fa8;
+  --aurora-alpha: 0.5;
+  --grid-line: rgb(255 255 255 / 0.05);
+}
+
+/* PDF capture: the classic light palette, opaque, whatever the look on
+   screen. pdf-export.ts and maintenance-report.tsx put data-print on the
+   element being captured (printLook in src/lib/theme.ts). */
+[data-print] {
   --radius: 0.75rem;
   --background: oklch(0.99 0.005 240);
   --foreground: oklch(0.18 0.04 250);
@@ -95,42 +203,8 @@
   --gradient-accent: linear-gradient(135deg, oklch(0.55 0.2 260), oklch(0.72 0.16 195));
   --shadow-card: 0 1px 2px oklch(0.18 0.04 250 / 0.05), 0 8px 24px -8px oklch(0.18 0.04 250 / 0.08);
   --shadow-elevated: 0 10px 40px -10px oklch(0.42 0.18 260 / 0.25);
-}
-
-.dark {
-  --background: oklch(0.16 0.025 255);
-  --foreground: oklch(0.97 0.01 240);
-  --card: oklch(0.21 0.03 255);
-  --card-foreground: oklch(0.97 0.01 240);
-  --popover: oklch(0.21 0.03 255);
-  --popover-foreground: oklch(0.97 0.01 240);
-  --primary: oklch(0.7 0.18 260);
-  --primary-foreground: oklch(0.16 0.025 255);
-  --secondary: oklch(0.26 0.03 255);
-  --secondary-foreground: oklch(0.97 0.01 240);
-  --muted: oklch(0.26 0.03 255);
-  --muted-foreground: oklch(0.68 0.02 245);
-  --accent: oklch(0.75 0.17 195);
-  --accent-foreground: oklch(0.16 0.025 255);
-  --success: oklch(0.7 0.18 155);
-  --success-foreground: oklch(0.16 0.025 255);
-  --warning: oklch(0.82 0.18 75);
-  --warning-foreground: oklch(0.16 0.025 255);
-  --destructive: oklch(0.65 0.24 25);
-  --destructive-foreground: oklch(1 0 0);
-  /* On the dark card the base hues already read: 5.66 / 7.23 on their own /15
-     chip. Only destructive fell short (4.27), so it alone is lifted. */
-  --success-strong: oklch(0.7 0.18 155);
-  --warning-strong: oklch(0.82 0.18 75);
-  --destructive-strong: oklch(0.695 0.24 25);
-  --border: oklch(0.3 0.03 255);
-  --input: oklch(0.3 0.03 255);
-  --ring: oklch(0.7 0.18 260);
-
-  --gradient-hero: linear-gradient(135deg, oklch(0.28 0.18 260), oklch(0.4 0.2 280));
-  --gradient-accent: linear-gradient(135deg, oklch(0.45 0.2 260), oklch(0.6 0.18 195));
-  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px -8px oklch(0 0 0 / 0.4);
-  --shadow-elevated: 0 10px 40px -10px oklch(0.7 0.18 260 / 0.3);
+  --card-solid: #ffffff;
+  --aurora-alpha: 0;
 }
 
 @layer base {
@@ -142,6 +216,58 @@
     color: var(--color-foreground);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+  /* Control Room: a slow aurora and a faint grid behind every page. Fixed,
+     under the content, never in a PDF. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -20vmax;
+    z-index: -2;
+    pointer-events: none;
+    opacity: var(--aurora-alpha);
+    background:
+      radial-gradient(38vmax 30vmax at 18% 12%, var(--aurora-1), transparent 70%),
+      radial-gradient(
+        32vmax 26vmax at 88% 24%,
+        color-mix(in srgb, var(--aurora-2) 55%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        30vmax 24vmax at 55% 98%,
+        color-mix(in srgb, var(--aurora-3) 45%, transparent),
+        transparent 70%
+      );
+    filter: blur(40px);
+    animation: ds-aurora 28s ease-in-out infinite alternate;
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(120vmax 70vmax at 50% 0%, #000, transparent 70%);
+  }
+  /* Cards are glass: the aurora shows through, blurred. */
+  .bg-card[class*="rounded"] {
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+  /* Anything stuck over scrolling content needs a solid ground. */
+  .sticky.bg-card,
+  [data-sticky].bg-card {
+    background-color: var(--card-solid);
+  }
+  [data-print] .bg-card[class*="rounded"] {
+    backdrop-filter: none;
+  }
+  [data-print] {
+    color: var(--foreground);
+    background-color: var(--background);
+  }
 
   body {
     font-family: var(--font-sans);
@@ -152,6 +278,12 @@
      up the --font-sans override. Setting it on body explicitly is what
      actually applies the typeface. Verified against the built CSS, not the
      source — see the build check in this task. */
+}
+
+@keyframes ds-aurora {
+  to {
+    transform: translate3d(4vmax, 3vmax, 0) scale(1.08);
+  }
 }
 
 @utility gradient-hero {
@@ -678,6 +810,19 @@
 }
 .pf-cq {
   container-type: inline-size;
+}
+/* Inside the app's own Control Room world the stage is not a box of its
+   own: no frame, no second aurora (full screen keeps them). */
+.pf:not(:fullscreen) {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+.pf:not(:fullscreen) > .pf-aurora,
+.pf:not(:fullscreen) .pf-lookchip {
+  display: none;
 }
 .pf.pf-day {
   --pf-bg: #eef2fc;
